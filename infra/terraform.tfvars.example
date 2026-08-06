@@ -7,5 +7,9 @@ aws_account_id = "REPLACE-12-digit-account-id"
 #   aws iam list-open-id-connect-providers
 github_oidc_provider_arn = "arn:aws:iam::REPLACE:oidc-provider/token.actions.githubusercontent.com"
 
+# Must match backend.hcl.
+state_bucket = "REPLACE-terraform-state-bucket"
+state_key    = "cadre/cadre.tfstate"
+
 # Leave false until the ACM certificate reaches ISSUED. See infra/README.md.
 enable_custom_domain = false

@@ -106,3 +106,14 @@ variable "log_retention_days" {
   type        = number
   default     = 14
 }
+
+variable "state_bucket" {
+  description = "S3 bucket holding this stack's Terraform state. Needed so the CI Terraform role can be scoped to it. Must match backend.hcl."
+  type        = string
+}
+
+variable "state_key" {
+  description = "State object key. Must match backend.hcl."
+  type        = string
+  default     = "cadre/cadre.tfstate"
+}

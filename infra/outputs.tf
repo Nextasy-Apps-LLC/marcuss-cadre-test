@@ -64,3 +64,8 @@ output "ci_role_arn" {
   description = "Set as the AWS_DEPLOY_ROLE_ARN repository variable in GitHub. Not a secret."
   value       = aws_iam_role.ci_deploy.arn
 }
+
+output "terraform_role_arn" {
+  description = "Set as the TF_ROLE_ARN repository variable. Separate from ci_role_arn — this one can change infrastructure."
+  value       = aws_iam_role.ci_terraform.arn
+}
