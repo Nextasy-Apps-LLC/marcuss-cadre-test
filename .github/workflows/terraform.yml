@@ -33,6 +33,10 @@ env:
 jobs:
   plan:
     name: plan
+    # Until the first (local) apply creates the terraform role, TF_ROLE_ARN is
+    # unset and this job can only fail with an opaque AWS auth error. Skipping
+    # reports honestly as "not configured yet" instead of red.
+    if: vars.TF_ROLE_ARN != ''
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -86,6 +90,10 @@ jobs:
 
       - name: Summarise
         if: always()
+        # `|| true` throughout: this step reports, it does not judge. Letting it
+        # fail on a missing plan.txt would replace the real error with a tail(1)
+        # message, which is exactly what happened on the first run.
+        continue-on-error: true
         run: |
           {
             echo "### terraform plan"
@@ -93,14 +101,18 @@ jobs:
             case "${{ steps.plan.outputs.exitcode }}" in
               0) echo "No changes. Infrastructure matches the configuration." ;;
               2) echo "Changes pending — review the plan below before applying." ;;
+              "") echo "Plan did not run — an earlier step failed." ;;
               *) echo "Plan failed." ;;
             esac
             echo
-            echo '```'
-            tail -c 40000 infra/plan.txt 2>/dev/null || tail -c 40000 plan.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-        working-directory: .
+            if [ -f plan.txt ]; then
+              echo '```'
+              tail -c 40000 plan.txt || true
+              echo '```'
+            else
+              echo "_No plan output was produced._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY" || true
 
       # Kept for the apply job so it applies exactly what was reviewed, rather
       # than re-planning against state that may have moved since.
