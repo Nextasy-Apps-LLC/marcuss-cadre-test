@@ -21,15 +21,19 @@ data "aws_iam_policy_document" "terraform_assume" {
       identifiers = [var.github_oidc_provider_arn]
     }
 
-    # `plan` runs on pull_request, `apply` runs from main. Both are needed —
-    # a plan that cannot read state is useless as a review artifact.
+    # `plan` runs on pull_request and from main; `apply` runs inside the
+    # production environment, which REPLACES the sub claim with the
+    # environment form — see the warning on local.deploy_subs in oidc.tf.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values = [
-        "repo:${var.github_repo}:ref:refs/heads/main",
-        "repo:${var.github_repo}:pull_request",
-      ]
+      values = flatten([
+        for repo in local.gh_repo_forms : [
+          "repo:${repo}:ref:refs/heads/main",
+          "repo:${repo}:pull_request",
+          "repo:${repo}:environment:production",
+        ]
+      ])
     }
 
     condition {
