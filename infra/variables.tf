@@ -117,3 +117,14 @@ variable "state_key" {
   type        = string
   default     = "cadre/cadre.tfstate"
 }
+
+variable "github_repo_id_form" {
+  description = <<-EOT
+    The id-qualified spelling of github_repo (org@id/repo@id). GitHub tokens
+    can carry this form in the sub claim and it survives renames; the live
+    trust policies include it, so the config must too or an apply strips it.
+    Org and repo ids are public information (visible via the GitHub API).
+  EOT
+  type        = string
+  default     = "Nextasy-Apps-LLC@270195565/marcuss-cadre-test@1324634448"
+}

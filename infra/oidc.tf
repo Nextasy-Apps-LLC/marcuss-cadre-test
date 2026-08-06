@@ -8,6 +8,28 @@
 # this stack break OIDC for every other repo in the account.
 ##############################################################################
 
+# Both spellings of the repo, name-based and id-qualified. GitHub can issue
+# either in the token's sub claim (the id form survives org/repo renames), and
+# the live trust policies already carry both — a config listing only one form
+# would remove the other on apply and risk cutting CI off.
+locals {
+  gh_repo_forms = distinct([var.github_repo, var.github_repo_id_form])
+
+  # ⚠️ The environment:production entries are load-bearing. A job that runs
+  # inside `environment: production` gets sub = repo:...:environment:production
+  # INSTEAD of the ref form — the gate replaces the claim, it does not add to
+  # it. Without these entries the gated deploy and terraform-apply jobs are
+  # denied with "Not authorized to perform sts:AssumeRoleWithWebIdentity"
+  # while the ungated plan job works, which is exactly as confusing as it
+  # sounds. (Failed run: actions/runs/31110914078.)
+  deploy_subs = flatten([
+    for repo in local.gh_repo_forms : [
+      "repo:${repo}:ref:refs/heads/main",
+      "repo:${repo}:environment:production",
+    ]
+  ])
+}
+
 data "aws_iam_policy_document" "ci_assume" {
   statement {
     effect  = "Allow"
@@ -18,12 +40,13 @@ data "aws_iam_policy_document" "ci_assume" {
       identifiers = [var.github_oidc_provider_arn]
     }
 
-    # Exact sub-claim match, no wildcards. Deploys run only from main; a PR
-    # branch or a fork cannot assume this role.
+    # Exact sub-claim match, no wildcards. Deploys run only from main or from
+    # this repo's production environment; a PR branch or a fork cannot assume
+    # this role.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:ref:refs/heads/main"]
+      values   = local.deploy_subs
     }
 
     condition {
