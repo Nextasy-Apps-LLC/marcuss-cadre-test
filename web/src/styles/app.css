@@ -1,0 +1,471 @@
+/* ── shell ────────────────────────────────────────────────────────────── */
+
+.shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 48px 20px 64px;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  text-shadow: var(--glow);
+}
+
+.tagline {
+  margin: 4px 0 28px;
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+}
+
+/* Terminal and trace sit side by side on desktop; the trace drops below and
+   collapses behind the summary chip on narrow screens. */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 18px;
+  align-items: start;
+}
+
+/* ── terminal ─────────────────────────────────────────────────────────── */
+
+.terminal {
+  background: var(--bg-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg-3);
+  font-size: 0.72rem;
+  color: var(--fg-mute);
+}
+
+.dots {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.dots i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--fg-mute);
+  opacity: 0.55;
+}
+
+.titlebar-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-dim);
+}
+
+.live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: var(--glow);
+}
+
+.live--busy {
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.28;
+  }
+}
+
+/* ── transcript ───────────────────────────────────────────────────────── */
+
+.transcript {
+  padding: 18px;
+  min-height: 280px;
+  max-height: 52vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule) transparent;
+}
+
+.msg {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.msg-who {
+  color: var(--accent-2);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.msg-who::after {
+  content: " ›";
+  opacity: 0.6;
+}
+
+.msg--cadre .msg-who {
+  color: var(--accent);
+}
+
+.msg-body {
+  /* Model output arrives with real newlines and is rendered as text, never as
+     HTML — nothing the model emits can inject markup into the page. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msg--system {
+  grid-template-columns: 1fr;
+  color: var(--fg-dim);
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
+.msg[data-status="error"] .msg-body {
+  color: var(--hot);
+}
+
+.msg[data-status="stopped"] .msg-body {
+  color: var(--fg-mute);
+}
+
+.cursor {
+  display: inline-block;
+  width: 8px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ── suggestions ──────────────────────────────────────────────────────── */
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 18px 14px;
+}
+
+.suggestions button {
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: 0.75rem;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: border-color 0.18s var(--tx), color 0.18s var(--tx);
+}
+
+.suggestions button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.suggestions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── composer ─────────────────────────────────────────────────────────── */
+
+.composer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--rule);
+  background: var(--bg-3);
+}
+
+.composer-prompt {
+  color: var(--accent);
+}
+
+.composer-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  color: var(--fg-strong);
+  font-family: inherit;
+  font-size: 0.92rem;
+  padding: 6px 0;
+}
+
+.composer-input:focus {
+  outline: none;
+}
+
+.composer-input::placeholder {
+  color: var(--fg-mute);
+}
+
+.composer-input:disabled {
+  opacity: 0.5;
+}
+
+.composer-stop {
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-family: inherit;
+  /* 32px is below the 44px touch target guidance, so the tap area is padded
+     out with a pseudo-element rather than by inflating the visible button. */
+  width: 32px;
+  height: 32px;
+  position: relative;
+}
+
+.composer-stop::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+
+.composer-stop:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.composer-error {
+  padding: 6px 18px 12px;
+  color: var(--hot);
+  font-size: 0.78rem;
+  background: var(--bg-3);
+}
+
+/* ── trace panel ──────────────────────────────────────────────────────── */
+
+.trace-panel {
+  background: var(--bg-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 14px;
+  font-size: 0.78rem;
+}
+
+.trace-panel--refused {
+  border-color: color-mix(in oklab, var(--hot) 45%, transparent);
+}
+
+.trace-title {
+  color: var(--fg-mute);
+  text-transform: lowercase;
+  letter-spacing: 0.06em;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.trace-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rail {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--fg-dim);
+  transition: color 0.2s var(--tx), opacity 0.2s var(--tx);
+}
+
+.rail-icon {
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.rail-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-latency {
+  color: var(--fg-mute);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-reason {
+  grid-column: 1 / -1;
+  padding-left: 4px;
+  color: var(--fg-mute);
+  font-size: 0.72rem;
+}
+
+.rail-reason--warn {
+  color: var(--warn);
+}
+
+.rail--pending {
+  opacity: 0.45;
+}
+
+.rail--passed {
+  color: var(--fg);
+}
+
+.rail--degraded {
+  color: var(--warn);
+}
+
+.rail--blocked {
+  color: var(--hot);
+}
+
+.rail--skipped {
+  opacity: 0.35;
+}
+
+.rail--lost {
+  color: var(--warn);
+  opacity: 0.75;
+}
+
+.trace-footer {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+  color: var(--fg-mute);
+  font-size: 0.72rem;
+  min-height: 1em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── mobile summary chip ──────────────────────────────────────────────── */
+
+.trace-summary {
+  display: none;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 18px;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: 0.9rem;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+
+.trace-summary-total {
+  font-size: 0.72rem;
+  letter-spacing: normal;
+  color: var(--fg-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+.trace-summary::after {
+  content: "▾";
+  letter-spacing: normal;
+}
+
+.trace-summary[aria-expanded="true"]::after {
+  content: "▴";
+}
+
+/* ── foot ─────────────────────────────────────────────────────────────── */
+
+.foot {
+  margin-top: 18px;
+  font-size: 0.75rem;
+  color: var(--fg-mute);
+}
+
+.linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--fg-mute);
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.linkish:hover {
+  color: var(--accent);
+}
+
+/* ── narrow screens ───────────────────────────────────────────────────── */
+
+@media (max-width: 860px) {
+  .shell {
+    padding: 28px 14px 48px;
+  }
+
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .trace-summary {
+    display: flex;
+  }
+
+  /* The full panel is hidden until the chip is tapped — six labelled rows do
+     not fit beside a phone-width terminal, but the chip keeps the live
+     signal visible in one line. */
+  .trace-panel {
+    display: none;
+  }
+
+  .layout--trace-open .trace-panel {
+    display: block;
+  }
+
+  .transcript {
+    max-height: 58vh;
+  }
+}

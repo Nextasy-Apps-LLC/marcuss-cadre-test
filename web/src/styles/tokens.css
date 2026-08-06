@@ -1,0 +1,80 @@
+/*
+ * Design tokens.
+ *
+ * Deliberately mirrors the marcuss.pro palette (phosphor green on a
+ * green-tinted near-black, JetBrains Mono throughout) so cadre reads as part
+ * of the same family. Kept in one file so a re-theme is a single edit rather
+ * than a hunt through components.
+ */
+
+:root {
+  --accent: #00d68f;
+  --accent-2: #5fb88a;
+
+  --bg: #050a07;
+  --bg-2: #0a120d;
+  --bg-3: #0d1712;
+
+  --fg: #d8ffe6;
+  --fg-strong: #f5fff0;
+  --fg-dim: #7eb59a;
+  --fg-mute: #4a6b5a;
+
+  --rule: rgba(0, 214, 143, 0.22);
+  --hot: #ff4365;
+  --warn: #ffd166;
+
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  --glow: 0 0 12px color-mix(in oklab, var(--accent) 55%, transparent);
+  --card-shadow: 0 0 40px color-mix(in oklab, var(--accent) 8%, transparent),
+    inset 0 0 80px color-mix(in oklab, var(--accent) 3%, transparent);
+
+  --radius: 10px;
+  --tx: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Anything that pulses or slides is decorative. Honour the OS setting. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

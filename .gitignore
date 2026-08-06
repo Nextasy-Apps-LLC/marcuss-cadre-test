@@ -13,3 +13,8 @@ terraform.tfvars
 
 # Local
 .DS_Store
+
+# Web
+node_modules/
+dist/
+*.tsbuildinfo
