@@ -1,0 +1,12 @@
+# Code owners for cadre.
+#
+# Deliberately one person rather than an org-wide team: a team of everyone
+# means any member can approve anything, which turns the review gate into a
+# formality. One named owner is a real gate.
+#
+# ⚠️ Consequence worth knowing: GitHub does not let a PR author approve their
+# own PR. With a single code owner, a PR *you* open cannot satisfy
+# "Require review from Code Owners" — you will need either a second owner, or
+# admin bypass left enabled on the branch rule. See .github/DEPLOYMENT.md.
+
+* @marcuss

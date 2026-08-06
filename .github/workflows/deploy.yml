@@ -1,0 +1,263 @@
+name: Deploy
+
+# Manual only. There is no push trigger: shipping is a decision, and this
+# workflow is gated behind a code-owner approval that would be meaningless if
+# a merge could fire it automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        type: choice
+        required: true
+        default: deploy
+        options:
+          - deploy
+          - rollback
+      sha:
+        description: "Full 40-character commit SHA to deploy or roll back to"
+        type: string
+        required: true
+
+# One deploy at a time. Two concurrent runs would race on the Lambda alias and
+# the S3 sync, and the loser would silently win. Never cancel in progress —
+# a half-applied deploy is worse than a queued one.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # Cheap, credential-free checks. Runs BEFORE the approval gate so a doomed
+  # request is rejected without waking a human.
+  plan:
+    name: Validate request
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate the SHA
+        id: check
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+          INPUT_ACTION: ${{ inputs.action }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$INPUT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::'$INPUT_SHA' is not a full 40-character SHA. Short SHAs are ambiguous — paste the full one."
+            exit 1
+          fi
+
+          if ! git cat-file -e "${INPUT_SHA}^{commit}" 2>/dev/null; then
+            echo "::error::Commit $INPUT_SHA does not exist in this repository."
+            exit 1
+          fi
+
+          # Only history that reached main is deployable. Without this you can
+          # ship an unreviewed branch tip by pasting its SHA, which would route
+          # around the whole PR + code-owner gate.
+          if ! git merge-base --is-ancestor "$INPUT_SHA" origin/main; then
+            echo "::error::$INPUT_SHA is not an ancestor of origin/main. Only reviewed, merged commits are deployable."
+            exit 1
+          fi
+
+          echo "sha=$INPUT_SHA" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### ${INPUT_ACTION^} requested"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Action | \`$INPUT_ACTION\` |"
+            echo "| Commit | \`$INPUT_SHA\` |"
+            echo "| Subject | $(git log -1 --format=%s "$INPUT_SHA") |"
+            echo "| Authored | $(git log -1 --format='%an, %ad' --date=short "$INPUT_SHA") |"
+            echo "| Requested by | @${{ github.actor }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: ${{ inputs.action }} to production
+    needs: plan
+    runs-on: ubuntu-latest
+
+    # ── The approval gate ────────────────────────────────────────────────
+    # This line is inert on its own. The gate exists only once the
+    # `production` environment has required reviewers configured in repo
+    # settings. See .github/DEPLOYMENT.md — without that, this deploys
+    # immediately with no approval.
+    environment:
+      name: production
+      url: ${{ vars.SITE_URL }}
+
+    env:
+      SHA: ${{ needs.plan.outputs.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+
+      - name: Configure AWS credentials
+        # OIDC — no access key exists for this repository.
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: cadre-${{ inputs.action }}-${{ github.run_id }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      # ── Backend image ───────────────────────────────────────────────────
+
+      - name: Does the image already exist?
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          if aws ecr describe-images \
+               --repository-name "${{ vars.ECR_REPOSITORY }}" \
+               --image-ids imageTag="$SHA" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "uri=$REGISTRY/${{ vars.ECR_REPOSITORY }}:$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Rollback target must already be built
+        if: inputs.action == 'rollback' && steps.image.outputs.exists == 'false'
+        run: |
+          echo "::error::No image tagged $SHA in ECR. A rollback restores a previously deployed build; it does not create one. Use 'deploy' if you intend to build this commit."
+          exit 1
+
+      - uses: docker/setup-qemu-action@v3
+        if: inputs.action == 'deploy' && steps.image.outputs.exists == 'false'
+      - uses: docker/setup-buildx-action@v3
+        if: inputs.action == 'deploy' && steps.image.outputs.exists == 'false'
+
+      - name: Build and push image
+        # Skipped when the tag exists: the ECR repository is IMMUTABLE, so a
+        # second push of the same tag fails. Re-deploying a SHA is idempotent.
+        if: inputs.action == 'deploy' && steps.image.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ steps.image.outputs.uri }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Point the Lambda at the image
+        run: |
+          set -euo pipefail
+          aws lambda update-function-code \
+            --function-name "${{ vars.LAMBDA_FUNCTION_NAME }}" \
+            --image-uri "${{ steps.image.outputs.uri }}" \
+            --output text --query 'LastModified'
+
+          # Without this the smoke test can hit the old code and pass.
+          aws lambda wait function-updated \
+            --function-name "${{ vars.LAMBDA_FUNCTION_NAME }}"
+
+      # ── Frontend ────────────────────────────────────────────────────────
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the page
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Sync hashed assets
+        # Assets first, and additively (no --delete). A visitor mid-navigation
+        # may still be running the previous index.html; deleting its assets
+        # breaks that page in flight. Filenames are content-hashed, so stale
+        # objects are harmless and cost pennies.
+        #
+        # `aws s3 sync` infers Content-Type from the extension. Never use
+        # `cp --metadata-directive REPLACE` here: it wipes Content-Type along
+        # with cache-control and the browser refuses the stylesheet.
+        run: |
+          aws s3 sync web/dist/assets "s3://${{ vars.WEB_BUCKET }}/assets" \
+            --cache-control "public, max-age=31536000, immutable"
+
+      - name: Sync entry point
+        # index.html last, and never cached — it is the pointer that makes the
+        # new assets live. Uploading it first would reference assets that are
+        # not there yet.
+        run: |
+          aws s3 sync web/dist "s3://${{ vars.WEB_BUCKET }}" \
+            --exclude "assets/*" \
+            --cache-control "public, max-age=0, must-revalidate"
+
+      - name: Invalidate CloudFront
+        run: |
+          set -euo pipefail
+          ID=$(aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --paths "/*" \
+            --query 'Invalidation.Id' --output text)
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --id "$ID"
+
+      # ── Verify ──────────────────────────────────────────────────────────
+
+      - name: Smoke test
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: |
+          set -euo pipefail
+
+          for attempt in 1 2 3 4 5; do
+            STATUS=$(curl -sS -o /dev/null -w '%{http_code}' "$SITE_URL/healthz" || echo 000)
+            [ "$STATUS" = "200" ] && break
+            echo "attempt $attempt: /healthz returned $STATUS, retrying in 6s"
+            sleep 6
+          done
+
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::/healthz never returned 200 (last: $STATUS). The ${{ inputs.action }} landed but the service is unhealthy."
+            exit 1
+          fi
+
+          # Prove the page is actually being served, not just the API.
+          PAGE=$(curl -sS -o /dev/null -w '%{http_code}' "$SITE_URL/" || echo 000)
+          if [ "$PAGE" != "200" ]; then
+            echo "::error::The page returned $PAGE."
+            exit 1
+          fi
+
+          echo "healthz 200, page 200"
+
+      - name: Record the outcome
+        if: always()
+        run: |
+          {
+            echo "### ${{ inputs.action }} — ${{ job.status }}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`$SHA\` |"
+            echo "| Image | \`${{ steps.image.outputs.uri }}\` |"
+            echo "| Image rebuilt | ${{ steps.image.outputs.exists == 'false' && inputs.action == 'deploy' }} |"
+            echo "| Site | ${{ vars.SITE_URL }} |"
+            echo "| Approved run by | @${{ github.actor }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
