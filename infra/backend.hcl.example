@@ -1,0 +1,17 @@
+# Backend configuration — copy to backend.hcl and fill in.
+#
+#   terraform init -backend-config=backend.hcl
+#
+# backend.hcl is gitignored. This repo is public, so the state bucket name is
+# not committed: it is not a credential, but publishing it hands an attacker a
+# free target name for no benefit.
+
+bucket = "REPLACE-terraform-state-bucket"
+key    = "cadre/cadre.tfstate"
+region = "us-east-1"
+
+# Native S3 state locking (Terraform 1.10+). No DynamoDB table needed.
+use_lockfile = true
+
+# State contains resource metadata, so encrypt it at rest.
+encrypt = true

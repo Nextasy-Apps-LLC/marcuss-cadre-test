@@ -1,0 +1,108 @@
+variable "aws_account_id" {
+  description = "AWS account this stack may target. No default — a public repo should not carry an account id."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]{12}$", var.aws_account_id))
+    error_message = "aws_account_id must be a 12-digit AWS account id."
+  }
+}
+
+variable "aws_region" {
+  description = "Region for ECR, Lambda, and Bedrock. Must be us-east-1 — the ACM certificate for CloudFront has to live there."
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "project_name" {
+  description = "Base name for the ECR repo, Lambda function, IAM roles, and log group."
+  type        = string
+  default     = "cadre"
+}
+
+variable "domain_name" {
+  description = "Public hostname for the page and the API."
+  type        = string
+  default     = "cadre.marcuss.pro"
+}
+
+variable "enable_custom_domain" {
+  description = <<-EOT
+    Attach `domain_name` + the ACM certificate to the CloudFront distribution.
+
+    Leave false for the first apply: CloudFront rejects an alias whose
+    certificate is not yet ISSUED, and the certificate cannot be issued until
+    its validation CNAME is published in Cloudflare — which needs the record
+    values this stack only outputs once the certificate resource exists.
+
+    So: apply with false, publish the record (see `terraform output
+    acm_validation_record`), wait for ISSUED, then set true and apply again.
+    Until then the distribution serves on its own *.cloudfront.net domain.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "github_repo" {
+  description = "owner/repo allowed to assume the CI role via GitHub OIDC."
+  type        = string
+  default     = "Nextasy-Apps-LLC/marcuss-cadre-test"
+}
+
+variable "github_oidc_provider_arn" {
+  description = <<-EOT
+    ARN of the account's existing GitHub Actions OIDC provider.
+
+    This is an account-level singleton — do NOT create a second one here. Find
+    the existing ARN with:
+      aws iam list-open-id-connect-providers
+  EOT
+  type        = string
+}
+
+variable "image_tag" {
+  description = "ECR image tag the Lambda points at. The deploy workflow bumps this to the commit SHA."
+  type        = string
+  default     = "bootstrap"
+}
+
+variable "lambda_memory_mb" {
+  description = "Lambda memory (MB). Also scales CPU, which matters for TLS setup on each Bedrock call."
+  type        = number
+  default     = 1024
+}
+
+variable "lambda_timeout_s" {
+  description = "Lambda timeout (seconds). Must exceed the worst-case brain turn plus both guard calls."
+  type        = number
+  default     = 120
+}
+
+variable "brain_model" {
+  description = "Bedrock model id for the brain. Bedrock ids carry an `anthropic.` provider prefix."
+  type        = string
+  default     = "anthropic.claude-opus-5"
+}
+
+variable "judge_model" {
+  description = "Bedrock model id for the rail-3 topic judge and rail-5 output guard."
+  type        = string
+  default     = "anthropic.claude-haiku-4-5"
+}
+
+variable "brain_effort" {
+  description = "Effort for the brain. low/medium are strong on Opus 5 and are the main cost lever."
+  type        = string
+  default     = "low"
+
+  validation {
+    condition     = contains(["low", "medium", "high", "xhigh", "max"], var.brain_effort)
+    error_message = "brain_effort must be one of: low, medium, high, xhigh, max."
+  }
+}
+
+variable "log_retention_days" {
+  description = "CloudWatch Logs retention."
+  type        = number
+  default     = 14
+}

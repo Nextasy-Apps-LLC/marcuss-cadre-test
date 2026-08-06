@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and fill in. Gitignored — the account id does not
+# belong in a public repo.
+
+aws_account_id = "REPLACE-12-digit-account-id"
+
+# Account-level singleton. Find it with:
+#   aws iam list-open-id-connect-providers
+github_oidc_provider_arn = "arn:aws:iam::REPLACE:oidc-provider/token.actions.githubusercontent.com"
+
+# Leave false until the ACM certificate reaches ISSUED. See infra/README.md.
+enable_custom_domain = false

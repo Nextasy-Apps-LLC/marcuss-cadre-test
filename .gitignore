@@ -1,0 +1,15 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+# NOTE: .terraform.lock.hcl is deliberately NOT ignored. Committing it pins
+# provider versions and hashes so CI and every machine resolve identically.
+
+# Local config — not secrets, but no reason to publish them
+backend.hcl
+terraform.tfvars
+*.auto.tfvars
+
+# Local
+.DS_Store
