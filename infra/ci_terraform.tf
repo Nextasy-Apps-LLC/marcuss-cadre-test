@@ -22,14 +22,18 @@ data "aws_iam_policy_document" "terraform_assume" {
     }
 
     # `plan` runs on pull_request, `apply` runs from main. Both are needed —
-    # a plan that cannot read state is useless as a review artifact.
+    # a plan that cannot read state is useless as a review artifact. Both the
+    # plain slug and the immutable owner@id/repo@id form are listed — see
+    # github_repo_immutable.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values = [
-        "repo:${var.github_repo}:ref:refs/heads/main",
-        "repo:${var.github_repo}:pull_request",
-      ]
+      values = flatten([
+        for repo in [var.github_repo, var.github_repo_immutable] : [
+          "repo:${repo}:ref:refs/heads/main",
+          "repo:${repo}:pull_request",
+        ]
+      ])
     }
 
     condition {

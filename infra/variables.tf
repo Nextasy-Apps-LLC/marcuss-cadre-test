@@ -49,6 +49,21 @@ variable "github_repo" {
   default     = "Nextasy-Apps-LLC/marcuss-cadre-test"
 }
 
+variable "github_repo_immutable" {
+  description = <<-EOT
+    The same repo in GitHub's immutable OIDC sub format: owner@owner_id/repo@repo_id.
+
+    This org's Actions tokens carry the immutable form in the sub claim, so a
+    trust policy matching only the plain slug never matches and every OIDC
+    assume fails with "Not authorized". Both forms are trusted so a rename of
+    the feature flag in either direction cannot lock CI out. Find the value:
+      gh api /repos/OWNER/REPO/actions/oidc/customization/sub
+    and read `sub_claim_prefix`.
+  EOT
+  type        = string
+  default     = "Nextasy-Apps-LLC@270195565/marcuss-cadre-test@1324634448"
+}
+
 variable "github_oidc_provider_arn" {
   description = <<-EOT
     ARN of the account's existing GitHub Actions OIDC provider.

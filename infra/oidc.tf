@@ -19,11 +19,15 @@ data "aws_iam_policy_document" "ci_assume" {
     }
 
     # Exact sub-claim match, no wildcards. Deploys run only from main; a PR
-    # branch or a fork cannot assume this role.
+    # branch or a fork cannot assume this role. Both the plain slug and the
+    # immutable owner@id/repo@id form are listed — see github_repo_immutable.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:ref:refs/heads/main"]
+      values = [
+        for repo in [var.github_repo, var.github_repo_immutable] :
+        "repo:${repo}:ref:refs/heads/main"
+      ]
     }
 
     condition {
