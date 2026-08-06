@@ -2,8 +2,12 @@ name: CI
 
 on:
   pull_request:
+  # Only main. `branches: ["**"]` also matches the source branch of an open
+  # PR, so every push to a PR branch fired two identical runs — double the
+  # minutes and a duplicated checks list. Branches get their coverage through
+  # the pull_request trigger; this one covers commits that land on main.
   push:
-    branches: ["**"]
+    branches: [main]
   workflow_dispatch:
 
 # A newer push to the same ref makes the in-flight run irrelevant.
