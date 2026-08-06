@@ -1,0 +1,182 @@
+name: Terraform
+
+on:
+  pull_request:
+    paths: ["infra/**", ".github/workflows/terraform.yml"]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan only, or plan and apply"
+        type: choice
+        required: true
+        default: plan
+        options:
+          - plan
+          - apply
+
+concurrency:
+  group: terraform-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  TF_VERSION: "1.13.1"
+  # Must match infra/backend.hcl. Not secret — a bucket name grants nothing
+  # without the IAM role, and the role is OIDC-gated to this repository.
+  STATE_BUCKET: nextasyapps-terraform-state-dev
+  STATE_KEY: cadre/cadre.tfstate
+
+jobs:
+  plan:
+    name: plan
+    # Until the first (local) apply creates the terraform role, TF_ROLE_ARN is
+    # unset and this job can only fail with an opaque AWS auth error. Skipping
+    # reports honestly as "not configured yet" instead of red.
+    if: vars.TF_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.TF_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: cadre-tf-plan-${{ github.run_id }}
+
+      - name: Init
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=$STATE_BUCKET" \
+            -backend-config="key=$STATE_KEY" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="use_lockfile=true" \
+            -backend-config="encrypt=true"
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Validate
+        run: terraform validate
+
+      - name: Plan
+        id: plan
+        # -detailed-exitcode: 0 = no changes, 2 = changes, 1 = error. Lets the
+        # summary say "nothing to do" instead of leaving a reviewer to read a
+        # wall of output to find that out.
+        run: |
+          set +e
+          terraform plan -input=false -lock-timeout=5m -no-color \
+            -var "aws_account_id=${{ vars.AWS_ACCOUNT_ID }}" \
+            -var "github_oidc_provider_arn=${{ vars.OIDC_PROVIDER_ARN }}" \
+            -var "state_bucket=$STATE_BUCKET" \
+            -var "state_key=$STATE_KEY" \
+            -out=tfplan > plan.txt 2>&1
+          code=$?
+          set -e
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          tail -c 60000 plan.txt
+          [ "$code" = "1" ] && exit 1 || exit 0
+
+      - name: Summarise
+        if: always()
+        # `|| true` throughout: this step reports, it does not judge. Letting it
+        # fail on a missing plan.txt would replace the real error with a tail(1)
+        # message, which is exactly what happened on the first run.
+        continue-on-error: true
+        run: |
+          {
+            echo "### terraform plan"
+            echo
+            case "${{ steps.plan.outputs.exitcode }}" in
+              0) echo "No changes. Infrastructure matches the configuration." ;;
+              2) echo "Changes pending — review the plan below before applying." ;;
+              "") echo "Plan did not run — an earlier step failed." ;;
+              *) echo "Plan failed." ;;
+            esac
+            echo
+            if [ -f plan.txt ]; then
+              echo '```'
+              tail -c 40000 plan.txt || true
+              echo '```'
+            else
+              echo "_No plan output was produced._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY" || true
+
+      # Kept for the apply job so it applies exactly what was reviewed, rather
+      # than re-planning against state that may have moved since.
+      - name: Upload plan
+        if: inputs.action == 'apply'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.run_id }}
+          path: infra/tfplan
+          retention-days: 1
+
+  apply:
+    name: apply
+    needs: plan
+    if: inputs.action == 'apply'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+
+    # Same gate as deploy. Inert until the environment has required reviewers.
+    environment:
+      name: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.TF_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: cadre-tf-apply-${{ github.run_id }}
+
+      - name: Init
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=$STATE_BUCKET" \
+            -backend-config="key=$STATE_KEY" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="use_lockfile=true" \
+            -backend-config="encrypt=true"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ github.run_id }}
+          path: infra
+
+      - name: Apply the reviewed plan
+        # Applying the saved plan file, not re-planning. If state changed
+        # between approval and apply, Terraform refuses rather than silently
+        # applying something nobody looked at.
+        run: terraform apply -input=false -lock-timeout=5m -no-color tfplan
+
+      - name: Outputs
+        if: always()
+        run: |
+          {
+            echo "### terraform apply — ${{ job.status }}"
+            echo
+            echo '```'
+            terraform output 2>/dev/null || echo "(no outputs)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
