@@ -124,6 +124,21 @@ terraform apply
 CloudFront rejects an alias whose certificate is not yet `ISSUED`, which is why
 this is a second apply rather than a flag on the first.
 
+**Once this has run, never resync by local apply again.** A local
+`terraform.tfvars` with `enable_custom_domain = false` left over from before
+this step — the exact bootstrap-phase override step 4 tells you to flip —
+will silently tear the alias and certificate back off a *working* custom
+domain the next time anyone runs `terraform apply` from that checkout. That
+happened on 2026-08-07 (issue #37): a local apply reverted a live
+`cadre.marcuss.pro` to the bare `*.cloudfront.net` certificate with no
+warning, mid-apply. `aws_cloudfront_distribution.this` now carries a
+`lifecycle.precondition` that fails the apply if `enable_custom_domain` is
+`false` while the certificate is already `ISSUED`, so this now errors instead
+of silently applying — but the fix once it happens is still always the CI
+`Terraform` workflow (`workflow_dispatch`, `action: apply`), which never
+passes an `enable_custom_domain` override and so always uses this variable's
+`true` default. Never resync with a local apply.
+
 **5. Point the hostname at the distribution**
 
 Cloudflare DNS → CNAME `cadre` → `terraform output dns_cname_target`.
