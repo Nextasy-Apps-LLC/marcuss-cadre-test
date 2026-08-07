@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseFrame, readSse } from "./sse";
+import { parseFrame, readSse, sha256Hex } from "./sse";
 
 /** Build a ReadableStream that emits the given strings as separate chunks. */
 function streamOf(chunks: string[]): ReadableStream<Uint8Array> {
@@ -105,5 +105,21 @@ describe("readSse", () => {
     const out = [];
     for await (const message of readSse(stream)) out.push(message);
     expect(JSON.parse(out[0]!.data)).toEqual({ text: "café" });
+  });
+});
+
+describe("sha256Hex", () => {
+  it("matches the known SHA-256 of an empty payload", async () => {
+    // The well-known constant AWS docs use for empty bodies.
+    expect(await sha256Hex("")).toBe(
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+  });
+
+  it("hashes multi-byte characters over their UTF-8 bytes", async () => {
+    // sha256 of the 5 UTF-8 bytes of "café", not of 4 UTF-16 code units.
+    expect(await sha256Hex("caf\u00e9")).toBe(
+      "850f7dc43910ff890f8879c0ed26fe697c93a067ad93a7d50f466a7028a9bf4e",
+    );
   });
 });
