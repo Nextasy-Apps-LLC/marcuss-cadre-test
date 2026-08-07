@@ -30,6 +30,12 @@ describe("freshSteps", () => {
     }
   });
 
+  it("starts every step with elapsedMs null — nothing has run yet", () => {
+    for (const step of freshSteps()) {
+      expect(step.elapsedMs).toBeNull();
+    }
+  });
+
   it("labels every step with non-empty text", () => {
     for (const step of freshSteps()) {
       expect(step.label.length).toBeGreaterThan(0);

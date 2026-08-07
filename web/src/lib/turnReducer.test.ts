@@ -16,8 +16,13 @@ import {
   type TurnState,
 } from "./turnReducer";
 
-function state(step: StepName, status: StateEvent["status"], detail?: string): StateEvent {
-  return detail === undefined ? { step, status } : { step, status, detail };
+function state(
+  step: StepName,
+  status: StateEvent["status"],
+  detail?: string,
+  elapsed_ms: number | null = null,
+): StateEvent {
+  return detail === undefined ? { step, status, elapsed_ms } : { step, status, detail, elapsed_ms };
 }
 
 describe("freshTurn", () => {
@@ -44,6 +49,56 @@ describe("applyState", () => {
     for (const name of STEPS) {
       if (name !== "injection_check") expect(byName[name]!.status).toBe("pending");
     }
+  });
+});
+
+describe("applyState — elapsedMs mirroring (KB-005)", () => {
+  it("mirrors a wire elapsed_ms integer verbatim into elapsedMs on pass", () => {
+    let turn = freshTurn();
+    turn = applyState(turn, state("brain", "pass", undefined, 842));
+    const step = turn.steps.find((s) => s.name === "brain")!;
+    expect(step.elapsedMs).toBe(842);
+  });
+
+  it("mirrors a wire elapsed_ms integer verbatim into elapsedMs on fail", () => {
+    let turn = freshTurn();
+    turn = applyState(turn, state("injection_check", "fail", "prompt_injection", 12));
+    const step = turn.steps.find((s) => s.name === "injection_check")!;
+    expect(step.elapsedMs).toBe(12);
+  });
+
+  it("keeps elapsedMs null while a step is running", () => {
+    let turn = freshTurn();
+    turn = applyState(turn, state("topic_classifier", "running", undefined, null));
+    const step = turn.steps.find((s) => s.name === "topic_classifier")!;
+    expect(step.elapsedMs).toBeNull();
+  });
+
+  it("keeps elapsedMs null for a skipped step — it never ran, so 0 would misrepresent it", () => {
+    let turn = freshTurn();
+    turn = applyState(turn, state("retrieve", "skipped", undefined, null));
+    const step = turn.steps.find((s) => s.name === "retrieve")!;
+    expect(step.elapsedMs).toBeNull();
+    expect(step.elapsedMs).not.toBe(0);
+  });
+
+  it("mirrors elapsed_ms 0 as a real measured zero, not as null", () => {
+    // An integer >= 0 on pass/fail is a real measurement, even 0ms — must not
+    // collapse to the "unknown" null case.
+    let turn = freshTurn();
+    turn = applyState(turn, state("validate_input", "pass", undefined, 0));
+    const step = turn.steps.find((s) => s.name === "validate_input")!;
+    expect(step.elapsedMs).toBe(0);
+  });
+
+  it("does not disturb other steps' elapsedMs when updating one step", () => {
+    let turn = freshTurn();
+    turn = applyState(turn, state("validate_input", "pass", undefined, 5));
+    turn = applyState(turn, state("injection_check", "running", undefined, null));
+    const byName = Object.fromEntries(turn.steps.map((s) => [s.name, s.elapsedMs]));
+    expect(byName.validate_input).toBe(5);
+    expect(byName.injection_check).toBeNull();
+    expect(byName.topic_classifier).toBeNull();
   });
 });
 
