@@ -105,6 +105,28 @@
       "source": { "issue": 27, "pr": null },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-009",
+      "type": "learning",
+      "area": ["backend", "process"],
+      "tags": ["sse", "streaming", "e2e", "testing", "httpx", "timing"],
+      "title": "A token *count* does not prove SSE streaming — timestamp frames as they arrive off a still-open response",
+      "detail": "`httpx.Client.post(...).text` (or any buffered `.text`/`.json()` read) blocks until the whole response body has arrived, so parsing it afterward and asserting `len(tokens) > N` cannot distinguish genuine incremental delivery from a fast model that chunks one buffered blob into several frames server-side. To prove real streaming, read the response while it is still open (`with http.stream(\"POST\", ...) as response:` + `response.iter_lines()`) and stamp a wall-clock timestamp on each frame as it is parsed; assert the timestamps span a non-zero interval, not just that there is more than one. Applied in #27's rework once real Bedrock access made the answered-turn streaming claim checkable for real.",
+      "source": { "issue": 27, "pr": null },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-010",
+      "type": "gotcha",
+      "area": ["ci", "infra", "process"],
+      "tags": ["oidc", "iam", "stacked-branches", "ci-design", "amendment"],
+      "title": "A CI credential design decided against an issue's original wording can go stale when a stacked branch's base amends the underlying infra",
+      "detail": "A first pass at #27's manual e2e CI job assumed the `ci_deploy` IAM role via OIDC (reusing deploy.yml's `environment: production` pattern) to run `scripts/assert_models.py`, because the original issue text said 'secrets/OIDC reuse per existing workflows' and, at the time, `infra/oidc.tf`'s `ci_deploy` role genuinely carried `bedrock:ListFoundationModels`/`GetFoundationModelAvailability` for exactly that purpose. A same-day amendment to the stacked base branch (#25) swapped the model transport to a bearer-token endpoint (ADR 0002) and, as part of that, `infra/oidc.tf` dropped those Bedrock IAM actions entirely in favor of `ssm:GetParameter` scoped to deploy.yml's own key fetch — silently invalidating the just-written CI design (an OIDC role assumption for permissions that no longer exist on that role). Caught by re-reading `infra/oidc.tf` and `deploy.yml` directly during the rework, not by re-reading the issue text. Next cycle: when a stacked branch's base receives a same-day amendment, re-diff the actual infra files (`infra/*.tf`, the workflows) before trusting a CI/credential design already decided from the issue's original phrasing — the issue text and the live infra state can diverge mid-cycle.",
+      "source": { "issue": 27, "pr": null },
+      "date": "2026-08-07",
+      "status": "active"
     }
   ]
 }
