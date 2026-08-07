@@ -150,3 +150,16 @@ resource "aws_lambda_permission" "cloudfront" {
   source_arn             = aws_cloudfront_distribution.this.arn
   function_url_auth_type = "AWS_IAM"
 }
+
+# Function URLs created since October 2025 additionally require
+# lambda:InvokeFunction for the calling principal — InvokeFunctionUrl alone
+# gets a 403 with the same generic "Forbidden" body as a missing signature,
+# which made this miserable to diagnose. Everything else about the OAC setup
+# was correct; this statement is the difference between 403 and 200.
+resource "aws_lambda_permission" "cloudfront_invoke" {
+  statement_id  = "AllowCloudFrontInvokeFunction"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.this.function_name
+  principal     = "cloudfront.amazonaws.com"
+  source_arn    = aws_cloudfront_distribution.this.arn
+}
