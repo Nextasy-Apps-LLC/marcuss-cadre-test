@@ -148,9 +148,10 @@ resource "aws_cloudfront_distribution" "this" {
       origin_protocol_policy = "https-only"
       origin_ssl_protocols   = ["TLSv1.2"]
 
-      # A brain turn can run well past the 30s default. These must exceed the
-      # Lambda timeout or CloudFront returns 504 while the function is still
-      # happily streaming.
+      # Must be >= var.lambda_timeout_s or CloudFront 504s while the function
+      # is still streaming. Both sit at 60s — CloudFront's default cap; going
+      # higher needs an AWS quota increase, so the Lambda timeout is capped to
+      # 60 instead (see lambda_timeout_s).
       origin_read_timeout      = 60
       origin_keepalive_timeout = 60
     }
