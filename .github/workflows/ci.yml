@@ -9,6 +9,19 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: "Also run the e2e job below (hits a real target; costs real Bedrock turns when combined with e2e_live_bedrock)"
+        type: boolean
+        default: false
+      e2e_base_url:
+        description: "BASE_URL for the e2e job — the target the suite runs against"
+        type: string
+        default: "https://cadre.marcuss.pro"
+      e2e_live_bedrock:
+        description: "Force CADRE_E2E_BEDROCK=1 — also runs the cases that need a reachable model (requires_bedrock). Leave off to run only the deterministic + fail-open-honesty cases."
+        type: boolean
+        default: false
 
 # A newer push to the same ref makes the in-flight run irrelevant.
 concurrency:
@@ -120,3 +133,71 @@ jobs:
 
       - name: Validate
         run: terraform validate
+
+  # Manual-only and never part of `push`/`pull_request`: a turn against a real
+  # target spends real Bedrock money once model access is live, so this job
+  # must not gate every push (issue #27). It only runs when a `workflow_dispatch`
+  # is fired with `run_e2e: true` — the plain "rerun the build" dispatch that
+  # already existed leaves it skipped.
+  e2e:
+    name: e2e — guarded pipeline against a real target
+    if: github.event_name == 'workflow_dispatch' && inputs.run_e2e
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # Reuses deploy.yml's approval gate rather than inventing a second one: a
+    # human reviews before turns run against a real target, same as before a
+    # deploy runs. KB-006: a job inside `environment: production` gets
+    # sub = repo:...:environment:production instead of the ref form — that
+    # exact entry is already in infra/oidc.tf's `deploy_subs`, so this job can
+    # assume the existing deploy role without any new Terraform.
+    environment:
+      name: production
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - run: pip install -r requirements-dev.txt
+
+      - name: Configure AWS credentials
+        # OIDC — no access key exists for this repository. Only the
+        # `assert_models` pre-check below actually calls AWS; the e2e suite
+        # itself talks plain HTTP to BASE_URL (see tests/e2e/conftest.py) and
+        # needs no credentials of its own.
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: cadre-e2e-${{ github.run_id }}
+
+      - name: Assert the target account can invoke every configured model
+        # Only when live-model cases are requested: they are worthless
+        # against an account Bedrock has not authorised (every judge fails
+        # open, so a brainless account still reports "some turn completed").
+        # Same check deploy.yml runs before a build, reused here so a forced
+        # live run fails fast with a clear reason instead of 55s per test.
+        if: inputs.e2e_live_bedrock
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet boto3
+          CADRE_BEDROCK_REGION="$AWS_REGION" python -m scripts.assert_models
+
+      - name: Run the e2e suite
+        env:
+          BASE_URL: ${{ inputs.e2e_base_url }}
+          CADRE_E2E_BEDROCK: ${{ inputs.e2e_live_bedrock && '1' || '0' }}
+        run: pytest -m e2e -v
