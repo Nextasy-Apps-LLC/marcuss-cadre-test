@@ -94,6 +94,17 @@
       "source": { "issue": null, "pr": null },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-008",
+      "type": "gotcha",
+      "area": ["backend", "process"],
+      "tags": ["pytest", "python", "indentation", "edit-tool", "class-nesting", "test-authoring"],
+      "title": "A partial-file string-replacement edit that inserts a new `class` can silently re-parent trailing methods it never touched",
+      "detail": "Inserting `class NewThing:` (plus its own methods) via an old_string/new_string edit that only covers part of an existing class body leaves every subsequent same-indent method in the file textually following the edit — Python nests by indentation alone, not by which edit produced a line, so those untouched methods silently become part of the new class instead of the original one. The diff looks correct (only additions); the breakage only shows up as tests vanishing from the wrong class in `pytest --collect-only` or a class report a smaller test count than expected. Caught here when `TestAnsweredTurn::test_every_guard_really_ran` and three siblings disappeared from collection right after adding `TestSuggestionChips` mid-file. Fix/prevention: insert a new top-level class at a class boundary (right after the previous class's last method, immediately before the next class or a well-separated blank region), and always run `pytest --collect-only -q` right after any edit that adds a class or changes indentation in a test file — don't trust the diff alone.",
+      "source": { "issue": 27, "pr": null },
+      "date": "2026-08-07",
+      "status": "active"
     }
   ]
 }
