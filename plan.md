@@ -107,7 +107,7 @@ Cadre AI support assistant for prospective and existing clients: services (AI St
 
 ## Phases
 
-- [ ] **Phase 1 — LangGraph engine + SSE v2**: `StateGraph`, nodes with mocked-seam unit tests, `state` events, refusal/escalation states, persona v1, frontend protocol update + pipeline stepper.
+- [x] **Phase 1 — LangGraph engine + SSE v2**: `StateGraph`, nodes with mocked-seam unit tests, `state` events, refusal/escalation states, persona v1, frontend protocol update + pipeline stepper. — shipped via #24/#25/#26/#27 (PRs #29, #31, #35)
 - [ ] **Phase 2 — Langfuse traceability**: keys via SSM SecureString (`SET_OUT_OF_BAND` pattern), callback wiring, public traces, `trace` event, frontend trace link, flush hardening for Lambda.
 - [ ] **Phase 3 — RAG KB**: ingestion pipeline + LanceDB artifact; `retrieve` node (condense → embed → search) wired between `topic_classifier` and `brain`; inline citations; OpenAI key via SSM; IAM/env deltas.
 - [ ] **Phase 4 — Evaluation harness**: golden dataset; headless graph runner; deterministic outcome/citation assertions; LLM-judge rubric (groundedness, correctness, persona) on a non-brain model family; runs logged as Langfuse experiments for before/after comparison.
