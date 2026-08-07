@@ -14,7 +14,7 @@ invariants (e.g. `cadre-deploy` must never gain
 
 | Workflow | Triggers | What it does |
 |---|---|---|
-| `ci.yml` | PR, push to `main`, dispatch | Web typecheck/test/build, backend pytest, arm64 image build (no push), terraform fmt/validate. Never touches AWS. |
+| `ci.yml` | PR, push to `main`, dispatch | Web typecheck/test/build, backend pytest, arm64 image build (no push), terraform fmt/validate. Never touches AWS. A manual dispatch can additionally run the e2e suite against a real target. |
 | `deploy.yml` | `workflow_dispatch` only | Deploy or roll back to a chosen SHA, behind the `production` approval gate. |
 | `terraform.yml` | PR touching `infra/**`, dispatch | Plan on PR/dispatch; apply on dispatch from the reviewed `tfplan` artifact. |
 | `docs.yml` | Push touching `docs/**`, `mkdocs.yml`, `adr/**`, dispatch | Builds the MkDocs site with `--strict`, publishes to GitHub Pages. |
@@ -22,11 +22,19 @@ invariants (e.g. `cadre-deploy` must never gain
 
 ## ci.yml — the gate
 
-Four parallel jobs: `web` (Node 22 — the `web/dist` artifact is
+Four push/PR jobs — `web` (Node 22 — the `web/dist` artifact is
 inspection-only; deploy rebuilds from source), `backend` (Python 3.13,
 `pytest -q`), `image` (QEMU + Buildx arm64, `push: false` — catches a broken
-Dockerfile pre-deploy), `terraform` (fmt `-check`, validate). **Nothing in CI
-boots the container** — the post-deploy `/healthz` smoke is the first real boot.
+Dockerfile pre-deploy), `terraform` (fmt `-check`, validate) — plus a
+**manual-only `e2e` job**. The e2e job never runs on push/PR: it hits a real
+target (defaults to `https://cadre.marcuss.pro`) and costs real Bedrock turns,
+so it only fires on dispatch with `run_e2e: true` (issue #27). It needs no
+OIDC — since ADR 0002 nothing in the suite is AWS-authenticated — and the
+live-model cases read the key from the `BEDROCK_API_KEY` repo secret
+(created out of band), skipping with a loud `::warning::` if it's missing.
+Forcing `e2e_live_bedrock` also runs `scripts/assert_models` first. **Nothing
+on push boots the container** — the post-deploy `/healthz` smoke is the first
+real boot.
 
 ## deploy.yml — shipping is a decision
 
@@ -39,7 +47,8 @@ flowchart TD
   P --> G{"Approval gate on environment production"}
   G -->|approved| D["deploy job"]
   D --> E["OIDC creds, ECR login, image exists check"]
-  E --> B1["build and push image if deploy and tag missing"]
+  E --> AM["assert_models: every configured Mantle model id<br/>listed and invokable (key from SSM)"]
+  AM --> B1["build and push image if deploy and tag missing"]
   B1 --> L["lambda update-function-code, wait updated"]
   L --> S["build web, S3 sync assets then index.html"]
   S --> I["CloudFront invalidation and wait"]
@@ -49,11 +58,15 @@ flowchart TD
 - The **plan job** is credential-free and runs *before* the gate: SHA format,
   existence, `git merge-base --is-ancestor` against `origin/main` — only
   merged commits are deployable.
-- The **deploy job** assumes `cadre-deploy`, pushes the image only when the
-  immutable tag is missing (idempotent), then `update-function-code`, S3 sync
-  — assets first (`immutable`), `index.html` last (`max-age=0`), no
-  `--delete` — invalidation, smoke `/healthz` then `/`. Never
-  `cp --metadata-directive REPLACE` (wipes Content-Type).
+- The **deploy job** assumes `cadre-deploy`, then runs
+  `scripts/assert_models.py` **before the build** (on rollbacks too — a
+  rollback restores code, not account state): every model step fails open, so
+  a wrong id would otherwise ship a working-looking chat with amber rails
+  (KB-009). The key is fetched from SSM by the role, never echoed. Then it
+  pushes the image only when the immutable tag is missing (idempotent),
+  `update-function-code`, S3 sync — assets first (`immutable`), `index.html`
+  last (`max-age=0`), no `--delete` — invalidation, smoke `/healthz` then
+  `/`. Never `cp --metadata-directive REPLACE` (wipes Content-Type).
 - The `production` gate is **inert until configured** — see
   `.github/DEPLOYMENT.md`.
 

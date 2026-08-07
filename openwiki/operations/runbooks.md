@@ -13,7 +13,8 @@ here changes.
 ## First apply (bootstrap)
 
 Runs locally with admin credentials — the `cadre-terraform` CI role is created
-*by* this Terraform. Keep `enable_custom_domain = false`; the stack comes up
+*by* this Terraform. Set `enable_custom_domain = false` in
+`terraform.tfvars` (the variable now defaults to `true`); the stack comes up
 working on `*.cloudfront.net` (`terraform output site_url`).
 
 ```bash
@@ -36,8 +37,12 @@ human step:
    `PENDING_VALIDATION` forever, no error. Check Cloudflare didn't append the
    zone name twice.
 3. Wait for issuance: `terraform refresh && terraform output acm_certificate_status`.
-4. Set `enable_custom_domain = true` and apply — CloudFront rejects an alias
-   whose cert isn't `ISSUED`, hence the second apply.
+4. Now that `enable_custom_domain` defaults to `true`, **delete the `false`
+   override from local `terraform.tfvars`** and let the CI terraform apply
+   attach the domain (or apply locally with the override gone) — CloudFront
+   rejects an alias whose cert isn't `ISSUED`, hence the second apply. A local
+   apply that still passes `false` is blocked by the drift-guard precondition
+   (issue #37) because it would silently revert the live domain.
 5. Cloudflare CNAME `cadre` → `terraform output dns_cname_target`, **DNS
    only**; HTTP/3 must stay off (QUIC severs SSE).
 6. Verify in a browser, not curl — `curl` ignores `alt-svc` and passes even
@@ -68,11 +73,19 @@ already in ECR — it can never ship code that didn't pass CI. Same
 ## Cost
 
 Idle cost is cents (ECR, PriceClass_100, one-page S3, a log group); Lambda +
-Bedrock bill per request. `brain_effort` is the main cost lever.
+Bedrock bill per request. The levers are the model roster (`brain_model` etc.)
+and the token budgets in `backend/app/config.py` — a turn spends four judge
+calls plus the brain's generation.
 
 ## Watch-outs
 
-- Every brain turn must finish inside 60s — Lambda timeout is pinned to
-  CloudFront's origin-timeout cap; raising it needs an AWS quota increase first.
-- Nothing in CI boots the container — the post-deploy `/healthz` smoke is the
-  first real boot, so container-runtime bugs surface only at deploy time.
+- A whole turn must finish inside 60s — Lambda timeout is pinned to
+  CloudFront's origin-timeout cap; raising it needs an AWS quota increase first,
+  and heartbeats don't extend it (KB-004).
+- Push CI never boots the container — the post-deploy `/healthz` smoke is the
+  first real boot, so container-runtime bugs surface only at deploy time. The
+  manual `e2e` dispatch ([CI/CD](/openwiki/workflows/ci-cd.md)) is the only CI
+  path that exercises the real target, and it costs real Bedrock turns.
+- A model id typo ships a *working-looking* chat with amber rails, not a crash
+  (KB-009) — run `python -m scripts.assert_models` before assuming a
+  "degraded everywhere" symptom is a Bedrock outage.

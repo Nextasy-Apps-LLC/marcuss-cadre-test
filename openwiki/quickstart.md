@@ -8,22 +8,24 @@ tags: [quickstart, cadre, entrypoint]
 # cadre — quickstart
 
 `cadre` is a guardrailed streaming chatbot at `cadre.marcuss.pro`: a React page
-(private S3) plus a `POST /ask` endpoint that streams SSE — rail verdicts, then
-answer tokens, then `done` — from FastAPI on an arm64 Lambda container, all
-behind one CloudFront distribution. The backend is a
-[walking skeleton](/openwiki/domain/sse-contract.md): the SSE plumbing is real
-end-to-end, the "brain" is a stub.
+(private S3) plus a `POST /ask` endpoint that streams SSE — pipeline step
+verdicts, then answer tokens, then `done` — from FastAPI on an arm64 Lambda
+container, all behind one CloudFront distribution. The backend is a
+[LangGraph conversation engine](/openwiki/domain/sse-contract.md) driving
+Bedrock models over the Mantle API (SSE protocol v2); one secret, the Bedrock
+API key, lives in SSM per [ADR 0002](/openwiki/architecture/overview.md).
 
-Read `adr/README.md` first — ADR 0001 records the load-bearing decisions.
-`infra/README.md` is the living operational doc. Per-area rules:
-`backend/CLAUDE.md`, `web/CLAUDE.md`, `infra/CLAUDE.md`.
+Read `adr/README.md` first — ADR 0001 records the load-bearing decisions, ADR
+0002 supersedes its Bedrock-auth statements. `infra/README.md` is the living
+operational doc. Per-area rules: `backend/CLAUDE.md`, `web/CLAUDE.md`,
+`infra/CLAUDE.md`.
 
 ## What this wiki covers
 
 | Page | What it documents |
 |---|---|
-| [Architecture overview](/openwiki/architecture/overview.md) | One distribution, two origins; the four silent streaming-breakers; the two-grant 403 trap; zero secrets. |
-| [SSE contract and rails](/openwiki/domain/sse-contract.md) | The four-event wire format, six rails, client rail-status semantics, the fetch-SSE client, contract tests. |
+| [Architecture overview](/openwiki/architecture/overview.md) | One distribution, two origins; the four silent streaming-breakers; the two-grant 403 trap; one secret in SSM (ADR 0002). |
+| [SSE contract and steps](/openwiki/domain/sse-contract.md) | Protocol v2: the four events, six pipeline steps, status/outcome semantics, the LangGraph backend, the fetch-SSE client, contract tests. |
 | [Terraform infrastructure](/openwiki/infrastructure/terraform.md) | Resource families, variables, the two OIDC roles, Lambda env vars, invariants. |
 | [Operations runbooks](/openwiki/operations/runbooks.md) | Bootstrap, two-phase custom domain, 403 bisection, rollback, cost. |
 | [CI/CD and deployment](/openwiki/workflows/ci-cd.md) | The five workflows, the approval-gated deploy/rollback pipeline, MkDocs. |
@@ -45,8 +47,10 @@ time rather than copying them.
 
 ## Backlog
 
-- **Real Bedrock brain** — `_reply_for()` in `backend/app/main.py` is the seam;
-  the `CADRE_*_MODEL` / `CADRE_BRAIN_EFFORT` env vars are already injected by
-  `infra/lambda.tf` but not yet read by backend code.
+- **KB retrieval (`retrieve` step)** — `backend/app/graph/nodes.py` reports
+  `skipped`/`kb_not_wired`; plan.md Phase 3 (query condensing, LanceDB search,
+  citations) is not built.
+- **Langfuse tracing** — plan.md's `trace` event, public trace links, and the
+  client "View trace" chip are not implemented.
 - **`docs/ci-cd.md` workflow count** — still says "four workflows", missing
   `openwiki-update.yml`; a source-docs fix.
