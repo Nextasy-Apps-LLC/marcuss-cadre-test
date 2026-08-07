@@ -47,7 +47,7 @@ export default function App() {
   return (
     <main className="shell">
       <header className="masthead">
-        <h1>cadre</h1>
+        <h1>Cadre</h1>
         <p className="tagline">
           Every guardrail, visible as it runs.
         </p>
