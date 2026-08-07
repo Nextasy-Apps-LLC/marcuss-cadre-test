@@ -2,13 +2,15 @@
 
 `cadre` is a guardrailed streaming chatbot, live at
 [cadre.marcuss.pro](https://cadre.marcuss.pro). A React page and a
-`POST /ask` endpoint that streams Server-Sent Events — rail verdicts first,
-then answer tokens, then a terminal `done` event — from a FastAPI backend
-running as an arm64 container on Lambda.
+`POST /ask` endpoint that streams Server-Sent Events — per-step pipeline
+verdicts as they happen, then answer tokens, then a terminal `done` event —
+from a FastAPI backend running a **LangGraph conversation engine** as an arm64
+container on Lambda.
 
 This site is the reference documentation. It is built from the repository, so
 the pages under **Infrastructure** and **Decisions** are the same Markdown that
-lives in `infra/` and `adr/`, not a second copy of it.
+lives in `infra/` and `adr/`, not a second copy of it. Reviewing the
+submission? Start with the [review walkthrough](review.md).
 
 ## The shape
 
@@ -46,10 +48,10 @@ hardening: the AWS account carries an org-level data perimeter that rejects
           │ AWS_IAM   │  └─────────────┘
           │ STREAM    │
           └─────┬─────┘
-                │ SigV4 (execution role)
-          ┌─────▼─────┐
-          │  Bedrock  │
-          └───────────┘
+                │ bearer token (ADR 0002)
+          ┌─────▼─────────────┐
+          │ Bedrock (Mantle)  │
+          └───────────────────┘
 ```
 
 ## Why not API Gateway
@@ -73,77 +75,82 @@ The full list of settings that will quietly break streaming is in
 and the reasoning behind each is in
 [ADR 0001](adr/0001-streaming-chatbot-cloudfront-lambda-s3.md).
 
-## The SSE contract
+## The pipeline and the SSE contract (protocol v2)
 
-`backend/app/sse.py` is the wire format, and `web/src/types.ts` mirrors it
-verbatim. Four event types:
+The backend is a LangGraph `StateGraph`: every step of the guarded pipeline is
+a node, every terminal (`answered` / `refused` / `escalated` / `error`) is an
+explicit state, and the SSE stream is a live projection of the graph's
+progress. `backend/app/sse.py` is the wire format's single source of truth, and
+`web/src/types.ts` mirrors it verbatim. Four event types plus a `: ping`
+comment heartbeat:
 
 | Event | Payload |
 |---|---|
-| `rail` | `rail_id`, `rail_name`, `passed`, `latency_ms`, `reason`, `degraded` |
+| `state` | `step`, `status` (`running` \| `pass` \| `fail` \| `skipped`), `detail?` |
 | `token` | `text` |
-| `done` | `refused`, `refusal_reason`, `latency_ms` |
+| `done` | `outcome` (`answered` \| `refused` \| `escalated` \| `error`), `refusal_text?` |
 | `error` | `message` |
 
-Six rails run in order, and the page renders all six as pending up front so a
-stream that dies mid-turn shows *which* rail never reported rather than
-spinning forever:
+Six steps run in order, and the page paints one stepper chip per step up front:
 
-| Rail | Name | Role |
-|---|---|---|
-| `rail1` | `input_validation` | Shape, length, control characters |
-| `rail2` | `injection` | Prompt-injection screen |
-| `rail3` | `topic` | On-topic judge |
-| `rail4` | `brain` | The answer itself |
-| `rail5` | `output_guard` | Output-side guard |
-| `rail6` | `scrub` | Final redaction pass |
+| Step | Role |
+|---|---|
+| `validate_input` | Deterministic checks (rate limit, id shape, length, control characters) + an SLM validity judge |
+| `injection_check` | Prompt-injection screen |
+| `topic_classifier` | Three-way route: `in_scope` / `off_topic` / `needs_human` (escalation) |
+| `retrieve` | KB retrieval seam — reports `skipped` (`kb_not_wired`) until the RAG phase lands |
+| `brain` | The answer itself, streamed token by token |
+| `output_safety` | Deterministic URL/PII scrub + a guard model on the complete reply |
 
-A rail verdict carries `degraded` separately from `passed`. When a rail's model
-call fails, the fail-open policy returns a pass — but the client renders that
-amber, never green. An outage that reads as success is worse than a visible
-outage.
+A failing check routes to a `refuse` terminal; `needs_human` routes to
+`escalate` with a booking link. Skips are **server-authoritative**: on a
+terminal refusal the server emits `state {status: "skipped"}` for every step
+that never reported, so the client never guesses what silence means. A `pass`
+whose `detail` is `degraded` came from the fail-open policy — a model outage
+degrades observability, never a visitor's turn — and renders amber, never
+green. The full contract semantics live next to the code in
+[`backend/CLAUDE.md`](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/backend/CLAUDE.md).
 
-!!! note "The backend is a walking skeleton"
-    `backend/app/main.py` currently answers `ping` with `pong` and stubs
-    everything else, while implementing the SSE contract in full. That was
-    deliberate: it proves the React client, the CloudFront streaming path and
-    the deploy pipeline end to end before any model is wired in. Replacing
-    `_reply_for()` with real inference is then a change to one function rather
-    than to the whole shape.
+## Secrets: exactly one, by decision
 
-## Zero secrets
-
-There is no static credential anywhere in this stack, which is why the
-repository can be public without secret-scanning anxiety:
+ADR 0001 designed a zero-secret stack; [ADR 0002](adr/0002-bedrock-mantle-api-key.md)
+knowingly retracted one row of it when classic `bedrock-runtime` turned out to
+be `NOT_AUTHORIZED` account-wide — model calls now go over Bedrock's
+OpenAI-compatible Mantle endpoint with a Bedrock API key as a bearer token.
 
 | Hop | How it authenticates |
 |---|---|
-| Lambda → Bedrock | SigV4 from the execution role. No API key exists to leak. |
+| Lambda → Bedrock | Bearer token from an SSM `SecureString` (`/cadre/bedrock-api-key`), injected as `AWS_BEARER_TOKEN_BEDROCK`. The one secret in the stack. |
 | GitHub Actions → AWS | OIDC only. No `AWS_ACCESS_KEY_ID` in repository secrets. |
 | CloudFront → Lambda URL | Lambda-typed OAC, SigV4-signed. |
 | CloudFront → S3 | S3-typed OAC. The bucket blocks all public access. |
 
 `terraform.tfvars` and `backend.hcl` are gitignored because an account id and a
 state bucket name are pointless things to publish, not because they are
-sensitive. The pattern for the first real secret — most likely an observability
-key — is pre-agreed rather than improvised: an SSM `SecureString` seeded with a
-placeholder and `lifecycle { ignore_changes = [value] }`, written out of band.
+sensitive.
 
 ## Repository layout
 
 ```
-backend/     FastAPI app + Dockerfile (arm64, Lambda Web Adapter)
-web/         React + Vite single page, Vitest unit tests
+backend/     FastAPI + LangGraph engine, Dockerfile (arm64, Lambda Web Adapter)
+web/         React + Vite page with the live pipeline stepper, Vitest tests
 infra/       Terraform — CloudFront, Lambda, S3, ACM, OIDC roles
 adr/         Architecture decision records (MADR format)
+kb/          learnings.json — the compounding knowledge base
+.claude/     Compound workflow: skills, agents, kanban recipe
 docs/        This site
 ```
 
+`plan.md` at the repository root is the epic: architecture, model roster,
+phases, and the scope-decision table.
+
 ## Where to go next
 
+- **[Review walkthrough](review.md)** — the demo script and the
+  dimension-by-dimension evidence map for reviewers.
 - **[Infrastructure](infrastructure.md)** — the operational doc: first apply,
   attaching the custom domain, the streaming-breakers checklist, cost.
-- **[CI and deployment](ci-cd.md)** — what the three workflows do and why
+- **[CI and deployment](ci-cd.md)** — what the workflows do and why
   shipping is manual.
 - **[Decisions](adr/index.md)** — why the stack is shaped this way, including
   the traps that cost real time.

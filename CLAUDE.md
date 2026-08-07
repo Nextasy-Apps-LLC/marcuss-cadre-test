@@ -2,10 +2,11 @@
 
 `cadre` — a guardrailed streaming chatbot at `cadre.marcuss.pro`: a React page
 plus a `POST /ask` SSE endpoint on one CloudFront distribution (private S3 +
-`AWS_IAM` Lambda Function URL), backed by Bedrock.
+`AWS_IAM` Lambda Function URL), backed by a LangGraph engine calling Bedrock.
 
-**Read `adr/README.md` first.** ADR 0001 records the load-bearing decisions.
-Don't fight it without a superseding ADR. Keep `infra/README.md` in sync.
+**Read `adr/README.md` first.** ADR 0001 and 0002 record the load-bearing
+decisions. Don't fight them without a superseding ADR. Keep `infra/README.md`
+in sync.
 
 **Scoped rules:** `infra/CLAUDE.md` (Terraform), `web/CLAUDE.md` (React/SSE
 client), `backend/CLAUDE.md` (FastAPI/SSE server) — each loads automatically

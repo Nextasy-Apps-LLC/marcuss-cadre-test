@@ -1,14 +1,16 @@
 # CI and deployment
 
-Four workflows in `.github/workflows/`. Only one of them can change production,
-and it cannot be triggered by a merge.
+Five workflows in `.github/workflows/`. Only two of them can change
+production — the Terraform apply and the deploy — and neither can be triggered
+by a merge.
 
 | Workflow | Trigger | Touches AWS? |
 |---|---|---|
-| `ci.yml` | every PR, pushes to `main`, manual | No |
+| `ci.yml` | every PR, pushes to `main`, manual | Only the opt-in `e2e` job, and only Bedrock via an API key — no IAM |
 | `terraform.yml` | PRs touching `infra/`, manual | Yes — plan always, apply only on request |
 | `deploy.yml` | manual only | Yes |
 | `docs.yml` | pushes to `main` touching docs, manual | No — publishes to GitHub Pages |
+| `openwiki-update.yml` | daily schedule, manual | No — regenerates `openwiki/` via a PR |
 
 ## `ci.yml` — the gate on every change
 
@@ -20,9 +22,9 @@ from the `pull_request` trigger instead.
 
 Concurrency is grouped per ref with `cancel-in-progress: true`; a newer push
 makes the in-flight run irrelevant. Permissions are `contents: read` — CI never
-authenticates to AWS.
+assumes an AWS IAM role.
 
-Four jobs run in parallel:
+Four jobs run in parallel on every PR and push:
 
 === "web"
 
@@ -63,6 +65,16 @@ Four jobs run in parallel:
     with CI green. A `docker run -p 8080:8080` smoke step would close it; it is
     not built yet. See
     [ADR 0001, decision 9](adr/0001-streaming-chatbot-cloudfront-lambda-s3.md).
+
+A fifth job, `e2e`, exists but never runs on push or PR: it only fires on a
+`workflow_dispatch` with `run_e2e: true`, points the backend e2e suite at a
+real target via `e2e_base_url` (default: production), and with
+`e2e_live_bedrock` also drives the live-model cases using the `BEDROCK_API_KEY`
+repository secret. If that flag is requested and the secret is absent, the job
+skips with a visible warning annotation rather than failing or silently
+running only the deterministic cases. The gate's reasoning and the local
+equivalent are documented in
+[`backend/tests/e2e/README.md`](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/backend/tests/e2e/README.md).
 
 ## `terraform.yml` — plan on PR, apply on request
 
@@ -194,6 +206,14 @@ mkdocs serve            # live preview on :8000
 mkdocs build --strict   # exactly what CI runs
 ```
 
+## `openwiki-update.yml` — the repo knowledge base
+
+Runs on a daily schedule plus manual dispatch. It regenerates the pages under
+`openwiki/` and opens a PR (branch `openwiki/update`) — never a direct push —
+so the generated docs go through the same history as everything else. It checks out
+with `fetch-depth: 0`: a shallow clone hides the commit OpenWiki last
+documented, so the update would diff against an empty change summary.
+
 ## Repository settings the workflows depend on
 
 The workflow files describe a gate; they do not create one. `environment: production`
@@ -204,8 +224,11 @@ protection on `main`, and the repository variables (`AWS_REGION`,
 `CLOUDFRONT_DISTRIBUTION_ID`, `SITE_URL`, `TF_ROLE_ARN`, `AWS_ACCOUNT_ID`,
 `OIDC_PROVIDER_ARN`), all of which come from `terraform output`.
 
-There are no repository **secrets**. Every value above is an identifier;
-access is granted by the OIDC trust policy, not by knowing the string.
+There is exactly one repository **secret**: `BEDROCK_API_KEY`, read only by
+the dispatch-gated `e2e` job in `ci.yml` ([ADR 0002](adr/0002-bedrock-mantle-api-key.md)
+made the Bedrock key the stack's one secret). Every value above is an
+identifier, not a credential; AWS access is granted by the OIDC trust policy,
+not by knowing the string.
 
 !!! warning "The environment-sub trap"
     A job running inside `environment: production` gets
