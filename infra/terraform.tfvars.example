@@ -11,5 +11,7 @@ github_oidc_provider_arn = "arn:aws:iam::REPLACE:oidc-provider/token.actions.git
 state_bucket = "REPLACE-terraform-state-bucket"
 state_key    = "cadre/cadre.tfstate"
 
-# Leave false until the ACM certificate reaches ISSUED. See infra/README.md.
-enable_custom_domain = false
+# Only needed when rebuilding from scratch: keep false until the ACM
+# certificate reaches ISSUED, then delete the line (default is true).
+# See infra/README.md.
+# enable_custom_domain = false
