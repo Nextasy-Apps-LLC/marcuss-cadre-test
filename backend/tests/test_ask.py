@@ -369,7 +369,7 @@ class TestSupportingEndpoints:
         # Three routes need no auto-docs, and they would be a public,
         # unauthenticated surface behind CloudFront.
         assert client.get("/docs").status_code == 404
-        assert client.get("/openapi.json").status_code == 404
+        assert client.get("/redoc").status_code == 404
 
 
 class TestNoV1Contract:
