@@ -77,9 +77,9 @@ variable "lambda_memory_mb" {
 }
 
 variable "lambda_timeout_s" {
-  description = "Lambda timeout (seconds). Must exceed the worst-case brain turn plus both guard calls."
+  description = "Lambda timeout (seconds). Capped at 60 to match CloudFront's origin_read_timeout — raising it past 60 needs an AWS quota increase on the distribution's origin response timeout, or the function outlives the connection."
   type        = number
-  default     = 120
+  default     = 60
 }
 
 variable "brain_model" {

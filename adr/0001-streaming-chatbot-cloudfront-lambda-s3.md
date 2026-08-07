@@ -75,7 +75,7 @@ silently break streaming" — keep both in sync):
 | `cache_policy_id = Managed-CachingDisabled` on the API behaviors | Any non-zero TTL makes CloudFront buffer the response to store it. |
 | `compress = false` on the API behaviors | Compression buffers the body to compress it. |
 | `http_version = "http2"` on the distribution | HTTP/3 (QUIC) severs long SSE mid-response on this edge (`ERR_QUIC_PROTOCOL_ERROR`). `curl` ignores `alt-svc`, so it passes a curl smoke test and breaks every real visitor. |
-| `origin_read_timeout` / `origin_keepalive_timeout` on the Lambda origin | Must exceed `var.lambda_timeout_s`, else CloudFront 504s mid-stream. **Committed 60s vs a 120s Lambda timeout — currently violated, see Consequences.** |
+| `origin_read_timeout` / `origin_keepalive_timeout` on the Lambda origin | Must be ≥ `var.lambda_timeout_s`, else CloudFront 504s mid-stream. Both are 60s: CloudFront caps at 60 without a quota increase, so the Lambda timeout is capped to match. |
 
 ### 3. Function URL auth: `AWS_IAM` + OAC — and the two 403s
 
@@ -222,9 +222,9 @@ blocks recovery.
 - `ManagedServices` is service-wildcarded, so the reviewer gate — a process
   control — is the real boundary.
 - Nothing in CI boots the container before production (decision 9).
-- **Open:** origin timeouts are 60s against a 120s `lambda_timeout_s`,
-  contradicting decision 2's invariant. Align them before a slow turn hits the
-  CloudFront timeout first.
+- Every brain turn (rails + Bedrock calls) must finish inside 60s: the Lambda
+  timeout is pinned to CloudFront's 60s origin-timeout cap. Buying more time
+  means an AWS quota increase on the distribution first, then raising both.
 
 ## Related
 
