@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { linkify } from "../lib/linkify";
 import type { ChatMessage } from "../types";
 
 interface Props {
@@ -8,7 +9,7 @@ interface Props {
 
 const WHO_LABEL: Record<ChatMessage["who"], string> = {
   you: "you",
-  cadre: "cadre",
+  cadre: "cadreai-bot",
   system: "",
 };
 
@@ -41,7 +42,23 @@ export function Transcript({ messages }: Props) {
             // transcript on each token.
             aria-live={message.status === "streaming" ? "polite" : undefined}
           >
-            {message.text}
+            {message.who === "cadre" && message.status === "done"
+              ? linkify(message.text).map((segment, i) =>
+                  segment.type === "link" ? (
+                    <a
+                      key={i}
+                      href={segment.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {segment.label}
+                    </a>
+                  ) : (
+                    // eslint-disable-next-line react/no-array-index-key -- segments are a stable, order-only split of static settled text
+                    <span key={i}>{segment.value}</span>
+                  ),
+                )
+              : message.text}
             {message.status === "pending" && (
               <span className="cursor" aria-hidden="true" />
             )}
