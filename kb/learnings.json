@@ -118,6 +118,72 @@
       "status": "active"
     },
     {
+      "id": "KB-014",
+      "type": "debug",
+      "area": ["infra", "backend"],
+      "tags": ["bedrock", "mantle", "model-access", "authorization", "ValidationException", "api-key", "sigv4", "aws"],
+      "title": "Bedrock SigV4 dead on an account? Try the Mantle (OpenAI-compatible) endpoint before negotiating entitlements",
+      "detail": "Classic `bedrock-runtime` (InvokeModel/Converse/ConverseStream) returning `ValidationException: Operation not allowed` for EVERY model id — including Amazon's own Nova, and with AdministratorAccess — is not an IAM, region, or model-id problem. It means the account has no model access granted; confirm in one call with `aws bedrock get-foundation-model-availability --model-id <id>` (`authorizationStatus: NOT_AUTHORIZED`). Do NOT stop there, and do NOT accept the AWS Marketplace agreement yourself — that is a billing and legal decision for the account owner. Bedrock's newer OpenAI-compatible **Mantle** endpoint (https://bedrock-mantle.<region>.api.aws/v1 — `GET /models`, `POST /chat/completions`) serves the same models using a Bedrock API key as a plain bearer token, and works on accounts where SigV4 Converse does not. Swapping transports unblocked a whole phase here in under a day. Cost to weigh: the stack stops being secret-free — budget for an SSM SecureString, key rotation, and a Terraform state file that now holds the key.",
+      "source": { "issue": 25, "pr": 32 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-015",
+      "type": "gotcha",
+      "area": ["backend"],
+      "tags": ["langchain-aws", "ChatBedrockConverse", "temperature", "opus-5", "sampling", "bedrock"],
+      "title": "langchain-aws silently drops sampling params a model doesn't support — temperature=0 can be a no-op",
+      "detail": "Claude Opus 5 removed `temperature`, `top_p` and `top_k`. `ChatBedrockConverse` does not raise on them: it logs `UserWarning: Model anthropic.claude-opus-5 does not support temperature; ignoring the provided value` and drops the parameter. In a service that pipes warnings to a log nobody reads, a judge you believe is pinned to `temperature=0` is running at the model's default. Decide per model inside the client factory rather than at each call site, and keep the list of no-sampling model families next to it. The same applies in reverse when choosing a model for a step that genuinely needs determinism: confirm it accepts the knob before relying on it. Related: langchain-aws also disables streaming for providers it has not verified (`nvidia`, `google`), silently falling back to non-streaming Converse with a warning — pass `disable_streaming=False` to override. SUPERSEDED for this repo by ADR 0002: the model path no longer uses langchain-aws at all (plain httpx to the Mantle endpoint), so this trap cannot fire here. Kept for history, and still true for any project on ChatBedrockConverse.",
+      "source": { "issue": 25, "pr": 32 },
+      "date": "2026-08-07",
+      "status": "superseded"
+    },
+    {
+      "id": "KB-016",
+      "type": "gotcha",
+      "area": ["backend"],
+      "tags": ["langchain-aws", "ChatBedrockConverse", "content-blocks", "parsing", "bedrock", "llm-judge"],
+      "title": "ChatBedrockConverse `.content` is a str for some models and a block list for others",
+      "detail": "The same `.ainvoke()` / `.astream()` call returns `content` as a bare `str` for some Bedrock models and as a list of typed blocks (`[{'type': 'text', 'text': '...'}]`, plus reasoning and tool blocks) for others — and which one you get depends on the model, not on the call. Code that does `response.content.strip()` or regex-matches it directly works on one model and quietly misbehaves on another: a single-token LLM judge reads `[{'type':'text','text':'fail'}]` as unparseable and, under a fail-open policy, degrades a perfectly good refusal into a pass. Flatten every response through one helper (app/llm.py::text_of) before parsing, and cover the block-list shape in unit tests — swapping a model id must never change how responses are read. SUPERSEDED for this repo by ADR 0002 (no langchain-aws in the model path). The general lesson survives as KB-011: normalise every model response through one helper before parsing.",
+      "source": { "issue": 25, "pr": 32 },
+      "date": "2026-08-07",
+      "status": "superseded"
+    },
+    {
+      "id": "KB-011",
+      "type": "gotcha",
+      "area": ["backend"],
+      "tags": ["llm-judge", "reasoning-model", "parsing", "bedrock", "mantle", "nemotron", "verdict"],
+      "title": "A reasoning model puts its verdict LAST — parse the end, and treat a truncated monologue as no answer",
+      "detail": "Single-token LLM judges break on reasoning models in three separate ways, and all three are silent. (1) The model monologues before answering — `nvidia.nemotron-nano-9b-v2` emits `<think>…</think>` into `message.content` and only then the label — so parsing the FRONT of the response returns an essay. (2) Prose reasoning names the wrong label on the way (\"this could pass, but … so fail\"), so a first-match parse INVERTS the verdict; take the LAST match. (3) A tight `max_tokens` truncates mid-thought: `finish_reason: length`, no closing tag, no verdict — mining that fragment turns a hypothetical into a decision, so discard an unclosed block entirely and let the caller degrade. Give judge slots a generous budget (512, not 8): the ceiling is free on a terse model because temperature 0 stops it early. Also read `message.reasoning` when `content` is null — some models answer only there (the `gpt-oss-safeguard-*` family emits its verdict inside a truncating `reasoning` field, which is why it is not in this roster).",
+      "source": { "issue": 25, "pr": 32 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-012",
+      "type": "learning",
+      "area": ["backend", "process"],
+      "tags": ["model-selection", "benchmark", "latency", "reliability", "bedrock", "mantle", "fallback"],
+      "title": "Probe candidate models for reliability and latency before pinning them — a spec's list order is not evidence",
+      "detail": "A model id named in a spec is a hypothesis, not a measurement. Probing the roster against the real endpoint (7 cases x 2 runs, through the actual parser) changed three of five slots here: the specced topic primary `nvidia.nemotron-nano-9b-v2` turned out to 503 intermittently (~2 calls in 5, at any token budget), run ~4x slower than every alternative (p50 1.96s vs ~0.50s), AND need reasoning-stripping — while `google.gemma-3-12b-it` scored 14/14 correct at p50 0.50s. Probe for three things: HTTP success rate over repeated calls (not one call), accuracy through your own parser (not a raw string match), and p50 latency against your turn budget. Then pick fallbacks from DIFFERENT PROVIDERS — a fallback sharing the primary's outage is not a fallback — and put the slot that has no fallback of its own on the most reliable model you measured. Budget ~20 minutes; it is cheaper than one debugging cycle.",
+      "source": { "issue": 25, "pr": 32 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-013",
+      "type": "gotcha",
+      "area": ["backend"],
+      "tags": ["retry", "5xx", "503", "fail-open", "llm-judge", "resilience", "turn-budget"],
+      "title": "Under a fail-open policy, an un-retried 5xx silently downgrades a guard that had a verdict",
+      "detail": "Fail-open guards turn transport blips into permanent-looking degradation: on the wire, a single 503 is indistinguishable from a model that genuinely could not decide. Retry 5xx and transport errors — bounded, 3 attempts, sub-second backoff — before degrading; never retry 4xx, which is a statement about the request (bad key, unentitled model) and will say the same thing next time. Two constraints: the retry budget comes out of the request's own latency budget, so bound it against that (here CloudFront's 60s origin cap, KB-004); and for STREAMING calls retry only before the first delta — once a fragment has reached the user, restarting rewrites the answer mid-sentence, so a mid-stream failure must propagate instead. Symptom that sent us here: every `validate_input` reporting `degraded` in e2e while the same model answered fine when probed by hand.",
+      "source": { "issue": 25, "pr": 32 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
       "id": "KB-010",
       "type": "learning",
       "area": ["backend", "ci"],

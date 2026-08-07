@@ -9,6 +9,19 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: "Also run the e2e job below (hits a real target; costs real Bedrock turns when combined with e2e_live_bedrock)"
+        type: boolean
+        default: false
+      e2e_base_url:
+        description: "BASE_URL for the e2e job — the target the suite runs against"
+        type: string
+        default: "https://cadre.marcuss.pro"
+      e2e_live_bedrock:
+        description: "Force CADRE_E2E_BEDROCK=1 — also runs the cases that need a reachable model (requires_bedrock). Leave off to run only the deterministic + fail-open-honesty cases."
+        type: boolean
+        default: false
 
 # A newer push to the same ref makes the in-flight run irrelevant.
 concurrency:
@@ -120,3 +133,74 @@ jobs:
 
       - name: Validate
         run: terraform validate
+
+  # Manual-only and never part of `push`/`pull_request`: a turn against a real
+  # target spends real Bedrock money, so this job must not gate every push
+  # (issue #27). It only runs when a `workflow_dispatch` is fired with
+  # `run_e2e: true` — the plain "rerun the build" dispatch that already
+  # existed leaves it skipped.
+  #
+  # No OIDC/`environment:` gate here (unlike deploy.yml): since #25's
+  # amendment swapped the model transport to Bedrock's Mantle endpoint with a
+  # bearer-token key (ADR 0002), neither this job nor the e2e suite itself
+  # makes any AWS-authenticated call — the suite is plain HTTP against
+  # BASE_URL (tests/e2e/conftest.py), and the only credential in play is the
+  # Mantle key read from a GitHub Actions secret, not an assumed IAM role. KB-006
+  # (environment-gated jobs need the environment: OIDC sub form) does not
+  # apply to this job for exactly that reason — it never assumes a role.
+  e2e:
+    name: e2e — guarded pipeline against a real target
+    if: github.event_name == 'workflow_dispatch' && inputs.run_e2e
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for the Bedrock API key when live-model cases are requested
+        # Skip-with-loud-annotation, not fail and not silent: `run_e2e` alone
+        # only asks for the deterministic + fail-open-honesty cases, which
+        # need no key at all. Only `e2e_live_bedrock` needs
+        # `secrets.BEDROCK_API_KEY` (Marcus creates it out-of-band); if it is
+        # unset the run must say so loudly rather than either hard-failing on
+        # a secret nobody has created yet, or quietly completing as if the
+        # live cases had run.
+        id: key_check
+        env:
+          HAS_KEY: ${{ secrets.BEDROCK_API_KEY != '' }}
+        run: |
+          if [ "${{ inputs.e2e_live_bedrock }}" = "true" ] && [ "$HAS_KEY" != "true" ]; then
+            echo "::warning::e2e_live_bedrock was requested but the BEDROCK_API_KEY secret is not set — skipping this run rather than failing or silently running the deterministic-only suite. Ask Marcus to add it: Settings -> Secrets and variables -> Actions -> New repository secret -> BEDROCK_API_KEY."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.key_check.outputs.skip != 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        if: steps.key_check.outputs.skip != 'true'
+        run: pip install -r requirements-dev.txt
+
+      - name: Assert the target account can invoke every configured model
+        # Same check deploy.yml runs before a build, reused here so a forced
+        # live run fails fast with a clear reason instead of paying for 55s
+        # per test against a key that cannot reach a configured model.
+        if: steps.key_check.outputs.skip != 'true' && inputs.e2e_live_bedrock
+        env:
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.BEDROCK_API_KEY }}
+        run: python -m scripts.assert_models
+
+      - name: Run the e2e suite
+        if: steps.key_check.outputs.skip != 'true'
+        env:
+          BASE_URL: ${{ inputs.e2e_base_url }}
+          CADRE_E2E_BEDROCK: ${{ inputs.e2e_live_bedrock && '1' || '0' }}
+        run: pytest -m e2e -v
