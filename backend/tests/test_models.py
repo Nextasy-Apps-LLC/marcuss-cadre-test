@@ -214,13 +214,33 @@ class TestTopicClassifier:
             ("in_scope", "in_scope"),
             ("OFF_TOPIC", "off_topic"),
             (" needs_human\n", "needs_human"),
-            ("in scope", "in_scope"),
             (reasoned("off_topic"), "off_topic"),
         ],
     )
     def test_it_parses_the_three_route_labels(self, raw, expected, monkeypatch):
         script(monkeypatch, {config.MODEL_TOPIC: raw})
         assert run(models.classify_topic(STATE)).verdict == expected
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("in scope", "in_scope"),
+            ("in-scope", "in_scope"),
+            ("off topic", "off_topic"),
+            ("off-topic", "off_topic"),
+            ("needs human", "needs_human"),
+            ("needs-human", "needs_human"),
+        ],
+    )
+    def test_it_tolerates_a_space_or_hyphen_between_words(self, raw, expected, monkeypatch):
+        # A vacuous version of this assertion would only check `.verdict`:
+        # for the `in_scope` cases that equals the fail-open degrade value
+        # too, so a parser that never matched anything would still pass.
+        # Asserting `detail is None` is what proves the label was actually
+        # parsed rather than defaulted.
+        script(monkeypatch, {config.MODEL_TOPIC: raw})
+        verdict = run(models.classify_topic(STATE))
+        assert (verdict.verdict, verdict.detail) == (expected, None)
 
     def test_the_scope_text_from_the_persona_reaches_the_model(self, monkeypatch):
         s = script(monkeypatch, {config.MODEL_TOPIC: "in_scope"})
