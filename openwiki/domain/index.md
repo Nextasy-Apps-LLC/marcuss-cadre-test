@@ -1,3 +1,3 @@
 # Files
 
-- [SSE contract and rails](sse-contract.md) - The cadre SSE wire format — rail, token, done, error events; the six rails in order; client rail-status semantics (degraded, blocked, skipped, lost); the walking-skeleton backend and hand-rolled fetch-SSE client; and the tests that pin the contract.
+- [SSE contract v2 — steps, states, tokens](sse-contract.md) - The cadre SSE v2 wire format — state, token, done, error events plus the ping heartbeat; the six pipeline steps in order; status semantics (degraded, skipped, lost, stream-then-retract); the LangGraph backend and hand-rolled fetch-SSE client; and the tests that pin the contract.

@@ -1,7 +1,7 @@
 ---
 type: Architecture Overview
 title: Streaming chatbot architecture
-description: How cadre streams SSE end-to-end — one CloudFront distribution with a private S3 page origin and an AWS_IAM RESPONSE_STREAM Lambda Function URL origin, the four silent streaming-breakers, the zero-secrets design, and ADR 0001's decisions.
+description: How cadre streams SSE end-to-end — one CloudFront distribution with a private S3 page origin and an AWS_IAM RESPONSE_STREAM Lambda Function URL origin, the four silent streaming-breakers, the one-secret (Bedrock key in SSM) design, and the ADR 0001/0002 decisions.
 tags: [architecture, streaming, cloudfront, lambda, sse]
 ---
 
@@ -10,7 +10,8 @@ tags: [architecture, streaming, cloudfront, lambda, sse]
 Everything is served from one CloudFront distribution, so `fetch("/ask")` is
 same-origin with the page — no CORS preflight in front of the SSE connection.
 The shape is recorded in `adr/0001-streaming-chatbot-cloudfront-lambda-s3.md`;
-don't fight it without a superseding ADR.
+don't fight it without a superseding ADR — and note `adr/0002` now supersedes
+ADR 0001's Bedrock-authentication statements.
 
 ```mermaid
 flowchart LR
@@ -18,7 +19,7 @@ flowchart LR
   CF -->|"default behavior<br/>CachingOptimized, compress"| S3[("Private S3<br/>React page")]
   CF -->|"/ask /healthz /config<br/>CachingDisabled, no compress"| FU["Lambda Function URL<br/>AWS_IAM, RESPONSE_STREAM"]
   FU --> LWA["Lambda Web Adapter<br/>uvicorn on port 8080"]
-  LWA --> BR["Bedrock"]
+  LWA -->|"httpx, bearer token<br/>(ADR 0002)"| BR["Bedrock Mantle<br/>OpenAI-compatible"]
 ```
 
 ## Why there is no API Gateway
@@ -58,33 +59,41 @@ Mirrored in `infra/README.md` — keep in sync; verify in a browser, not curl.
 - API behaviors use `Managed-AllViewerExceptHostHeader` — the `Host` header
   must stay the Function URL's own hostname or the signature won't verify.
 
-## Zero secrets by design
+## One secret, held in SSM
 
-There is no static credential anywhere, which is why the repository can be
-public:
+The repository holds no credential — it can be public — but ADR 0002
+deliberately ended the "zero secrets" claim: the model path needs one Bedrock
+API key, so the stack is no longer secret-free.
 
 | Hop | How it authenticates |
 |---|---|
-| Lambda → Bedrock | SigV4 from the execution role (`aws_iam_role_policy.bedrock`) |
-| GitHub Actions → AWS | OIDC only, two separate roles |
+| Lambda → Bedrock | Bearer token over HTTPS to the Mantle endpoint (`app/llm.py`); key read at call time from the `AWS_BEARER_TOKEN_BEDROCK` env var, which Terraform pulls from the SSM `SecureString` `/cadre/bedrock-api-key` — created out of band, never committed (ADR 0002). The old `bedrock:InvokeModel` SigV4 grant is deleted. |
+| GitHub Actions → AWS | OIDC only, two separate roles; both gained a scoped `ssm:GetParameter` for the one key parameter |
 | CloudFront → Lambda URL | Lambda-typed OAC, SigV4-signed |
 | CloudFront → S3 | S3-typed OAC; the bucket blocks all public access |
 
-`terraform.tfvars`/`backend.hcl` are gitignored as noise, not secrets. First
-real secret: SSM `SecureString` seeded `SET_OUT_OF_BAND` with
-`ignore_changes = [value]`, written out of band, read at container start.
+The key lands in Terraform state via the decrypted `data` read, so the state
+bucket is as sensitive as the key itself. `terraform.tfvars`/`backend.hcl` are
+gitignored as noise, not secrets. Rotation is an operational task: the key is
+resolved per request, so rotating the SSM value needs no cold start.
 
-## ADR 0001 and open tradeoffs
+## ADR 0001, ADR 0002, and open tradeoffs
 
 ADR 0001's nine decisions map to `infra/*.tf`,
 `.github/workflows/{terraform,deploy,ci}.yml`, and `backend/Dockerfile`
-(`ENTRYPOINT []` so the base image can't swallow the uvicorn command). Still
-open:
+(`ENTRYPOINT []` so the base image can't swallow the uvicorn command); ADR 0002
+supersedes its Bedrock-auth statements. Still open:
 
-- Every brain turn is capped at 60s (CloudFront's origin-timeout cap; quota
-  increase to raise).
-- Streaming is guarded by docs, not tests — the four breakers fail no CI check.
+- A whole turn — four judge calls *plus* the brain's generation — must fit
+  inside 60s (CloudFront's origin-timeout cap; quota increase to raise). Token
+  budgets in `backend/app/config.py` enforce it; `: ping` heartbeats do not
+  extend the cap (KB-004).
+- The four streaming-breakers still fail no push-gated check. The manual e2e
+  dispatch ([CI/CD](/openwiki/workflows/ci-cd.md)) asserts no `Content-Length`
+  and real incremental tokens (KB-010, KB-007), but nothing on push boots or
+  streams against the real stack.
 - `cadre-terraform`'s `ManagedServices` is wildcarded; the real boundary is the
   `production` approval gate.
-- Nothing in CI boots the container — the post-deploy `/healthz` smoke is the
-  first boot.
+- Model misconfiguration ships as a *working* chat with amber rails, because
+  every guard fails open (KB-009) — the pre-deploy `assert_models` check is
+  what stops a wrong id from ever reaching an image.
