@@ -271,21 +271,6 @@ class TestAnsweredTurn:
         assert events[-1][1]["outcome"] == "answered"
 
 
-@requires_bedrock
-class TestSuggestionChips:
-    """The refused-chip rule (backend/CLAUDE.md): every suggestion `/config`
-    advertises must itself be answerable, e2e-enforced (issue #27 case 5)."""
-
-    def test_every_advertised_suggestion_is_answered(self, http):
-        suggestions = http.get("/config").json()["suggestions"]
-        assert suggestions
-        for suggestion in suggestions:
-            events = parse_sse(ask(http, suggestion).text)
-            assert events[-1][0] == "done"
-            assert events[-1][1]["outcome"] == "answered", (
-                f"suggestion chip {suggestion!r} did not resolve to answered"
-            )
-
     def test_every_guard_really_ran(self, http):
         # The assertion that separates a working brain from a fully degraded
         # one. Without it this whole class passes against a brainless service.
@@ -318,6 +303,22 @@ class TestSuggestionChips:
         }
         events = parse_sse(ask(http, None, body=payload).text)
         assert status_of(events, "topic_classifier") == "pass"
+
+
+@requires_bedrock
+class TestSuggestionChips:
+    """The refused-chip rule (backend/CLAUDE.md): every suggestion `/config`
+    advertises must itself be answerable, e2e-enforced (issue #27 case 5)."""
+
+    def test_every_advertised_suggestion_is_answered(self, http):
+        suggestions = http.get("/config").json()["suggestions"]
+        assert suggestions
+        for suggestion in suggestions:
+            events = parse_sse(ask(http, suggestion).text)
+            assert events[-1][0] == "done"
+            assert events[-1][1]["outcome"] == "answered", (
+                f"suggestion chip {suggestion!r} did not resolve to answered"
+            )
 
 
 @requires_bedrock
