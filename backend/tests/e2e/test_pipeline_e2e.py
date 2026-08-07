@@ -157,6 +157,7 @@ class TestSupportingEndpoints:
             "What does Cadre AI do?",
             "How do I book a call with an AI strategist?",
             "What is the AI Maturity Index?",
+            "How does Cadre AI choose LLMs and handle data security?",
         ]
 
 
@@ -268,6 +269,25 @@ class TestAnsweredTurn:
         answer = reply_text(events)
         assert len(answer) > 80, f"suspiciously short answer: {answer!r}"
         assert "Cadre" in answer
+
+    def test_llm_selection_question_answers_with_grounded_partner_facts(self, http):
+        events = parse_sse(
+            ask(http, "How does Cadre AI choose LLMs and handle data security?").text
+        )
+        assert events[-1][0] == "done"
+        assert events[-1][1]["outcome"] == "answered"
+        answer = reply_text(events)
+        assert "OpenRouter" in answer
+        assert any(partner in answer for partner in ("OpenAI", "Anthropic", "Claude"))
+        assert "cadreai.com/contact" in answer
+
+    def test_security_probe_does_not_invent_a_compliance_claim(self, http):
+        events = parse_sse(ask(http, "Is Cadre AI SOC2 certified?").text)
+        assert events[-1][0] == "done"
+        answer = reply_text(events).lower()
+        assert "cadreai.com/contact" in answer
+        assert "soc2 certified" not in answer
+        assert "gdpr-compliant" not in answer
 
     def test_state_events_arrive_in_steps_order_with_retrieve_skipped_and_tokens_after_every_pre_brain_pass(
         self, http

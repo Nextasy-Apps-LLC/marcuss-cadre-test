@@ -47,6 +47,34 @@ class TestSystemPrompt:
     def test_it_does_not_leak_a_price(self):
         assert "$" not in persona.SYSTEM_PROMPT
 
+    def test_it_contains_the_brief_partner_and_model_selection_facts(self):
+        prompt = persona.SYSTEM_PROMPT
+        for partner in (
+            "OpenAI",
+            "Anthropic",
+            "Google",
+            "Microsoft",
+            "AWS",
+            "Salesforce",
+            "Snowflake",
+            "OpenRouter",
+        ):
+            assert partner in prompt
+        assert "model-agnostic" in prompt
+        assert "cost/quality/task fit" in prompt
+
+    def test_it_handles_security_questions_without_inventing_claims(self):
+        prompt = persona.SYSTEM_PROMPT.lower()
+        assert "security" in prompt
+        assert "data-handling" in prompt
+        assert "per engagement" in prompt
+        assert "soc2" in prompt
+        assert "gdpr-compliant" in prompt
+        assert persona.CONTACT_URL in persona.SYSTEM_PROMPT
+
+    def test_it_points_to_case_studies(self):
+        assert "https://www.cadreai.com/case-studies" in persona.SYSTEM_PROMPT
+
 
 class TestTopicScope:
     def test_the_classifier_gets_scope_text_of_its_own(self):
@@ -58,6 +86,12 @@ class TestTopicScope:
         for service in SERVICES:
             assert service in persona.TOPIC_SCOPE
 
+    @pytest.mark.parametrize(
+        "topic", ["partners", "LLM selection", "data security", "case studies"]
+    )
+    def test_it_admits_the_new_brief_subjects(self, topic):
+        assert topic.lower() in persona.TOPIC_SCOPE.lower()
+
 
 class TestPageCopy:
     def test_the_three_suggestion_chips_are_the_specced_ones(self):
@@ -65,6 +99,7 @@ class TestPageCopy:
             "What does Cadre AI do?",
             "How do I book a call with an AI strategist?",
             "What is the AI Maturity Index?",
+            "How does Cadre AI choose LLMs and handle data security?",
         ]
 
     def test_config_serves_the_persona_copy_rather_than_a_second_copy(self):
