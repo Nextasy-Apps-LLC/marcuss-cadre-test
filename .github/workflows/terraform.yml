@@ -69,6 +69,12 @@ jobs:
       - name: Validate
         run: terraform validate
 
+      # Outputs are state, not plan — printing them here means nobody needs
+      # local AWS credentials just to read a value the stack already exports
+      # (the ACM validation record being the recurring example).
+      - name: Current outputs
+        run: terraform output || echo "(no outputs yet)"
+
       - name: Plan
         id: plan
         # -detailed-exitcode: 0 = no changes, 2 = changes, 1 = error. Lets the
