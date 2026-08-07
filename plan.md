@@ -38,7 +38,7 @@ All chat models via `langchain-aws` (`ChatBedrockConverse`); availability in us-
 |---|---|---|
 | input validation | deterministic checks + **Nemotron 3 Nano 9B v2** (Bedrock serverless) | cheap SLM sanity/validity judge |
 | injection check | **Claude Haiku 4.5** strict single-token classifier | fast, strong instruction-following against adversarial input; Bedrock Guardrails prompt-attack filter evaluated as a complement |
-| topic classifier | **Nemotron 3 Nano 12B v2** (fallback: Haiku 4.5) | 3-way route: `in_scope` / `off_topic` / `needs_human` |
+| topic classifier | **Nemotron 3 Nano 12B v2** (fallbacks: **Google Gemma** on Bedrock, then Haiku 4.5) | 3-way route: `in_scope` / `off_topic` / `needs_human` |
 | query condensing | **Claude Haiku 4.5** | rewrite follow-ups into standalone retrieval queries |
 | brain | **Claude Opus 5** (streaming) | answer quality on nuanced consulting questions |
 | output safety | **Claude Haiku 4.5** guard + deterministic PII/URL scrub | final gate on the streamed answer |
