@@ -52,8 +52,11 @@ RATE_LIMIT_WINDOW_S = float(os.environ.get("CADRE_RATE_LIMIT_WINDOW_S", "60"))
 # as a crash (KB-009).
 #
 # Every id is env-overridable. Several Claude ids appear in `/v1/models` but
-# return access-denied on invoke, so the overrides are the flip switch for the
-# day entitlements land.
+# do not answer through this transport: the Mantle host only serves the
+# OpenAI-compatible `/v1/chat/completions` surface, which 400s on a Claude id,
+# and Claude's own surface (`/v1/messages`) 404s on this host entirely — it is
+# an API-surface split, not an entitlement gap. The overrides are the flip
+# switch for the day a Claude-compatible surface is reachable here.
 
 BEDROCK_MANTLE_BASE_URL = os.environ.get(
     "BEDROCK_MANTLE_BASE_URL", "https://bedrock-mantle.us-east-1.api.aws/v1"

@@ -348,3 +348,35 @@ class TestRetries:
 
         assert run(collect()) == ["hi"]
         assert seen["n"] == 2
+
+    def test_a_stream_that_fails_after_a_delta_is_not_retried(self, monkeypatch):
+        """The invariant behind `started`: once a fragment has reached the
+        visitor's screen, a mid-stream failure must propagate and become a
+        terminal error rather than walk to another attempt, which would
+        restart the answer mid-sentence."""
+        seen = {"n": 0}
+
+        class FlakyBody(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield f"data: {delta('hi')}\n\n".encode()
+                raise httpx.ReadError("connection dropped")
+
+        def handler(request):
+            seen["n"] += 1
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, stream=FlakyBody()
+            )
+
+        monkeypatch.setattr(llm, "_client", lambda: mock_client(handler))
+
+        async def collect():
+            return [
+                c
+                async for c in llm.chat_stream(
+                    "m", "s", [{"role": "user", "content": "u"}], max_tokens=64
+                )
+            ]
+
+        with pytest.raises(httpx.ReadError):
+            run(collect())
+        assert seen["n"] == 1

@@ -1,6 +1,6 @@
 # ADR 0001 — Streaming chatbot on one CloudFront distribution, IAM-only Lambda, zero secrets
 
-- **Status:** Accepted
+- **Status:** Accepted (Bedrock-auth statements superseded by [ADR 0002](0002-bedrock-mantle-api-key.md))
 - **Date:** 2026-08-07
 
 ## Context
@@ -106,9 +106,16 @@ credentials that are *not* the CloudFront principal. Success proves the function
 and its resource policy; failure points at the grants above. Re-reading the OAC
 config a fifth time distinguishes nothing.
 
-### 4. Zero secrets by design
+### 4. Zero secrets by design — superseded in part by ADR 0002
 
-Lambda → Bedrock is execution-role SigV4 (`aws_iam_role_policy.bedrock`);
+> **Superseded:** the Lambda → Bedrock statement below no longer holds.
+> [ADR 0002](0002-bedrock-mantle-api-key.md) moved that call to the Mantle
+> API-key endpoint, so `aws_iam_role_policy.bedrock` (referenced below) was
+> deleted and the "zero secrets" claim no longer applies to model calls —
+> the key lives in SSM SecureString and is read into the Lambda at cold
+> start. Actions → AWS and CloudFront → Lambda/S3 below are unaffected.
+
+~~Lambda → Bedrock is execution-role SigV4 (`aws_iam_role_policy.bedrock`);~~
 Actions → AWS is OIDC only (no `AWS_ACCESS_KEY_ID` in repo secrets);
 CloudFront → Lambda/S3 is OAC-signed. So the repo is public with nothing to
 hide — `terraform.tfvars` and `backend.hcl` are gitignored as noise, not
