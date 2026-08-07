@@ -83,9 +83,10 @@ async def _stream_text(text: str, emit) -> None:
 def _validation_failure(state: ConversationState) -> str | None:
     """The first deterministic reason to refuse, or None.
 
-    Deterministic only by design: the model-backed half of input validation is
-    the `injection_check` step, and a check that cannot fail closed on a bad
-    payload has no business needing a network call.
+    Deterministic on purpose, and first on purpose: a payload that a regex can
+    reject must never cost a Bedrock call, and these are the checks that have
+    to hold when Bedrock is unreachable. The model-backed half
+    (`models.validate_llm`) only runs once all of these pass.
     """
     if not ratelimit.limiter.allow(state.get("client_id", "")):
         return "rate_limited"
@@ -107,11 +108,29 @@ def _validation_failure(state: ConversationState) -> str | None:
 # --------------------------------------------------------------------------
 
 async def validate_input(state: ConversationState, emit) -> ConversationState:
+    """Deterministic checks, then the SLM validity judge.
+
+    Two halves, strictly ordered. The cheap half refuses malformed payloads
+    without a network call; the model half catches gibberish that is
+    structurally fine, and fails open like every other model-backed step.
+    """
     await emit(VALIDATE_INPUT, "running")
+
     detail = _validation_failure(state)
     if detail:
         return await _record(state, emit, VALIDATE_INPUT, "fail", detail)
-    return await _record(state, emit, VALIDATE_INPUT, "pass")
+
+    try:
+        verdict = await models.validate_llm(state)
+    except Exception:  # noqa: BLE001 - fail open, see module docstring
+        log.warning("validate_input judge failed, passing degraded", exc_info=True)
+        return await _record(state, emit, VALIDATE_INPUT, "pass", DEGRADED)
+
+    if verdict.verdict == "fail":
+        return await _record(
+            state, emit, VALIDATE_INPUT, "fail", verdict.detail or "invalid"
+        )
+    return await _record(state, emit, VALIDATE_INPUT, "pass", verdict.detail)
 
 
 async def injection_check(state: ConversationState, emit) -> ConversationState:

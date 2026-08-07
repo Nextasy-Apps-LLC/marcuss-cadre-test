@@ -58,35 +58,38 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# Bedrock invoke rights, scoped to the two models this app actually calls.
+# The Bedrock API key, read from an SSM SecureString.
 #
-# Auth to Bedrock is SigV4 from this role — there is no API key anywhere in
-# this stack, which is what lets the repo be public with no secret handling.
+# ADR 0002: model calls are plain HTTPS with a bearer token, not SigV4, so the
+# Lambda role no longer needs `bedrock:InvokeModel*` at all — that grant was
+# deleted rather than left behind, because a permission nothing uses is a
+# permission nobody re-reads.
 #
-# Note on inference profiles: some models are only reachable through a
-# cross-region inference profile rather than the bare foundation-model ARN,
-# so both resource shapes are granted. If an invoke fails with AccessDenied,
-# the CloudWatch message names the exact action and resource it wanted —
-# widen from that, not by guessing.
-data "aws_iam_policy_document" "bedrock" {
+# The parameter is created out of band (`aws ssm put-parameter`), never by
+# Terraform: ADR 0001 decision 4. Terraform only reads it.
+#
+# Caveat worth knowing: a decrypted `data` read puts the value in Terraform
+# state, so the state bucket is as sensitive as the key. The alternative —
+# having the function fetch from SSM itself — costs an SSM round trip inside
+# every cold start's turn budget, which the 60s CloudFront cap (KB-004) cannot
+# spare.
+data "aws_ssm_parameter" "bedrock_api_key" {
+  name            = var.bedrock_api_key_parameter
+  with_decryption = true
+}
+
+data "aws_iam_policy_document" "bedrock_key" {
   statement {
-    effect = "Allow"
-    actions = [
-      "bedrock:InvokeModel",
-      "bedrock:InvokeModelWithResponseStream",
-    ]
-    resources = [
-      "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.brain_model}*",
-      "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.judge_model}*",
-      "arn:aws:bedrock:${var.aws_region}:${var.aws_account_id}:inference-profile/*",
-    ]
+    effect    = "Allow"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.bedrock_api_key_parameter}"]
   }
 }
 
-resource "aws_iam_role_policy" "bedrock" {
-  name   = "${var.project_name}-bedrock"
+resource "aws_iam_role_policy" "bedrock_key" {
+  name   = "${var.project_name}-bedrock-key"
   role   = aws_iam_role.lambda.id
-  policy = data.aws_iam_policy_document.bedrock.json
+  policy = data.aws_iam_policy_document.bedrock_key.json
 }
 
 # ── Logs ───────────────────────────────────────────────────────────────────
@@ -112,13 +115,21 @@ resource "aws_lambda_function" "this" {
   timeout       = var.lambda_timeout_s
 
   environment {
+    # Names must match what `backend/app/config.py` actually reads — these
+    # drifted once already while the model layer was still a stub, and a Lambda
+    # env var nothing reads is invisible until someone tries to use it to
+    # change behaviour in an incident.
     variables = {
-      CADRE_ENV            = "prod"
-      CADRE_ALLOWED_ORIGIN = "https://${var.domain_name}"
-      CADRE_BRAIN_MODEL    = var.brain_model
-      CADRE_JUDGE_MODEL    = var.judge_model
-      CADRE_GUARD_MODEL    = var.judge_model
-      CADRE_BRAIN_EFFORT   = var.brain_effort
+      CADRE_ENV                   = "prod"
+      CADRE_ALLOWED_ORIGIN        = "https://${var.domain_name}"
+      BEDROCK_MANTLE_BASE_URL     = var.bedrock_mantle_base_url
+      AWS_BEARER_TOKEN_BEDROCK    = data.aws_ssm_parameter.bedrock_api_key.value
+      CADRE_MODEL_BRAIN           = var.brain_model
+      CADRE_MODEL_INJECTION       = var.judge_model
+      CADRE_MODEL_GUARD           = var.judge_model
+      CADRE_MODEL_VALIDATE        = var.validate_model
+      CADRE_MODEL_TOPIC           = var.topic_model
+      CADRE_MODEL_TOPIC_FALLBACKS = join(",", var.topic_fallback_models)
     }
   }
 
