@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
 import { Composer } from "./components/Composer";
+import { PipelineStepper } from "./components/PipelineStepper";
 import { Suggestions } from "./components/Suggestions";
-import { TracePanel, TraceSummary } from "./components/TracePanel";
 import { Transcript } from "./components/Transcript";
 import { useCadreChat } from "./lib/useCadreChat";
 
@@ -13,7 +13,7 @@ interface PageConfig {
 
 /**
  * Rendered until /config answers. The greeting and chips live server-side so
- * they cannot drift from the topic scope the rail-3 judge classifies against —
+ * they cannot drift from the topic scope the topic_classifier step judges against —
  * a chip that gets refused is the worst possible first impression.
  */
 const FALLBACK: PageConfig = {
@@ -23,7 +23,7 @@ const FALLBACK: PageConfig = {
 
 export default function App() {
   const [config, setConfig] = useState<PageConfig>(FALLBACK);
-  const [traceOpen, setTraceOpen] = useState(false);
+  const [stepperOpen, setStepperOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,7 +53,7 @@ export default function App() {
         </p>
       </header>
 
-      <div className={`layout${traceOpen ? " layout--trace-open" : ""}`}>
+      <div className={`layout${stepperOpen ? " layout--stepper-open" : ""}`}>
         <section className="terminal">
           <div className="titlebar">
             <span className="dots" aria-hidden="true">
@@ -76,13 +76,6 @@ export default function App() {
             onPick={(prompt) => void chat.send(prompt)}
           />
 
-          <TraceSummary
-            rails={chat.rails}
-            totalMs={chat.totalMs}
-            open={traceOpen}
-            onToggle={() => setTraceOpen((v) => !v)}
-          />
-
           <Composer
             busy={chat.busy}
             onSend={(text) => void chat.send(text)}
@@ -90,7 +83,11 @@ export default function App() {
           />
         </section>
 
-        <TracePanel rails={chat.rails} totalMs={chat.totalMs} open={traceOpen} />
+        <PipelineStepper
+          steps={chat.steps}
+          open={stepperOpen}
+          onToggle={() => setStepperOpen((v) => !v)}
+        />
       </div>
 
       <footer className="foot">

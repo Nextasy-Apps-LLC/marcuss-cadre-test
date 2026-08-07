@@ -24,8 +24,8 @@
   font-size: 0.85rem;
 }
 
-/* Terminal and trace sit side by side on desktop; the trace drops below and
-   collapses behind the summary chip on narrow screens. */
+/* Terminal and pipeline stepper sit side by side on desktop; the stepper
+   drops below and collapses behind its summary trigger on narrow screens. */
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
@@ -284,113 +284,23 @@
   background: var(--bg-2);
 }
 
-/* ── trace panel ──────────────────────────────────────────────────────── */
+/* ── pipeline stepper ─────────────────────────────────────────────────── */
 
-.trace-panel {
+.stepper {
   background: var(--bg-2);
   border: 1px solid var(--rule);
   border-radius: var(--radius);
-  padding: 14px;
   font-size: 0.78rem;
 }
 
-.trace-panel--refused {
+.stepper--blocked {
   border-color: color-mix(in oklab, var(--hot) 45%, transparent);
 }
 
-.trace-title {
-  color: var(--fg-mute);
-  text-transform: lowercase;
-  letter-spacing: 0.06em;
-  padding-bottom: 10px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--rule);
-}
-
-.trace-rows {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.rail {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: baseline;
-  color: var(--fg-dim);
-  transition: color 0.2s var(--tx), opacity 0.2s var(--tx);
-}
-
-.rail-icon {
-  font-size: 0.8rem;
-  line-height: 1;
-}
-
-.rail-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rail-latency {
-  color: var(--fg-mute);
-  font-size: 0.72rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.rail-reason {
-  grid-column: 1 / -1;
-  padding-left: 4px;
-  color: var(--fg-mute);
-  font-size: 0.72rem;
-}
-
-.rail-reason--warn {
-  color: var(--warn);
-}
-
-.rail--pending {
-  opacity: 0.45;
-}
-
-.rail--passed {
-  color: var(--fg);
-}
-
-.rail--degraded {
-  color: var(--warn);
-}
-
-.rail--blocked {
-  color: var(--hot);
-}
-
-.rail--skipped {
-  opacity: 0.35;
-}
-
-.rail--lost {
-  color: var(--warn);
-  opacity: 0.75;
-}
-
-.trace-footer {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--rule);
-  color: var(--fg-mute);
-  font-size: 0.72rem;
-  min-height: 1em;
-  font-variant-numeric: tabular-nums;
-}
-
-/* ── mobile summary chip ──────────────────────────────────────────────── */
-
-.trace-summary {
+/* Desktop: the summary trigger is redundant with the always-visible row
+   list beside it, so it's hidden until the narrow-screen media query below
+   turns it into the tap target for the collapsed row list. */
+.stepper-summary {
   display: none;
   width: 100%;
   align-items: center;
@@ -399,7 +309,7 @@
   padding: 10px 18px;
   background: transparent;
   border: 0;
-  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
   color: var(--fg-dim);
   font-family: inherit;
   font-size: 0.9rem;
@@ -407,20 +317,88 @@
   cursor: pointer;
 }
 
-.trace-summary-total {
-  font-size: 0.72rem;
-  letter-spacing: normal;
-  color: var(--fg-mute);
-  font-variant-numeric: tabular-nums;
-}
-
-.trace-summary::after {
+.stepper-summary::after {
   content: "▾";
   letter-spacing: normal;
 }
 
-.trace-summary[aria-expanded="true"]::after {
+.stepper-summary[aria-expanded="true"]::after {
   content: "▴";
+}
+
+.stepper-rows {
+  list-style: none;
+  margin: 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--fg-dim);
+  transition: color 0.2s var(--tx), opacity 0.2s var(--tx);
+}
+
+.step-icon {
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-status-text {
+  color: var(--fg-mute);
+  font-size: 0.72rem;
+  text-transform: lowercase;
+}
+
+.step-detail {
+  grid-column: 1 / -1;
+  padding-left: 4px;
+  color: var(--fg-mute);
+  font-size: 0.72rem;
+}
+
+.step--pending {
+  opacity: 0.45;
+}
+
+.step--running {
+  color: var(--accent);
+}
+
+.step--pass {
+  color: var(--fg);
+}
+
+.step--degraded {
+  color: var(--warn);
+}
+
+.step--degraded .step-status-text {
+  color: var(--warn);
+}
+
+.step--fail {
+  color: var(--hot);
+}
+
+.step--skipped {
+  opacity: 0.35;
+}
+
+.step--lost {
+  color: var(--warn);
+  opacity: 0.75;
 }
 
 /* ── foot ─────────────────────────────────────────────────────────────── */
@@ -458,19 +436,19 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .trace-summary {
+  .stepper-summary {
     display: flex;
   }
 
-  /* The full panel is hidden until the chip is tapped — six labelled rows do
-     not fit beside a phone-width terminal, but the chip keeps the live
-     signal visible in one line. */
-  .trace-panel {
+  /* The full row list is hidden until the summary is tapped — six labelled
+     rows do not fit beside a phone-width terminal, but the summary keeps
+     the live signal visible in one line. */
+  .stepper-rows {
     display: none;
   }
 
-  .layout--trace-open .trace-panel {
-    display: block;
+  .layout--stepper-open .stepper-rows {
+    display: flex;
   }
 
   .transcript {
