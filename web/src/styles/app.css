@@ -368,6 +368,14 @@
   font-size: 0.72rem;
 }
 
+.step-timing {
+  grid-column: 1 / -1;
+  padding-left: 4px;
+  color: var(--fg-mute);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
 .step--pending {
   opacity: 0.45;
 }

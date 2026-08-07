@@ -60,7 +60,14 @@ describe("STEP_ICONS", () => {
 
 describe("isDegraded / stepIcon", () => {
   function step(overrides: Partial<StepState>): StepState {
-    return { name: "topic_classifier", label: "topic classifier", status: "pending", detail: null, ...overrides };
+    return {
+      name: "topic_classifier",
+      label: "topic classifier",
+      status: "pending",
+      detail: null,
+      elapsedMs: null,
+      ...overrides,
+    };
   }
 
   it("is true only for a `pass` whose detail is exactly \"degraded\"", () => {

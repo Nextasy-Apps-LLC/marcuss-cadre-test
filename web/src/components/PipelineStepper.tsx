@@ -71,6 +71,11 @@ export function PipelineStepper({ steps, open, onToggle }: Props) {
               {step.detail && !degraded && (
                 <div className="step-detail">└─ {step.detail.replace(/_/g, " ")}</div>
               )}
+              {step.elapsedMs != null && (
+                <span className="step-timing" data-testid={`step-timing-${step.name}`}>
+                  {step.elapsedMs}ms
+                </span>
+              )}
             </li>
           );
         })}
