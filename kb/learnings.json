@@ -193,6 +193,28 @@
       "source": { "issue": 24, "pr": 28 },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-017",
+      "type": "gotcha",
+      "area": ["infra", "process"],
+      "tags": ["terraform", "tfvars", "drift", "local-apply", "cloudfront", "state", "bootstrap"],
+      "title": "A stale bootstrap-phase tfvars override survives to become a live-infra footgun the day it stops matching reality",
+      "detail": "A `terraform.tfvars` value that is correct only during bootstrap (here, `enable_custom_domain = false`, meant to be deleted once the ACM cert reaches ISSUED per the file's own comment) does not expire on its own. It sits gitignored and untracked, and the day someone runs a local `terraform apply` from that checkout — for any reason, even an unrelated check — it silently reverts whatever CI had correctly converged the resource to, with no warning: `terraform plan`/`apply` treat 'go back to the bootstrap state' as just another valid diff. This is not hypothetical: it broke cadre.marcuss.pro in production (issue #37) hours after CI had correctly attached the custom domain. Two-phase bootstrap flags (`enable_custom_domain` and any future one shaped like it) need either a `lifecycle.precondition` that fails the apply once the bootstrap condition is no longer true (implemented in #38: `var.enable_custom_domain || aws_acm_certificate.this.status != \"ISSUED\"`), or a hard rule that the flag's tfvars line gets deleted the moment bootstrap completes — the precondition is safer because it doesn't depend on someone remembering. More generally: any local apply after initial bootstrap is a hazard per `infra/CLAUDE.md`'s own rule ('Only sanctioned local apply: the from-scratch bootstrap') — resyncing drift should always go through the CI `Terraform` workflow's `workflow_dispatch` (`action: apply`), which never reads local tfvars overrides.",
+      "source": { "issue": 37, "pr": 38 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-018",
+      "type": "debug",
+      "area": ["infra", "process"],
+      "tags": ["cloudtrail", "cloudfront", "drift", "diagnostic", "terraform", "useragent"],
+      "title": "CloudTrail's UpdateDistribution events pin down exactly which apply (and from where) changed a CloudFront distribution",
+      "detail": "Symptom: a CloudFront distribution's live config (aliases, viewer_certificate, ...) doesn't match what `terraform plan` says it should be, or doesn't match what you expect from the last known-good apply, and it's unclear whether that's a Terraform bug, a manual console edit, or something else entirely. Fastest diagnostic: `aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=UpdateDistribution` for the account/region, then read each event's `userIdentity.arn` (which IAM principal), `userAgent` (a Terraform-driven call carries `HashiCorp/1.0 Terraform/<version> ... os/<os> md/GOARCH#<arch>` — `os/macos` + an arm64/amd64 arch means a LOCAL apply, not CI, which would show a Linux runner), and `requestParameters.distributionConfig` (the exact config that call pushed — compare `aliases.quantity` / `viewerCertificate` directly against what broke). This found the root cause of issue #37 in minutes: a local `terraform apply` (not a console edit, not a CI run) had pushed `aliases.quantity=0`, reverting an alias CI had attached ten hours earlier. Cross-reference the event's `eventTime` against `gh run list --workflow=<name>.yml` to rule CI in or out before assuming a human touched the console.",
+      "source": { "issue": 37, "pr": 38 },
+      "date": "2026-08-07",
+      "status": "active"
     }
   ]
 }
