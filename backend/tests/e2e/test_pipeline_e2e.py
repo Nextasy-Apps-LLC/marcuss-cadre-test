@@ -392,6 +392,39 @@ class TestAnsweredTurn:
         events = parse_sse(ask(http, None, body=payload).text)
         assert status_of(events, "topic_classifier") == "pass"
 
+    def test_a_genuine_two_turn_conversation_answers_the_follow_up(self, http):
+        """Issue #43's exact scenario, driven end to end: the first turn's
+        real reply becomes the second turn's history (not a canned string),
+        exactly as `buildHistory` on the web client would assemble it. The
+        bare follow-up ("how do I get scored on that?") is unclassifiable
+        without that history — this is the case query condensing (Phase 3)
+        will eventually need something to condense."""
+        conversation_id = uuid.uuid4().hex[:16]
+
+        first_events = parse_sse(
+            ask(http, "What is the AI Maturity Index?", conversation_id=conversation_id).text
+        )
+        assert first_events[-1][1]["outcome"] == "answered"
+        first_answer = reply_text(first_events)
+        assert first_answer
+
+        payload = {
+            "conversation_id": conversation_id,
+            "message": "How do I get scored on that?",
+            "history": [
+                {"role": "user", "text": "What is the AI Maturity Index?"},
+                {"role": "assistant", "text": first_answer},
+            ],
+        }
+        second_events = parse_sse(ask(http, None, body=payload).text)
+
+        assert second_events[-1][0] == "done"
+        assert second_events[-1][1]["outcome"] == "answered", (
+            f"follow-up was not answered: {second_events[-1][1]}"
+        )
+        second_answer = reply_text(second_events)
+        assert second_answer, "follow-up produced an empty reply"
+
 
 @requires_bedrock
 class TestSuggestionChips:

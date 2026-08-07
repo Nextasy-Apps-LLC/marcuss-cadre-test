@@ -49,6 +49,18 @@ export interface ErrorEvent {
 }
 
 /**
+ * One prior turn in the conversation, mirroring the backend's `Turn` model
+ * (`backend/app/graph/state.py`) verbatim — `role`/`text`, unprettified.
+ * Sent to `/ask` as `history: Turn[]`; the backend model already defaults
+ * `history=[]`, so this is an additive field older clients simply omit
+ * (KB-005-safe evolution).
+ */
+export interface Turn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+/**
  * `pending`  — not reached yet. Client-inferred: the wire never sends it.
  * `running`  — currently executing.
  * `pass`     — clean pass. If `detail` is exactly `"degraded"` the verdict
