@@ -95,7 +95,7 @@ variable "bedrock_api_key_parameter" {
 }
 
 variable "brain_model" {
-  description = "Mantle model id for the brain. Claude ids appear in /v1/models but are not entitled on this account yet; flip this the day they are."
+  description = "Mantle model id for the brain. Claude ids appear in /v1/models but don't answer through this transport: the Mantle host only serves /v1/chat/completions, which 400s on a Claude id, and Claude's own /v1/messages 404s on this host entirely — an API-surface split, not an entitlement gap. Flip this the day a Claude-compatible surface is reachable here."
   type        = string
   default     = "qwen.qwen3-32b"
 }
