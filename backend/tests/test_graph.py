@@ -14,6 +14,7 @@ import pytest
 from app.graph import models
 from app.graph.build import build_graph
 from app.sse import STEPS
+from tests.conftest import ask_events, detail_for
 
 
 class TestGraphShape:
@@ -27,6 +28,44 @@ class TestGraphShape:
         # conversation into the next.
         first, second = build_graph(), build_graph()
         assert set(first.get_graph().nodes) == set(second.get_graph().nodes)
+
+
+class TestValidateInputHasTwoHalves:
+    """`validate_input` is deterministic checks *then* a model-backed validity
+    judge. The order is the point: a payload that fails a cheap regex must
+    never reach Bedrock, and a model outage must never fail a payload the
+    regexes already accepted."""
+
+    def test_a_deterministic_failure_never_reaches_the_model(self, monkeypatch):
+        called = False
+
+        async def _judge(state):
+            nonlocal called
+            called = True
+            return models.Verdict("pass")
+
+        monkeypatch.setattr(models, "validate_llm", _judge)
+        events = ask_events("   ")
+        assert detail_for(events, "validate_input", "fail") == "empty"
+        assert not called
+
+    def test_the_model_judge_can_refuse_a_structurally_valid_message(self, monkeypatch):
+        async def _judge(state):
+            return models.Verdict("fail", "invalid")
+
+        monkeypatch.setattr(models, "validate_llm", _judge)
+        events = ask_events("asdkjh qwiue zxcmv")
+        assert detail_for(events, "validate_input", "fail") == "invalid"
+        assert events[-1][1]["outcome"] == "refused"
+
+    def test_a_judge_outage_passes_the_step_degraded(self, monkeypatch):
+        async def _judge(state):
+            raise RuntimeError("bedrock down")
+
+        monkeypatch.setattr(models, "validate_llm", _judge)
+        events = ask_events("What does Cadre AI do?")
+        assert detail_for(events, "validate_input", "pass") == "degraded"
+        assert events[-1][1]["outcome"] == "answered"
 
 
 @pytest.mark.real_seams
