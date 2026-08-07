@@ -19,7 +19,7 @@
 }
 
 .tagline {
-  margin: 4px 0 28px;
+  margin: var(--space-1) 0 var(--space-3);
   color: var(--fg-dim);
   font-size: 0.85rem;
 }
@@ -47,8 +47,8 @@
 .titlebar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
   border-bottom: 1px solid var(--rule);
   background: var(--bg-2);
   font-size: 0.72rem;
@@ -112,13 +112,13 @@
 /* ── transcript ───────────────────────────────────────────────────────── */
 
 .transcript {
-  padding: 18px;
+  padding: var(--space-3);
   min-height: 280px;
   max-height: 52vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-1);
   scrollbar-width: thin;
   scrollbar-color: var(--rule) transparent;
 }
@@ -126,7 +126,7 @@
 .msg {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
+  gap: var(--space-1);
   align-items: baseline;
 }
 
@@ -188,8 +188,8 @@
 .suggestions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 18px 14px;
+  gap: var(--space-1);
+  padding: 0 var(--space-3) var(--space-2);
 }
 
 .suggestions button {
@@ -219,8 +219,8 @@
 .composer {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 18px;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--rule);
   background: var(--bg-2);
 }
@@ -278,7 +278,7 @@
 }
 
 .composer-error {
-  padding: 6px 18px 12px;
+  padding: var(--space-1) var(--space-3) var(--space-2);
   color: var(--hot);
   font-size: 0.78rem;
   background: var(--bg-2);
@@ -303,10 +303,11 @@
 .stepper-summary {
   display: none;
   width: 100%;
+  min-height: 44px; /* touch target floor at the 375px breakpoint where this becomes the tap trigger */
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 10px 18px;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--rule);
@@ -329,17 +330,18 @@
 .stepper-rows {
   list-style: none;
   margin: 0;
-  padding: 14px;
+  padding: var(--space-2);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-1);
 }
 
 .step {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: baseline;
+  gap: var(--space-1);
+  align-items: center;
+  min-height: 44px; /* readable + tappable row floor at the 375px breakpoint */
   color: var(--fg-dim);
   transition: color 0.2s var(--tx), opacity 0.2s var(--tx);
 }
@@ -376,6 +378,10 @@
   font-size: 0.72rem;
 }
 
+/* pending/skipped opacity intentionally stays low-contrast: both are inert
+   states (not yet run / never ran), which WCAG 1.4.3 exempts as "text that
+   is part of an inactive user interface component" — unlike --lost below,
+   which reports a real (if uncertain) outcome and so keeps full contrast. */
 .step--pending {
   opacity: 0.45;
 }
@@ -405,8 +411,12 @@
 }
 
 .step--lost {
+  /* No opacity dimming here (unlike --pending/--skipped, which are inert
+     states exempt from WCAG 1.4.3's contrast requirement): `lost` reports a
+     genuinely unknown outcome for a step that was live when the connection
+     died, so its label text stays at full --warn contrast rather than
+     fading toward unreadable. */
   color: var(--warn);
-  opacity: 0.75;
 }
 
 /* ── foot ─────────────────────────────────────────────────────────────── */
