@@ -1,14 +1,17 @@
-"""Cadre backend — walking skeleton.
+"""Cadre backend — the LangGraph conversation engine behind SSE protocol v2.
 
-Deliberately minimal: `ping` answers `pong`, everything else gets a stub. What
-it *does* implement in full is the SSE contract, so the React client, the
-CloudFront streaming path, and the deploy pipeline can all be proven
-end-to-end before any model is wired in. Replacing `_reply_for()` with real
-inference is then a change to one function rather than to the whole shape.
-
-    POST /ask      → SSE stream of rail / token / done events
+    POST /ask      → SSE stream of state / token / done / error events
     GET  /healthz  → liveness probe (CloudFront + deploy smoke test)
     GET  /config   → greeting and suggestion chips for the page
+
+`/ask` runs the graph as a task and streams whatever the nodes emit onto an
+`asyncio.Queue` that the response generator drains. That indirection is what
+makes the pipeline visible in real time: the alternative — collecting the
+graph's result and then describing it — would paint the whole stepper at the
+instant the answer was already finished.
+
+Model calls are seams (`app/graph/models.py`) until Phase 1b, so this file is
+already the final shape of the request path.
 """
 
 from __future__ import annotations
@@ -16,38 +19,26 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
-import time
 from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, ValidationError
 
-from app import sse
+from app import config, sse
+from app.graph.build import build_graph
+from app.graph.emit import QueueEmitter
+from app.graph.state import Turn, initial_state
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("cadre")
-
-MAX_INPUT_LEN = 2000
 
 ALLOWED_ORIGIN = os.environ.get("CADRE_ALLOWED_ORIGIN", "https://cadre.marcuss.pro")
 IS_PROD = os.environ.get("CADRE_ENV", "dev") == "prod"
 
 _DEV_ORIGINS = ["http://localhost:8088", "http://127.0.0.1:8088"]
 CORS_ORIGINS = [ALLOWED_ORIGIN] if IS_PROD else [ALLOWED_ORIGIN, *_DEV_ORIGINS]
-
-GREETING = "Say `ping` and I'll say `pong`. That's the whole skeleton for now."
-SUGGESTIONS = ["ping"]
-
-STUB_REPLY = "I only know `ping` so far — say that and I'll answer."
-
-# Streamed in fragments so the client exercises its incremental-render path.
-# A single-chunk reply would let a broken token handler pass unnoticed.
-CHUNK_SIZE = 8
-
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 app = FastAPI(title="cadre", docs_url=None, redoc_url=None)
 app.add_middleware(
@@ -63,35 +54,23 @@ SSE_HEADERS = {
     "Connection": "keep-alive",
 }
 
+# Compiled once: the graph is stateless between turns and compiling it per
+# request would put graph construction inside every visitor's turn budget.
+GRAPH = build_graph()
+
 
 class AskRequest(BaseModel):
-    conversation_id: str = Field(pattern=r"^[A-Za-z0-9_-]{8,64}$")
-    message: str
+    """Deliberately permissive.
 
-    @field_validator("message")
-    @classmethod
-    def _message_shape(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("message must not be empty")
-        if len(v) > MAX_INPUT_LEN:
-            raise ValueError("message too long")
-        if _CONTROL_CHARS.search(v):
-            raise ValueError("message contains control characters")
-        return v
-
-
-def _reply_for(message: str) -> str:
-    """The entire brain, for now.
-
-    This is the seam. Everything around it — rails, streaming, transport — is
-    already the real shape, so wiring in a model means replacing this function
-    and nothing else.
+    Only the *shape* is checked here; every content rule (length, control
+    characters, the id format, the rate limit) belongs to the `validate_input`
+    node, so a refusal always arrives as a `state` event on the stream instead
+    of as an HTTP 422 the browser would render through its offline branch.
     """
-    return "pong" if message.strip().lower() == "ping" else STUB_REPLY
 
-
-def _chunks(text: str, size: int) -> list[str]:
-    return [text[i : i + size] for i in range(0, len(text), size)] or [""]
+    conversation_id: str
+    message: str
+    history: list[Turn] = []
 
 
 @app.get("/healthz")
@@ -103,7 +82,7 @@ async def healthz() -> JSONResponse:
 async def page_config() -> JSONResponse:
     """Greeting and chips live server-side so they cannot drift from what the
     backend actually answers."""
-    return JSONResponse({"greeting": GREETING, "suggestions": SUGGESTIONS})
+    return JSONResponse({"greeting": config.GREETING, "suggestions": config.SUGGESTIONS})
 
 
 @app.post("/ask")
@@ -111,48 +90,84 @@ async def ask(request: Request) -> StreamingResponse:
     try:
         body = await request.json()
         req = AskRequest.model_validate(body)
-    except (ValidationError, ValueError):
+    except (ValidationError, ValueError, TypeError):
+        # A body the graph cannot even be handed still owes the client the
+        # same wire sequence as any other refusal.
         return StreamingResponse(
-            _reject("rail1:invalid_request"),
+            _malformed_payload_stream(),
             media_type="text/event-stream",
             headers=SSE_HEADERS,
         )
 
     return StreamingResponse(
-        _stream(req.message),
+        _stream(req),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
 
 
-async def _reject(reason: str) -> AsyncIterator[str]:
-    started = time.monotonic()
-    yield sse.rail("rail1", "input_validation", False, 0.0, reason.split(":", 1)[1])
-    yield sse.done(True, reason, (time.monotonic() - started) * 1000)
+async def _malformed_payload_stream() -> AsyncIterator[str]:
+    yield sse.state("validate_input", "running")
+    yield sse.state("validate_input", "fail", "malformed_payload")
+    for step in sse.unreported({"validate_input"}):
+        yield sse.state(step, "skipped")
+    yield sse.done("refused", config.REFUSAL_TEXTS["validate_input"])
 
 
-async def _stream(message: str) -> AsyncIterator[str]:
-    started = time.monotonic()
+async def _run_graph(state, emit, queue: asyncio.Queue) -> None:
+    """Drive the graph, then post the terminal the generator should emit."""
+    try:
+        final = await GRAPH.ainvoke(state, config={"configurable": {"emit": emit}})
+        await queue.put(
+            (
+                "done",
+                {
+                    "outcome": final.get("outcome", "answered"),
+                    "refusal_text": final.get("refusal_text"),
+                },
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        # The 200 is long committed by now, so a failure is an `error` event —
+        # generic on the wire, detailed in the log.
+        log.exception("graph failed: %s", exc)
+        await queue.put(("error", None))
+
+
+async def _stream(req: AskRequest) -> AsyncIterator[str]:
+    queue: asyncio.Queue = asyncio.Queue()
+    emit = QueueEmitter(queue)
+    state = initial_state(req.message, req.history, req.conversation_id)
+    task = asyncio.create_task(_run_graph(state, emit, queue))
 
     try:
-        # All six rails pass trivially at this stage. They are emitted anyway
-        # because the client renders the trace panel from them — a skeleton
-        # that skipped them would leave six rails spinning forever and hide
-        # exactly the integration bug this endpoint exists to catch.
-        for rail_id, rail_name in sse.RAILS:
-            t0 = time.monotonic()
-            reason = "response_ready" if rail_id == "rail4" else "ok"
-            yield sse.rail(rail_id, rail_name, True, (time.monotonic() - t0) * 1000, reason)
-            # Hand control back so each event flushes as its own chunk rather
-            # than coalescing into one write at the end.
+        while True:
+            try:
+                kind, payload = await asyncio.wait_for(
+                    queue.get(), timeout=config.PING_INTERVAL_S
+                )
+            except (asyncio.TimeoutError, TimeoutError):
+                # Nothing from the graph for a while: keep intermediaries from
+                # reaping a connection that is merely waiting on a slow step.
+                yield sse.ping()
+                continue
+
+            if kind == "state":
+                yield sse.state(payload["step"], payload["status"], payload["detail"])
+            elif kind == "token":
+                yield sse.token(payload)
+            elif kind == "done":
+                yield sse.done(payload["outcome"], payload["refusal_text"])
+                return
+            elif kind == "error":
+                # Terminal on its own — no `done` follows an `error`.
+                yield sse.error(config.ERROR_TEXT)
+                return
+
+            # Flush each event as its own chunk rather than coalescing into one
+            # write at the end.
             await asyncio.sleep(0)
-
-        for chunk in _chunks(_reply_for(message), CHUNK_SIZE):
-            yield sse.token(chunk)
-            await asyncio.sleep(0)
-
-        yield sse.done(False, None, (time.monotonic() - started) * 1000)
-
-    except Exception as exc:  # noqa: BLE001
-        log.exception("stream failed: %s", exc)
-        yield sse.error("Something went wrong. Please try again.")
+    finally:
+        # A visitor who closed the tab should not leave a turn running.
+        if not task.done():
+            task.cancel()
