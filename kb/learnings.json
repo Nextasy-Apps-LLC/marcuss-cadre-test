@@ -193,6 +193,28 @@
       "source": { "issue": 24, "pr": 28 },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-017",
+      "type": "gotcha",
+      "area": ["web", "backend"],
+      "tags": ["linkify", "regex", "markdown", "llm-output", "url-parsing"],
+      "title": "A URL-extraction regex tuned for plain text mangles a markdown-style [text](url) link from the model",
+      "detail": "linkify.ts's URL regex (`/https?:\\/\\/[^\\s<>\"')]+/g`) excludes `)` from the match but not `(` or `]`. It works for a bare URL in prose, but when the model occasionally answers with a markdown-formatted link — `[https://cadreai.com/contact](https://cadreai.com/contact)` — the regex greedily swallows the `](https://...` tail into one 'URL', which then fails to parse as a real URL and renders as garbage (`[see more)` instead of a clean link). Confirmed live via a Playwright browser check against a real Bedrock answer, not from unit tests alone (unit tests only fed plain-URL fixtures). If a URL-matching regex will run against LLM-generated text rather than hand-authored text, test it against markdown-link-formatted input too, and exclude `(`, `[`, `]` from the match's character class alongside `)`. Left unfixed in #40/#47 because the issue specified the regex character-for-character as a decision-free constraint; flagged as a follow-up rather than silently widened.",
+      "source": { "issue": 40, "pr": 47 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-018",
+      "type": "gotcha",
+      "area": ["web"],
+      "tags": ["playwright", "e2e", "browser-check", "chat-message", "status", "kb-007"],
+      "title": "In this app's message model, the user's own ChatMessage is stamped status: \"done\" immediately — a bare [data-status=\"done\"] browser wait fires before the bot's reply exists",
+      "detail": "useCadreChat.send() pushes the 'you' message with status: 'done' synchronously, alongside the 'cadre' reply at status: 'pending' (useCadreChat.ts). A KB-007 browser check (Playwright or otherwise) that waits on `document.querySelectorAll('[data-status=\"done\"]').length > 0` to detect turn completion resolves instantly on the user's own message — long before any state/token/done SSE event has arrived — producing a false-positive 'the turn settled' read against an empty or half-rendered stepper. Scope the wait to the bot's own row instead: `.msg--cadre[data-status=\"done\"]`. Cost about ten minutes of a wrong-conclusion debug in #40/#47's browser check (an empty per-step timing array) before this was caught.",
+      "source": { "issue": 40, "pr": 47 },
+      "date": "2026-08-07",
+      "status": "active"
     }
   ]
 }
