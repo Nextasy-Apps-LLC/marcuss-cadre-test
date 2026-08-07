@@ -1,0 +1,84 @@
+name: Docs
+
+# Publishes the MkDocs site to GitHub Pages.
+#
+# Path-filtered because the docs are a small part of this repo and a full
+# publish on every backend commit is wasted minutes. `adr/**` is in the filter
+# even though no file under docs/ changes with it: the ADR pages embed those
+# files at build time, so a new record that did not rebuild the site would be
+# invisible on the published page.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "adr/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+# One publish at a time. Never cancel in progress — `deploy-pages` is the last
+# writer to win, and killing it mid-upload can leave Pages serving a partial
+# artifact. A queued run costs a minute; a half-published site is confusing for
+# as long as nobody notices.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+# Least privilege, split across the two jobs below rather than granted here:
+# only `publish` needs to write Pages, and only `publish` needs an OIDC token.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+
+      - name: Install the docs toolchain
+        run: pip install -r docs/requirements.txt
+
+      # --strict turns warnings into errors, which is the only thing that
+      # catches a dead relative link or an include whose source file moved.
+      # Without it MkDocs happily publishes a broken cross-reference.
+      - name: Build
+        run: mkdocs build --strict
+
+      # Packages site/ as the tar artifact `deploy-pages` expects. This is the
+      # official path; it deliberately replaces pushing to a gh-pages branch,
+      # so no build output lands in git history and no workflow gets write
+      # access to a branch.
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  publish:
+    name: publish to Pages
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write # create the Pages deployment
+      id-token: write # OIDC token deploy-pages exchanges for it
+
+    # Reports the live URL on the run and in the repo's Environments tab.
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      # ⚠️ Requires Settings → Pages → Source: "GitHub Actions". Until that is
+      # set, this step fails with a 404 from the Pages API — the workflow
+      # cannot enable it for you.
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

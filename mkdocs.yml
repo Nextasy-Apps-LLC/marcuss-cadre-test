@@ -1,0 +1,85 @@
+site_name: cadre
+site_description: >-
+  A guardrailed streaming chatbot — private S3 page and a RESPONSE_STREAM
+  Lambda Function URL behind one CloudFront distribution.
+site_author: marcuss
+
+# The Pages URL for this repository. Must be exact and must keep the trailing
+# slash: mkdocs derives canonical links and the sitemap from it, and the
+# project-pages path (/marcuss-cadre-test/) is not the domain root.
+site_url: https://nextasy-apps-llc.github.io/marcuss-cadre-test/
+
+repo_url: https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test
+repo_name: Nextasy-Apps-LLC/marcuss-cadre-test
+
+# Deliberately empty, which suppresses the "edit this page" pencil. Several
+# pages here are thin wrappers that include Markdown owned by adr/ or infra/ —
+# an edit link would send you to the wrapper, which is the wrong file to
+# change. Each such page names its source of truth in a banner instead.
+edit_uri: ""
+
+# The site is built from the repo root, so keep the build output out of git.
+site_dir: site
+
+# requirements.txt lives in docs/ so the toolchain sits next to what it builds,
+# but it is a build input, not a page — without this mkdocs copies it into the
+# published site as a static asset.
+exclude_docs: |
+  requirements.txt
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - toc.follow
+    - search.highlight
+
+plugins:
+  - search
+  - include-markdown
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+
+nav:
+  - Home: index.md
+  - Infrastructure: infrastructure.md
+  - CI and deployment: ci-cd.md
+  - Decisions:
+      - Overview: adr/index.md
+      - 0001 — Streaming chatbot on CloudFront: adr/0001-streaming-chatbot-cloudfront-lambda-s3.md
+
+# `strict` is intentionally not set here. CI passes `--strict` on the command
+# line so a broken link or an unresolvable include fails the docs build, while
+# `mkdocs serve` stays usable locally — strict mode aborts the dev server on
+# the first warning, which makes editing a half-finished page miserable.

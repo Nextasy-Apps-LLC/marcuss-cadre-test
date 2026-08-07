@@ -25,3 +25,6 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# Docs — `mkdocs build` output. Published from the CI artifact, never from git.
+site/

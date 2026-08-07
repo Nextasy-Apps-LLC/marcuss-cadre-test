@@ -1,0 +1,15 @@
+# Documentation toolchain. Pinned exactly, not floored: the docs site is built
+# in CI and published to GitHub Pages, so a theme or plugin releasing a
+# breaking change should fail at the version bump PR, not on an unrelated
+# merge to main. Bump these deliberately.
+#
+#     pip install -r docs/requirements.txt
+#     mkdocs serve          # live preview on :8000
+#     mkdocs build --strict # what CI runs — warnings are errors
+
+mkdocs==1.6.1
+mkdocs-material==9.7.7
+
+# Lets docs/ pages embed Markdown that lives elsewhere in the repo (adr/,
+# infra/) instead of copying it. Copies drift; includes cannot.
+mkdocs-include-markdown-plugin==7.3.0
