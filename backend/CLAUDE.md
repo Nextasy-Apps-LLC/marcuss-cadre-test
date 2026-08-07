@@ -149,7 +149,7 @@ progress. Rules, each with its why:
   spends a real one-token completion per id, because listing is not
   entitlement: several Claude ids appear in the catalogue on this account and
   still refuse to run. Every model step fails open, so a wrong or unentitled id
-  ships as a working-looking chat with amber rails rather than as a crash — the
+  ships as a working-looking chat with amber steps rather than as a crash — the
   assertion is what keeps that from being discovered by a visitor.
 - Judges answer with a label and are parsed tolerantly (case, whitespace,
   punctuation, markdown, reasoning preamble). A response that is *not* a
