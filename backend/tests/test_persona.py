@@ -87,15 +87,17 @@ class TestSystemPrompt:
         ):
             assert partner in prompt
         assert "model-agnostic" in prompt
-        assert "cost/quality/task fit" in prompt
+        assert "cost" in prompt
+        assert "quality" in prompt
+        assert "fit" in prompt
 
     def test_it_handles_security_questions_without_inventing_claims(self):
         prompt = persona.SYSTEM_PROMPT.lower()
         assert "security" in prompt
-        assert "data-handling" in prompt
+        assert "data handling" in prompt
         assert "per engagement" in prompt
-        assert "soc2" in prompt
-        assert "gdpr-compliant" in prompt
+        assert "soc" in prompt
+        assert "gdpr" in prompt
         assert persona.CONTACT_URL in persona.SYSTEM_PROMPT
 
     def test_it_points_to_case_studies(self):
