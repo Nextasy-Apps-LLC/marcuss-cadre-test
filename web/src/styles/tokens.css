@@ -1,36 +1,48 @@
 /*
  * Design tokens.
  *
- * Deliberately mirrors the marcuss.pro palette (phosphor green on a
- * green-tinted near-black, JetBrains Mono throughout) so cadre reads as part
- * of the same family. Kept in one file so a re-theme is a single edit rather
- * than a hunt through components.
+ * Ported from marcuss.pro's FORMAL theme (assets/css/theme.css,
+ * html[data-mode="formal"] block, cross-checked against index.html's
+ * html[data-mode="formal"] root override — the two files agree on every
+ * token below). Formal is the editorial palette: navy + claret on warm
+ * off-white paper, Newsreader serif for prose-weight text, JetBrains Mono
+ * kept for the terminal/chrome register the rest of the UI is built around.
+ * Kept in one file so a re-theme is a single edit rather than a hunt
+ * through components.
  */
 
 :root {
-  --accent: #00d68f;
-  --accent-2: #5fb88a;
+  --accent: #1c2a4a; /* navy */
+  --accent-2: #6b1f2a; /* claret */
 
-  --bg: #050a07;
-  --bg-2: #0a120d;
-  --bg-3: #0d1712;
+  --bg: #f5f1ea;
+  --bg-2: #faf7f0; /* toned chrome: titlebar / composer bars / trace panel — matches
+                       marcuss.pro's #ask .titlebar / .am-trace-panel in formal mode */
+  --bg-3: #ffffff; /* the terminal card itself — marcuss.pro's #ask .ask-terminal is
+                       literal #fff in formal mode, brighter than --bg-2 */
 
-  --fg: #d8ffe6;
-  --fg-strong: #f5fff0;
-  --fg-dim: #7eb59a;
-  --fg-mute: #4a6b5a;
+  --fg: #1a1a1a;
+  --fg-strong: #0a0a0a;
+  --fg-dim: #57534e;
+  --fg-mute: #8a857c;
 
-  --rule: rgba(0, 214, 143, 0.22);
-  --hot: #ff4365;
-  --warn: #ffd166;
+  --rule: rgba(28, 42, 74, 0.2);
+  --ok: #1c5a3a;
+  --hot: #b1372f;
+  --warn: #b07e2d;
 
-  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --mono: "JetBrains Mono", "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --serif: "Newsreader", Georgia, "Times New Roman", serif;
 
-  --glow: 0 0 12px color-mix(in oklab, var(--accent) 55%, transparent);
-  --card-shadow: 0 0 40px color-mix(in oklab, var(--accent) 8%, transparent),
-    inset 0 0 80px color-mix(in oklab, var(--accent) 3%, transparent);
+  /* FORMAL drops the phosphor glow entirely — flat, editorial shadows only. */
+  --glow: none;
+  --card-shadow: 0 1px 0 rgba(26, 26, 26, 0.08), 0 8px 24px rgba(26, 26, 26, 0.06);
 
-  --radius: 10px;
+  /* marcuss.pro's #ask .ask-terminal sets border-radius: 0 in formal mode —
+     square, editorial corners on the big card surfaces. Small chrome (pill
+     buttons, the stop button) keeps its own hardcoded radius, same as the
+     reference site's theme-toggle stays rounded in formal too. */
+  --radius: 0;
   --tx: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 

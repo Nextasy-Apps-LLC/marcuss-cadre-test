@@ -8,9 +8,12 @@
 
 .masthead h1 {
   margin: 0;
-  font-size: 1.45rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  /* marcuss.pro's formal .topbar .brand is serif, not mono — the one place
+     the editorial voice shows up in otherwise terminal-register chrome. */
+  font-family: var(--serif);
+  font-size: 1.55rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--accent);
   text-shadow: var(--glow);
 }
@@ -33,7 +36,7 @@
 /* ── terminal ─────────────────────────────────────────────────────────── */
 
 .terminal {
-  background: var(--bg-2);
+  background: var(--bg-3);
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   box-shadow: var(--card-shadow);
@@ -47,7 +50,7 @@
   gap: 12px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--rule);
-  background: var(--bg-3);
+  background: var(--bg-2);
   font-size: 0.72rem;
   color: var(--fg-mute);
 }
@@ -83,8 +86,13 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: var(--glow);
+  /* Formal's status dot is --ok (forest green), not --accent (navy) —
+     mirrors marcuss.pro's #ask .ai-status .live in formal mode, which uses
+     the same forest green with its own small colored glow (unlike the rest
+     of formal, which drops --glow to none) to keep "system is live"
+     visually distinct from the navy brand accent used everywhere else. */
+  background: var(--ok);
+  box-shadow: 0 0 10px color-mix(in oklab, var(--ok) 45%, transparent);
 }
 
 .live--busy {
@@ -214,7 +222,7 @@
   gap: 10px;
   padding: 12px 18px;
   border-top: 1px solid var(--rule);
-  background: var(--bg-3);
+  background: var(--bg-2);
 }
 
 .composer-prompt {
@@ -273,7 +281,7 @@
   padding: 6px 18px 12px;
   color: var(--hot);
   font-size: 0.78rem;
-  background: var(--bg-3);
+  background: var(--bg-2);
 }
 
 /* ── trace panel ──────────────────────────────────────────────────────── */
