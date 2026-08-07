@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "_about": "Compound-engineering Knowledge Base. Every development cycle reads this before an issue is written (via the kb-filter agent) and appends to it after implementation (via a learnings PR stacked on the dev branch). Marcus merges or rejects learnings PRs independently of the code they came from.",
+  "_taxonomy": {
+    "gotcha": "A trap that silently breaks something when you don't know about it — a setting, ordering, or invariant that looks optional but isn't. Written as: what breaks, and what to do instead.",
+    "debug": "A symptom-to-cause mapping that cost real time to find. Written as: symptom observed, actual cause, fastest diagnostic path.",
+    "learning": "A reusable practice or decision heuristic that made a cycle go better and should be applied in the next one."
+  },
+  "_entry_contract": {
+    "id": "KB-NNN, sequential, never reused",
+    "type": "gotcha | debug | learning",
+    "area": "one or more of: backend | web | infra | ci | process",
+    "tags": "free-form keywords used by the kb-filter agent for matching",
+    "title": "one line",
+    "detail": "concrete and self-contained — a reader with no context should know what to do",
+    "source": "issue and/or PR number the learning came from (null when predating the workflow)",
+    "date": "YYYY-MM-DD the learning was captured",
+    "status": "active | superseded (superseded entries stay for history, filter skips them)"
+  },
+  "entries": [
+    {
+      "id": "KB-001",
+      "type": "gotcha",
+      "area": ["backend", "ci"],
+      "tags": ["docker", "lambda", "dockerfile", "container", "cold-start", "uvicorn"],
+      "title": "The Lambda base image's ENTRYPOINT must be cleared (`ENTRYPOINT []`) or init crashes",
+      "detail": "public.ecr.aws/lambda/python ships /lambda-entrypoint.sh as ENTRYPOINT, which treats CMD[0] as a Python handler name. Left in place it swallows the uvicorn command and the function crashes at init with 'entrypoint requires the handler name to be the first argument'. The Lambda Web Adapter extension talks to the runtime API, so the entrypoint must be `ENTRYPOINT []`. CI builds the image but never boots it — this class of bug only surfaces on invoke, so smoke any Dockerfile change with `docker run -p 8080:8080` locally.",
+      "source": { "issue": null, "pr": 12 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-002",
+      "type": "gotcha",
+      "area": ["web", "infra"],
+      "tags": ["cloudfront", "oac", "sigv4", "post", "403", "fetch", "headers"],
+      "title": "Every viewer POST through CloudFront→Lambda OAC must send x-amz-content-sha256",
+      "detail": "CloudFront's OAC signs over the payload hash header. A POST without `x-amz-content-sha256: <hex sha256 of the body>` fails Lambda's signature check with a 403 'signature does not match'. The web client computes it in sha256Hex before every /ask POST; any new POSTing client (tests, scripts, new pages) must do the same. GETs are exempt.",
+      "source": { "issue": null, "pr": 13 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-003",
+      "type": "debug",
+      "area": ["infra"],
+      "tags": ["lambda", "function-url", "403", "iam", "permissions", "cloudfront"],
+      "title": "Function-URL 403s need TWO permissions, and the missing-permission body looks like a bad signature",
+      "detail": "Function URLs created since Oct 2025 require `lambda:InvokeFunction` IN ADDITION TO `lambda:InvokeFunctionUrl` for the calling principal, and the missing-permission 403 body is byte-identical to a bad-signature 403. Before deep signature archaeology: check both statements exist on the function, then bisect with an in-account signed call (`aws lambda invoke-with-response-stream` or awscurl) — if that succeeds, the fault is upstream (org perimeter policy), not in this stack.",
+      "source": { "issue": null, "pr": null },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-004",
+      "type": "gotcha",
+      "area": ["infra", "backend"],
+      "tags": ["cloudfront", "timeout", "streaming", "sse", "lambda"],
+      "title": "CloudFront caps origin response at 60s — Lambda timeout must match, and long streams must fit",
+      "detail": "CloudFront's origin response timeout is hard-capped at 60s without a quota increase. The Lambda timeout is aligned to it (PR #17); raising the Lambda timeout alone buys nothing because CloudFront cuts the stream first. Any feature whose SSE turn could exceed ~55s (slow model, long generation) must reduce work per turn, not raise timeouts. SSE heartbeats keep intermediaries from reaping an idle-looking connection but do not extend the hard cap.",
+      "source": { "issue": null, "pr": 17 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-005",
+      "type": "gotcha",
+      "area": ["backend", "web"],
+      "tags": ["sse", "contract", "types", "breaking-change", "events"],
+      "title": "The SSE contract is mirrored in backend/app/sse.py and web/src/types.ts — change both sides in one PR or neither",
+      "detail": "Four events (rail, token, done, error) and the rail1..rail6 order are duplicated verbatim on both sides of the wire. Nothing imports across the boundary, so a field rename compiles green on both sides and breaks silently in production (a trace panel that stops updating). Any contract change must touch both files plus both test suites in the same PR. Additive optional fields are the safe evolution path.",
+      "source": { "issue": null, "pr": 13 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-006",
+      "type": "debug",
+      "area": ["ci", "infra"],
+      "tags": ["oidc", "github-actions", "sts", "assume-role", "environment", "production"],
+      "title": "A job inside `environment: production` gets an environment: OIDC sub that REPLACES the ref form",
+      "detail": "GitHub OIDC tokens for jobs gated by an environment carry sub `repo:<owner>/<repo>:environment:production`, not the ref form — and both the name-cased and id-qualified repo spellings occur. An IAM trust condition listing only the ref form fails with a bare 'Not authorized to perform sts:AssumeRoleWithWebIdentity' that only reproduces AFTER the approval click. Every new gated job means re-checking the trust conditions for (2 repo spellings) x (applicable sub forms). Fixed in PR #4.",
+      "source": { "issue": null, "pr": 4 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-007",
+      "type": "learning",
+      "area": ["infra", "process"],
+      "tags": ["curl", "smoke-test", "streaming", "http3", "browser", "verification"],
+      "title": "A curl-green smoke test does not prove streaming works — verify in a real browser",
+      "detail": "curl ignores alt-svc, so HTTP/3 breakage passes curl and breaks every real browser. Local http.server infers MIMEs that prod may not. For any change touching streaming, CloudFront behaviors, or static assets: verify in a browser tab watching tokens arrive (or assert MIMEs with curl -I against the live URL), and only then claim 'tested'.",
+      "source": { "issue": null, "pr": null },
+      "date": "2026-08-07",
+      "status": "active"
+    }
+  ]
+}
