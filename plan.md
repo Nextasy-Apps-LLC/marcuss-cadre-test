@@ -90,22 +90,33 @@ The corpus is ~50 pages / a few hundred chunks. The right-sized store is **Lance
 - Safe URL linkification (text→anchor for `https://` matches only; no `dangerouslySetInnerHTML`) so citations and the booking link are clickable.
 - "View trace ↗" chip on the latest assistant message.
 - Suggestion chips + greeting covering the assignment's support scenarios.
+- **Thumbs up / thumbs down on assistant messages — rendered as a no-op**: the buttons appear (with a brief "thanks for the feedback" acknowledgment) but are wired to nothing. They document the intended feedback loop; actually recording them as Langfuse scores on the message's trace is listed under "with more time".
 
 ## Persona (brain node)
 
 Cadre AI support assistant for prospective and existing clients: services (AI Strategy, AI Leadership & Facilitation, AI Engineering, AI Agents), industries served, the AI Maturity Index, the client portal, and how to get started. Facts come only from retrieved context and the vetted baseline — never invented pricing, clients, or capabilities. Pricing → engagements are custom; book a strategy call. Unknown or out-of-scope → escalate to https://www.cadreai.com/contact. Replies in the user's language.
+
+## Evaluation — LLM-as-judge
+
+"Is the bot doing things correctly, and did this change make it better or worse?" is answered by an **offline eval harness** (`backend/evals/`) that runs the LangGraph engine headless against a golden dataset and logs every run as a **Langfuse experiment**, so run-vs-run comparison (per-case and aggregate score deltas) comes from Langfuse's native experiment UI — no dashboard to build.
+
+- **Golden dataset (~30 cases, growable)**: the assignment's support scenarios plus adversarial ones — off-topic, injection attempts, multi-turn follow-ups, pricing, unknown-answer escalation. Each case: input (+history) → expected `outcome` (`answered/refused/escalated`), expected source URL for grounded questions, and a reference answer. Stored in-repo; mirrored to a Langfuse dataset.
+- **Deterministic assertions first** (no LLM, exact): the injection case got `refused`; the unknown case `escalated` with the booking link; the grounded answer cites the expected page.
+- **LLM-as-judge for the fuzzy half**: rubric grading of groundedness (only claims supported by the retrieved chunks — the hallucination check), correctness vs the reference answer, and persona/tone adherence. **Reference-guided grading** blunts self-preference bias, and the judge is a **different model family from the brain** — Nemotron 3 Super 120B (fallback: GPT-OSS), both serverless on Bedrock, so no new infra.
+- **When it runs**: manually or via `workflow_dispatch` before merging any prompt, model, or retrieval change. A full run costs cents and a few minutes. CI *gating* on scores is deliberately deferred (see scope) — judge scores need calibration before they're allowed to block merges.
 
 ## Phases
 
 - [ ] **Phase 1 — LangGraph engine + SSE v2**: `StateGraph`, nodes with mocked-seam unit tests, `state` events, refusal/escalation states, persona v1, frontend protocol update + pipeline stepper.
 - [ ] **Phase 2 — Langfuse traceability**: keys via SSM SecureString (`SET_OUT_OF_BAND` pattern), callback wiring, public traces, `trace` event, frontend trace link, flush hardening for Lambda.
 - [ ] **Phase 3 — RAG KB**: ingestion pipeline + LanceDB artifact; `retrieve` node (condense → embed → search) wired between `topic_classifier` and `brain`; inline citations; OpenAI key via SSM; IAM/env deltas.
-- [ ] **Phase 4 — UX polish + e2e**: stepper/linkify/suggestions polish; `BASE_URL`-pointable e2e suite (healthz, config, grounded-answer-with-citation, off-topic refusal, injection refusal) run against local Docker, then prod.
-- [ ] **Phase 5 — Hardening + live verification**: the assignment's support scenarios exercised live in a browser, including escalation and trace-link click-through.
+- [ ] **Phase 4 — Evaluation harness**: golden dataset; headless graph runner; deterministic outcome/citation assertions; LLM-judge rubric (groundedness, correctness, persona) on a non-brain model family; runs logged as Langfuse experiments for before/after comparison.
+- [ ] **Phase 5 — UX polish + e2e**: stepper/linkify/suggestions polish; no-op thumbs up/down; `BASE_URL`-pointable e2e suite (healthz, config, grounded-answer-with-citation, off-topic refusal, injection refusal) run against local Docker, then prod.
+- [ ] **Phase 6 — Hardening + live verification**: the assignment's support scenarios exercised live in a browser, including escalation and trace-link click-through; a final eval run recorded as the submission baseline.
 
 ## Scope decisions
 
-**In scope:** the assignment's support scenarios; grounded, cited answers; the five-step guarded pipeline with live visible state; public per-message traces; escalation to a human via booking.
+**In scope:** the assignment's support scenarios; grounded, cited answers; the five-step guarded pipeline with live visible state; public per-message traces; escalation to a human via booking; an offline LLM-as-judge eval harness with run-vs-run comparison.
 
 **Out of scope** (each deliberate, with the "with more time" path):
 
@@ -120,6 +131,9 @@ Cadre AI support assistant for prospective and existing clients: services (AI St
 | pgvector/RDS-backed KB | corpus fits in an embedded store | migrate when corpus scale/tenancy demands it |
 | Langfuse self-hosting | Cloud free tier fits a demo | self-host if data residency requires |
 | Public traces privacy | acceptable for a demo | per-conversation opt-in, redaction in traces |
+| User feedback wiring | thumbs up/down ship as a no-op UI | record as Langfuse scores on the message's trace; feed the eval dataset |
+| Online / continuous evaluation | offline harness covers the demo | scheduled LLM-judge over sampled production traces; drift alerts |
+| CI gating on eval scores | judge needs calibration first | block merges on score regression once judge↔human agreement is measured |
 
 ## Operational notes
 
