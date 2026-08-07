@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-import { readSse } from "./sse";
+import { readSse, sha256Hex } from "./sse";
 import {
   freshRails,
   RAIL_SPECS,
@@ -97,10 +97,19 @@ export function useCadreChat(greeting: string): CadreChat {
       let buffer = "";
 
       try {
+        const body = JSON.stringify({ conversation_id: conversationId(), message: text });
         const response = await fetch(ENDPOINT, {
           method: "POST",
-          headers: { "content-type": "application/json", accept: "text/event-stream" },
-          body: JSON.stringify({ conversation_id: conversationId(), message: text }),
+          headers: {
+            "content-type": "application/json",
+            accept: "text/event-stream",
+            // Lambda Function URLs behind CloudFront OAC reject POSTs whose
+            // payload the viewer has not hashed: CloudFront signs the request
+            // with this value, and without it Lambda answers 403 "signature
+            // does not match". GET is exempt; every POST must carry it.
+            "x-amz-content-sha256": await sha256Hex(body),
+          },
+          body,
           signal: controller.signal,
         });
 

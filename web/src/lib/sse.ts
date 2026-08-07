@@ -12,6 +12,24 @@ export interface SseMessage {
 }
 
 /**
+ * Hex-encoded SHA-256 of a request body.
+ *
+ * CloudFront's OAC signs origin requests to the Lambda Function URL, and for
+ * methods with a body the signature covers the payload hash the *viewer*
+ * supplies in `x-amz-content-sha256` — Lambda rejects unsigned payloads, so a
+ * POST without this header 403s with "signature does not match".
+ */
+export async function sha256Hex(body: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(body),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
  * Split a raw SSE frame into its event name and joined data payload.
  * Returns null for frames with no `data:` line — comment-only frames like the
  * `: ping` heartbeat, which exist purely to keep intermediaries from reaping
