@@ -197,6 +197,18 @@ class TestValidationRefusals:
         assert "token" not in kinds(events)
 
 
+class TestHistoryBudget:
+    """Wire-level counterpart to `tests/test_state.py`'s unit coverage of
+    `initial_state`'s truncation: an oversized `history` is trimmed server-side
+    and the turn still answers — it is never refused for the shape of a field
+    the visitor didn't type."""
+
+    def test_an_oversized_history_is_truncated_not_refused(self):
+        history = [{"role": "user", "text": f"question {i}"} for i in range(50)]
+        events = ask_events("How do I get scored on that?", history=history)
+        assert events[-1][1]["outcome"] == "answered"
+
+
 class TestInjectionRefusal:
     @pytest.fixture(autouse=True)
     def _blocking_judge(self, monkeypatch):

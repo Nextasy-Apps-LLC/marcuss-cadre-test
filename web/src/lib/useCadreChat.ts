@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
+import { buildHistory } from "./history";
 import { readSse, sha256Hex } from "./sse";
 import {
   applyAborted,
@@ -95,7 +96,11 @@ export function useCadreChat(greeting: string): CadreChat {
       };
 
       try {
-        const body = JSON.stringify({ conversation_id: conversationId(), message: text });
+        const body = JSON.stringify({
+          conversation_id: conversationId(),
+          message: text,
+          history: buildHistory(messages),
+        });
         const response = await fetch(ENDPOINT, {
           method: "POST",
           headers: {
@@ -151,7 +156,10 @@ export function useCadreChat(greeting: string): CadreChat {
         setBusy(false);
       }
     },
-    [busy, patch],
+    // `messages` is read (via `buildHistory`) at the top of the function,
+    // before the new turn is appended — that ordering is what excludes the
+    // in-flight turn from its own history without any special-casing.
+    [busy, messages, patch],
   );
 
   return { messages, steps, busy, send, stop, reset };
