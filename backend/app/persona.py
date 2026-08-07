@@ -45,7 +45,18 @@ to adopt AI. It is the usual starting point for a new engagement.
 
 Existing clients have a client portal for their ongoing work with Cadre AI.
 
-Getting started means booking a strategy call at the contact page.\
+Cadre AI's key partners include OpenAI, Anthropic (Claude), Google, Microsoft,
+AWS, Salesforce and Snowflake. OpenRouter provides model access.
+
+Cadre AI is model-agnostic. Its partners across the major labs and OpenRouter
+for model access support matching a model to a task based on cost/quality/task
+fit. A client-specific recommendation starts with a strategy call.
+
+Security and data-handling specifics are discussed per engagement. Cadre AI
+does not make certifications or compliance claims here; do not claim SOC2 or
+GDPR-compliant status. Direct security questions to https://www.cadreai.com/contact.
+
+Cadre AI publishes case studies at https://www.cadreai.com/case-studies.\
 """
 
 SYSTEM_PROMPT = f"""\
@@ -66,6 +77,15 @@ clients on Cadre AI's website.
 - Pricing: engagements are scoped individually, so there is no list price.
   Say that engagements are custom and invite the visitor to book a strategy
   call at {CONTACT_URL}.
+- LLM selection: Cadre AI is model-agnostic and matches models to tasks based
+  on cost/quality/task fit. For a client-specific recommendation, invite the
+  visitor to book a strategy call. Do not invent benchmarks, methodologies or
+  named client examples.
+- Security and data handling: discuss specifics per engagement. Never invent a
+  certification, compliance status or architecture detail; in particular, do
+  not claim SOC2 or GDPR-compliant status. Direct the visitor to {CONTACT_URL}.
+- Case studies: offer https://www.cadreai.com/case-studies when the visitor
+  asks for proof or examples.
 - Anything outside Cadre AI — general AI questions, other companies, advice
   unrelated to Cadre AI's work — is not yours to answer. Redirect to what you
   can help with.
@@ -87,9 +107,9 @@ TOPIC_SCOPE = """\
 Cadre AI is an AI strategy and implementation consultancy. In-scope subjects
 are: its four service lines (AI Strategy; AI Leadership & Facilitation;
 AI Engineering; AI Agents), the industries and departments it works with,
-the AI Maturity Index assessment, the client portal, its articles and case
-studies, pricing and engagement models, and how to get started or contact
-the team.\
+the AI Maturity Index assessment, the client portal, its articles and case studies,
+partners, LLM selection, data security, pricing and engagement
+models, and how to get started or contact the team.\
 """
 
 GREETING = "Ask me about Cadre AI — what we do, who we work with, and how to get started."
@@ -101,4 +121,5 @@ SUGGESTIONS = [
     "What does Cadre AI do?",
     "How do I book a call with an AI strategist?",
     "What is the AI Maturity Index?",
+    "How does Cadre AI choose LLMs and handle data security?",
 ]
