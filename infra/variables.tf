@@ -38,9 +38,13 @@ variable "enable_custom_domain" {
     So: apply with false, publish the record (see `terraform output
     acm_validation_record`), wait for ISSUED, then set true and apply again.
     Until then the distribution serves on its own *.cloudfront.net domain.
+
+    Defaults to true now that bootstrap is done: CI passes no override, so the
+    CI apply that runs after the certificate is ISSUED is the one that attaches
+    the domain. Set false only when rebuilding the stack from scratch.
   EOT
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "github_repo" {
