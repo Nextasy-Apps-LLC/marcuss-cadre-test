@@ -70,7 +70,7 @@ Stream-then-retract is explicit: tokens stream during `brain`; a later `output_s
 Inside `retrieve`:
 1. **Query condensing** (multi-turn): with non-empty history, Haiku 4.5 rewrites the message into a standalone query ("how much does *that* cost?" → "Cadre AI Maturity Index pricing").
 2. Embed the query with OpenAI `text-embedding-3-small`.
-3. Vector search top-k≈6 with a similarity floor; hits (chunk text + source title/URL) are injected into the brain prompt with an instruction to cite sources inline.
+3. Vector search top-k≈6 with a similarity floor; hits (chunk text + source title/URL) are injected into the brain prompt with an instruction to cite sources inline as a simple small "see more" link at the end that when clicked takes you the original http, it should not show the long url.
 4. **Fail-open**: an embeddings/DB outage degrades to persona-baseline answers; the `state` event reports `retrieve: skipped`, never a user-facing error.
 
 ### KB infrastructure — embedded LanceDB, not a database server
