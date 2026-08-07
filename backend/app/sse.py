@@ -7,7 +7,7 @@ field here compiles green on both sides and breaks silently in a browser
 (KB-005) — `web/src/types.ts` mirrors this file verbatim and the two ship in
 the same phase.
 
-    event: state  data: {step, status, detail}
+    event: state  data: {step, status, detail, elapsed_ms}
     event: token  data: {text}
     event: done   data: {outcome, refusal_text}
     event: error  data: {message}
@@ -38,15 +38,23 @@ Status = Literal["running", "pass", "fail", "skipped"]
 Outcome = Literal["answered", "refused", "escalated", "error"]
 
 
-def state(step: str, status: Status, detail: str | None = None) -> str:
+def state(
+    step: str, status: Status, detail: str | None = None, elapsed_ms: int | None = None
+) -> str:
     """A pipeline transition.
 
     `detail` carries the machine-readable reason: the failing check
     (`off_topic`, `rate_limited`, …), `kb_not_wired` for a step that is not
     built yet, or `degraded` on a pass that came from the fail-open policy
     rather than a real verdict — a degraded pass renders amber, never green.
+
+    `elapsed_ms` is always present on the wire but is only ever a real
+    integer once the step has reached a terminal verdict (`pass`/`fail`); it
+    is `null` for `running` and `skipped` — a step that hasn't finished, or
+    never ran, has nothing to time, and reporting `0` would misleadingly
+    imply a measurement was taken.
     """
-    payload = {"step": step, "status": status, "detail": detail}
+    payload = {"step": step, "status": status, "detail": detail, "elapsed_ms": elapsed_ms}
     return f"event: state\ndata: {json.dumps(payload)}\n\n"
 
 

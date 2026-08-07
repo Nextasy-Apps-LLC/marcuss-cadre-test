@@ -18,8 +18,24 @@ class QueueEmitter:
     def __init__(self, queue: asyncio.Queue) -> None:
         self._queue = queue
 
-    async def __call__(self, step: str, status: str, detail: str | None = None) -> None:
-        await self._queue.put(("state", {"step": step, "status": status, "detail": detail}))
+    async def __call__(
+        self,
+        step: str,
+        status: str,
+        detail: str | None = None,
+        elapsed_ms: int | None = None,
+    ) -> None:
+        await self._queue.put(
+            (
+                "state",
+                {
+                    "step": step,
+                    "status": status,
+                    "detail": detail,
+                    "elapsed_ms": elapsed_ms,
+                },
+            )
+        )
 
     async def token(self, text: str) -> None:
         await self._queue.put(("token", text))
