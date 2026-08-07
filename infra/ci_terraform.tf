@@ -122,6 +122,22 @@ data "aws_iam_policy_document" "ci_terraform" {
     ]
     resources = ["*"]
   }
+
+  # The Bedrock API key (ADR 0002). `data "aws_ssm_parameter"` is resolved at
+  # *plan* time, not apply, so without this every plan fails with AccessDenied
+  # before it can render a diff — including the plan-on-PR that is supposed to
+  # review the change.
+  #
+  # Scoped to the one parameter: this role provisions the stack, it has no
+  # business reading the account's other secrets. The value it reads lands in
+  # Terraform state, which is why the state bucket is as sensitive as the key
+  # itself (see the note in lambda.tf).
+  statement {
+    sid       = "BedrockApiKeyRead"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.bedrock_api_key_parameter}"]
+  }
 }
 
 resource "aws_iam_role_policy" "ci_terraform" {

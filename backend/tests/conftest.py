@@ -1,9 +1,13 @@
 """Shared fixtures and SSE parsing helpers for the unit suite.
 
-Phase 1a ships the engine with its model seams empty, so every test here runs
-with `app.graph.models` monkeypatched to deterministic verdicts. That is the
-point of the seam: routing, streaming and the wire contract are provable
-offline, and Phase 1b swaps in Bedrock without touching any of it.
+Every test here runs with `app.graph.models` monkeypatched to deterministic
+verdicts. Phase 1b filled those seams with real Bedrock calls and this fixture
+did not change shape — which is the seam paying off: the protocol tests that
+proved routing and streaming offline still prove exactly the same things, and
+no unit test can accidentally spend a Bedrock call.
+
+`test_models.py` is where the real implementations are exercised, against a
+scripted `app.llm.chat_model`.
 """
 
 from __future__ import annotations
@@ -87,8 +91,8 @@ def ask_events(message: str, **kwargs) -> list[tuple[str, dict]]:
 def seams(request, monkeypatch):
     """All model seams pass; individual tests override what they exercise.
 
-    Tests marked `real_seams` opt out — they assert the seams are still
-    unimplemented, which a patched module would hide.
+    Tests marked `real_seams` opt out, so they can drive the real
+    implementations with a scripted `app.llm.chat_model` instead.
     """
     if "real_seams" in request.keywords:
         return
@@ -103,6 +107,7 @@ def seams(request, monkeypatch):
         for part in ("Cadre AI ", "helps teams adopt AI ", "with senior guidance."):
             yield part
 
+    monkeypatch.setattr(models, "validate_llm", _pass)
     monkeypatch.setattr(models, "judge_injection", _pass)
     monkeypatch.setattr(models, "classify_topic", _in_scope)
     monkeypatch.setattr(models, "guard_output", _pass)

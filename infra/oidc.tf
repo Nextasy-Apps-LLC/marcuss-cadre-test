@@ -123,6 +123,20 @@ data "aws_iam_policy_document" "ci_deploy" {
     actions   = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"]
     resources = [aws_cloudfront_distribution.this.arn]
   }
+
+  # The Bedrock API key, for the pre-build model assertion
+  # (backend/scripts/assert_models.py). Since ADR 0002 the model catalogue is
+  # behind the Mantle endpoint rather than the AWS API, so the check needs the
+  # key rather than `bedrock:*` IAM actions — those grants are gone.
+  #
+  # Read-only, and scoped to this one parameter. The workflow passes it to the
+  # script as an environment variable and never echoes it.
+  statement {
+    sid       = "BedrockApiKeyRead"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.bedrock_api_key_parameter}"]
+  }
 }
 
 resource "aws_iam_role_policy" "ci_deploy" {

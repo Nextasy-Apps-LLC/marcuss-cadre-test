@@ -82,27 +82,46 @@ variable "lambda_timeout_s" {
   default     = 60
 }
 
-variable "brain_model" {
-  description = "Bedrock model id for the brain. Bedrock ids carry an `anthropic.` provider prefix."
+variable "bedrock_mantle_base_url" {
+  description = "Base URL of Bedrock's OpenAI-compatible Mantle endpoint (ADR 0002). Model calls are plain HTTPS with a bearer token — no SigV4, no boto3."
   type        = string
-  default     = "anthropic.claude-opus-5"
+  default     = "https://bedrock-mantle.us-east-1.api.aws/v1"
+}
+
+variable "bedrock_api_key_parameter" {
+  description = "SSM SecureString holding the Bedrock API key. Created out of band per ADR 0001 decision 4 — Terraform reads it, never writes it."
+  type        = string
+  default     = "/cadre/bedrock-api-key"
+}
+
+variable "brain_model" {
+  description = "Mantle model id for the brain. Claude ids appear in /v1/models but don't answer through this transport: the Mantle host only serves /v1/chat/completions, which 400s on a Claude id, and Claude's own /v1/messages 404s on this host entirely — an API-surface split, not an entitlement gap. Flip this the day a Claude-compatible surface is reachable here."
+  type        = string
+  default     = "qwen.qwen3-32b"
 }
 
 variable "judge_model" {
-  description = "Bedrock model id for the rail-3 topic judge and rail-5 output guard."
+  description = "Mantle model id for the injection judge and the output guard."
   type        = string
-  default     = "anthropic.claude-haiku-4-5"
+  default     = "qwen.qwen3-32b"
 }
 
-variable "brain_effort" {
-  description = "Effort for the brain. low/medium are strong on Opus 5 and are the main cost lever."
+variable "validate_model" {
+  description = "Mantle model id for the input-validity judge (the second half of validate_input). A different provider from topic_model on purpose — this step has no fallback."
   type        = string
-  default     = "low"
+  default     = "nvidia.nemotron-nano-12b-v2"
+}
 
-  validation {
-    condition     = contains(["low", "medium", "high", "xhigh", "max"], var.brain_effort)
-    error_message = "brain_effort must be one of: low, medium, high, xhigh, max."
-  }
+variable "topic_model" {
+  description = "Mantle model id for the topic classifier. nemotron-nano-9b-v2 was retired from this slot after live probing: intermittent 503s, ~4x the latency, and a reasoning preamble. See backend/app/config.py for the measurements."
+  type        = string
+  default     = "google.gemma-3-12b-it"
+}
+
+variable "topic_fallback_models" {
+  description = "Topic-classifier fallbacks, walked in order when the primary errors. Keep in sync with backend/app/config.py; scripts/assert_models.py checks the app side before every deploy."
+  type        = list(string)
+  default     = ["nvidia.nemotron-nano-3-30b", "mistral.ministral-3-14b-instruct"]
 }
 
 variable "log_retention_days" {
