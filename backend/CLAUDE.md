@@ -21,13 +21,27 @@ the brain is a stub. Rules, each with its why:
 - `docs_url=None, redoc_url=None` stays: three routes need no auto-docs, and the interactive docs would be a public, unauthenticated surface behind CloudFront.
 - `/config` serves the greeting and suggestion chips server-side so they cannot drift from what the backend actually answers — the tests assert every advertised suggestion gets a real reply, because a refused chip is the worst first impression. `/healthz` is the CloudFront + deploy smoke probe; keep it dependency-free.
 
+## The brain, when it lands (standards for replacing `_reply_for()`)
+
+None of this exists yet — `_reply_for()` is still the ping/pong stub and the
+walking-skeleton framing above stays true until a PR wires in Bedrock. But the
+seam is deliberate, so the standards for filling it are fixed now:
+
+- All LLM/Bedrock calls go through LangChain (`langchain-aws`'s `ChatBedrockConverse`), never raw `boto3` `bedrock-runtime` calls — one orchestration layer gives the six rails composable chains, a single callback surface for tracing, and consistent tool-calling instead of six hand-rolled invoke shapes. (LangChain is a coding standard set here, not an ADR decision — nothing in ADR 0001 constrains the orchestration library.)
+- Every brain invocation emits a Langfuse trace, attached as Langfuse's LangChain `CallbackHandler` on the chain — tracing rides the callback surface the orchestration already has, not bespoke logging sprinkled per call site.
+- Langfuse credentials follow ADR 0001's pre-agreed pattern (decision 4, mirrored in `infra/README.md`): an `aws_ssm_parameter` (`SecureString`, `value = "SET_OUT_OF_BAND"`, `lifecycle { ignore_changes = [value] }`, real value via `aws ssm put-parameter`), read **once at container start** — never per-request (SSM latency comes out of the 60s turn budget) and never a plain Lambda env var (env vars are Terraform-owned config, deliberately out of the deploy role's reach; secrets don't belong there).
+- A trace MUST carry at minimum: the `conversation_id` (as the Langfuse session id, so a visitor's turns group), which rail refused if any (the `rail1:…`-style `refusal_reason`), and per-rail + total `latency_ms` — a refusal you can't attribute to a rail is undebuggable, and debuggable refusals are the product.
+- Flush before `done`: Langfuse batches events in a background thread and Lambda freezes the instance the moment the response ends, so an unflushed batch is a silently dropped trace. Flush (`langfuse.flush()` or the handler's equivalent) before yielding the terminal event.
+- Tracing is fail-open: a Langfuse outage degrades observability, never the turn — same posture as a rail's `degraded` verdict, and for the same reason.
+- `langchain`, `langchain-aws`, and `langfuse` enter `requirements.txt` in the same PR that wires the brain, not before — until then the three-dep rule below stands unchanged.
+
 ## Runtime (`Dockerfile`)
 
 - `ENTRYPOINT []` is load-bearing: the AWS Lambda base image's entrypoint treats CMD[0] as a Python handler name and swallows the uvicorn command, crashing init. CI builds the image but never boots it, so this class of bug only surfaces on invoke — smoke with `docker run -p 8080:8080` when touching the Dockerfile.
 - `AWS_LWA_INVOKE_MODE=response_stream` is the whole reason the stack streams — buffered mode waits for a complete body and every SSE event arrives at once at the end. It only takes effect behind a RESPONSE_STREAM Function URL.
 - Single uvicorn worker (`--workers 1`) — a Lambda invoke serves one request; extra workers buy nothing and cost cold-start memory.
 - The adapter turns the invoke into ordinary HTTP against uvicorn on :8080, so the same image runs unchanged locally and in Lambda — keep it that way; no Lambda-only code paths.
-- Runtime deps are exactly `requirements.txt`'s three (fastapi, uvicorn, pydantic). Don't add more for the skeleton — every dependency is cold-start weight.
+- Runtime deps are exactly `requirements.txt`'s three (fastapi, uvicorn, pydantic) until the brain lands — every dependency is cold-start weight, and the skeleton earns none of it. The sole sanctioned expansion is the langchain/langfuse set, in the brain PR itself (see "The brain, when it lands").
 
 ## Verifying
 
