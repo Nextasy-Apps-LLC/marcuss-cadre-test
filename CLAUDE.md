@@ -29,3 +29,13 @@ The Knowledge Base `kb/learnings.json` is the compounding loop: issue creation
 reads it, implementation appends to it via a separate PR (stacked on the dev
 branch, only the KB file in the diff) that Marcus accepts or rejects
 independently of the code. Board-move mechanics: `.claude/compound/kanban.md`.
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
+
+The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+
+<!-- OPENWIKI:END -->
