@@ -12,16 +12,18 @@ rather than after.
 So this asserts two separate things about every id in `app.config`, because
 either one alone is misleading:
 
-* **The model exists** in the target region — `list-foundation-models` /
-  `list-inference-profiles`. Catches typos and renames.
-* **The account may invoke it** — `get-foundation-model-availability` reports
-  `authorizationStatus`. A brand-new account lists every model in the catalogue
-  while being authorised for none of them, so presence alone proves nothing.
+* **The model is listed** — `GET {MANTLE}/v1/models`. Catches typos and
+  renames.
+* **The account may actually invoke it** — a real one-token completion per id.
+  Listing is not entitlement: several Claude ids appear in `/v1/models` on
+  this account and return access-denied on invoke. That gap is the whole
+  reason this script probes rather than trusting the catalogue.
 
 The topic classifier is the one step allowed a hole: it has a fallback chain,
 so the chain is satisfied by any one member. Everything else is required.
 
 Exits 0 when the account can serve this build, non-zero naming what it cannot.
+Needs `AWS_BEARER_TOKEN_BEDROCK` in the environment; it never prints it.
 """
 
 from __future__ import annotations
@@ -29,18 +31,6 @@ from __future__ import annotations
 import sys
 
 from app import config
-
-# Cross-region inference-profile ids are the foundation-model id with a
-# geography prefix. Availability is a property of the underlying model, so the
-# prefix comes off before asking about it.
-_GEO_PREFIXES = ("us.", "eu.", "apac.", "global.")
-
-
-def foundation_model_id(model_id: str) -> str:
-    for prefix in _GEO_PREFIXES:
-        if model_id.startswith(prefix):
-            return model_id[len(prefix) :]
-    return model_id
 
 
 def topic_chain() -> list[str]:
@@ -92,59 +82,66 @@ def missing_models(available: set[str]) -> list[str]:
     return sorted(dict.fromkeys(missing), key=lambda m: order.get(m, len(order)))
 
 
-def available_models(region: str | None = None) -> set[str]:
+def available_models(base_url: str | None = None) -> set[str]:
     """The configured ids this account can actually invoke, right now.
 
-    Scoped to the configured ids rather than the whole catalogue: the
-    per-model authorisation call is what makes the answer trustworthy, and
-    making ~100 of them to answer a question about six would be slow and
-    rude.
+    Scoped to the configured ids rather than the whole catalogue: the probe is
+    what makes the answer trustworthy, and spending a completion on each of 55
+    listed models to answer a question about six would be slow and wasteful.
     """
-    import boto3  # imported here so the pure helpers stay importable offline
+    import httpx  # imported here so the pure helpers stay importable offline
 
-    region = region or config.BEDROCK_REGION
-    bedrock = boto3.client("bedrock", region_name=region)
+    from app.llm import api_key
 
-    listed = {
-        summary["modelId"]
-        for summary in bedrock.list_foundation_models().get("modelSummaries", [])
-    }
-    profiles = {
-        summary["inferenceProfileId"]
-        for summary in bedrock.list_inference_profiles().get("inferenceProfileSummaries", [])
-        if summary.get("status") == "ACTIVE"
-    }
-    catalogue = listed | profiles
+    base_url = (base_url or config.BEDROCK_MANTLE_BASE_URL).rstrip("/")
+    headers = {"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"}
 
-    available: set[str] = set()
-    for model_id in set(required_models()):
-        if model_id not in catalogue:
-            continue
+    with httpx.Client(base_url=base_url, timeout=60.0) as client:
+        listed: set[str] = set()
         try:
-            availability = bedrock.get_foundation_model_availability(
-                modelId=foundation_model_id(model_id)
-            )
-        except Exception as exc:  # noqa: BLE001 - reported below as unavailable
-            print(f"  ! {model_id}: availability lookup failed ({exc})")
-            continue
-        if availability.get("authorizationStatus") == "AUTHORIZED":
-            available.add(model_id)
-        else:
-            print(
-                f"  ! {model_id}: listed but not authorised "
-                f"(authorizationStatus={availability.get('authorizationStatus')}, "
-                f"agreement={availability.get('agreementAvailability', {}).get('status')})"
-                " — grant model access for this account"
-            )
+            response = client.get("/models", headers=headers)
+            response.raise_for_status()
+            listed = {entry["id"] for entry in response.json().get("data", [])}
+        except Exception as exc:  # noqa: BLE001 - reported as nothing available
+            print(f"  ! GET {base_url}/models failed: {type(exc).__name__}")
+            return set()
+
+        available: set[str] = set()
+        for model_id in sorted(set(required_models())):
+            if model_id not in listed:
+                print(f"  ! {model_id}: not in /models")
+                continue
+            # Listing is not entitlement. One cheap completion is the only
+            # honest test of "can this build call this model".
+            try:
+                probe = client.post(
+                    "/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": model_id,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "max_tokens": 1,
+                        "temperature": 0,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ! {model_id}: probe failed ({type(exc).__name__})")
+                continue
+            if probe.status_code == 200:
+                available.add(model_id)
+            else:
+                # The body names the reason (access denied, not entitled, …).
+                # It never contains the key.
+                print(f"  ! {model_id}: listed but not invokable (HTTP {probe.status_code})")
     return available
 
 
 def main(available: set[str] | None = None) -> int:
-    region = config.BEDROCK_REGION
-    print(f"Checking Bedrock model access in {region}")
+    base_url = config.BEDROCK_MANTLE_BASE_URL
+    print(f"Checking Bedrock model access at {base_url}")
 
     if available is None:
-        available = available_models(region)
+        available = available_models(base_url)
 
     for model_id in required_models():
         mark = "ok  " if model_id in available else "MISS"
@@ -152,14 +149,14 @@ def main(available: set[str] | None = None) -> int:
 
     missing = missing_models(available)
     if missing:
-        print(f"\nFAILED: {len(missing)} model(s) unavailable in {region}:")
+        print(f"\nFAILED: {len(missing)} model(s) unavailable at {base_url}:")
         for model_id in missing:
             print(f"  - {model_id}")
         print(
             "\nEvery model step fails open, so deploying this would ship a chat "
             "whose guards all report `degraded` rather than one that crashes. "
-            "Fix the ids in app/config.py (or the CADRE_MODEL_* environment) or "
-            "grant model access, then re-run."
+            "Fix the ids in app/config.py (or the CADRE_MODEL_* environment), or "
+            "check the API key and this account's model entitlements, then re-run."
         )
         return 1
 

@@ -89,7 +89,14 @@ def detail_for(events, step, status):
 
 
 def status_of(events, step):
-    return next(p["status"] for e, p in events if e == "state" and p["step"] == step)
+    """The step's resolved status — the last one it reported, not the first.
+
+    Every step emits `running` before it works, so taking the first match
+    always answers "running" and quietly passes any assertion about a failure.
+    """
+    statuses = [p["status"] for e, p in events if e == "state" and p["step"] == step]
+    assert statuses, f"{step} never reported"
+    return statuses[-1]
 
 
 def reply_text(events):
