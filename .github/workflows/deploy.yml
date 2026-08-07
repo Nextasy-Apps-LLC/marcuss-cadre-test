@@ -140,6 +140,25 @@ jobs:
           echo "::error::No image tagged $SHA in ECR. A rollback restores a previously deployed build; it does not create one. Use 'deploy' if you intend to build this commit."
           exit 1
 
+      - name: Assert every configured Bedrock model is available
+        # Before the build, not after: every model step fails open, so a wrong
+        # or unauthorised model id does not crash the service — it ships a chat
+        # whose guards all report `degraded` and whose answers come from
+        # nowhere. That failure looks like a working product, which is exactly
+        # why it must never reach an image, let alone a visitor.
+        #
+        # Runs on rollbacks too. A rollback restores code, not account state:
+        # if model access lapsed, the old image is just as broken as the new
+        # one, and finding that out here beats finding it out in the smoke
+        # test.
+        working-directory: backend
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet boto3
+          CADRE_BEDROCK_REGION="$AWS_REGION" python -m scripts.assert_models
+
       - uses: docker/setup-qemu-action@v3
         if: inputs.action == 'deploy' && steps.image.outputs.exists == 'false'
       - uses: docker/setup-buildx-action@v3

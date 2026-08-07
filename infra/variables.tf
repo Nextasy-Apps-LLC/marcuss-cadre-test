@@ -94,6 +94,16 @@ variable "judge_model" {
   default     = "anthropic.claude-haiku-4-5"
 }
 
+variable "slm_models" {
+  description = "Small open-weight Bedrock models used by the input-validity judge and the topic classifier (and its first fallback). These are ON_DEMAND, so they need foundation-model ARNs of their own — unlike the Anthropic models, which resolve only through an inference profile. Keep in sync with backend/app/config.py; scripts/assert_models.py checks the app side before every deploy."
+  type        = list(string)
+  default = [
+    "nvidia.nemotron-nano-9b-v2",
+    "nvidia.nemotron-nano-12b-v2",
+    "google.gemma-3-12b-it",
+  ]
+}
+
 variable "brain_effort" {
   description = "Effort for the brain. low/medium are strong on Opus 5 and are the main cost lever."
   type        = string

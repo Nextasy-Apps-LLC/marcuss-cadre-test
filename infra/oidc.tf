@@ -123,6 +123,23 @@ data "aws_iam_policy_document" "ci_deploy" {
     actions   = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"]
     resources = [aws_cloudfront_distribution.this.arn]
   }
+
+  # Bedrock: read-only, for the pre-build model assertion
+  # (backend/scripts/assert_models.py). Catalogue and availability lookups
+  # only — the deploy role must never be able to *invoke* a model, which is
+  # the Lambda execution role's job and nobody else's. These actions describe
+  # the account rather than a resource in it, so they do not support
+  # resource-level scoping.
+  statement {
+    sid    = "BedrockModelAvailability"
+    effect = "Allow"
+    actions = [
+      "bedrock:ListFoundationModels",
+      "bedrock:ListInferenceProfiles",
+      "bedrock:GetFoundationModelAvailability",
+    ]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "ci_deploy" {

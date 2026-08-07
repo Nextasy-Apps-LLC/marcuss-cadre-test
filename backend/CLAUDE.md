@@ -109,10 +109,7 @@ progress. Rules, each with its why:
   a thousand buckets alive. Per instance by design (plan.md defers a
   distributed token bucket); it is a floor on abuse, not accounting.
 
-## The brain, when it lands (standards for filling `app/graph/models.py`)
-
-The seams exist and raise `NotImplementedError` until Phase 1b. The standards
-for filling them are fixed now:
+## The brain (`app/llm.py`, `app/graph/models.py`, `app/persona.py`)
 
 - All LLM/Bedrock calls go through LangChain (`langchain-aws`'s
   `ChatBedrockConverse`), never raw `boto3` `bedrock-runtime` calls — one
@@ -120,6 +117,59 @@ for filling them are fixed now:
   surface for tracing, and consistent tool-calling instead of hand-rolled
   invoke shapes. (LangChain/LangGraph is a coding standard set here, not an ADR
   decision — nothing in ADR 0001 constrains the orchestration library.)
+- `app/llm.py`'s `chat_model()` is the only place a Bedrock client is
+  constructed. Callers pass a model id and a token budget and nothing else, so
+  the region, the sampling-parameter rules and (in Phase 2) the callback
+  handler are set once rather than six times. Read every response through
+  `llm.text_of()` — `ChatBedrockConverse` returns a bare `str` for some models
+  and a list of typed blocks for others, and which you get depends on the
+  model, not the call.
+- **Sampling parameters are not universal.** Claude Opus 5 removed
+  `temperature`/`top_p`/`top_k`; `langchain-aws` does not error on one, it logs
+  `Model … does not support temperature; ignoring the provided value` and drops
+  it. `chat_model()` therefore refuses to send `temperature` to a model that
+  would discard it, so "temperature=0" never silently means "whatever the model
+  felt like".
+- **Model ids are checked before an image is pushed, not at the first
+  request** — `scripts/assert_models.py`, wired into `deploy.yml` ahead of the
+  build. It asserts both that a model exists *and* that the account is
+  authorised to invoke it, because a fresh account lists the whole catalogue
+  while being authorised for none of it. Every model step fails open, so a
+  wrong or unauthorised id ships as a working-looking chat with amber rails
+  rather than as a crash — the assertion is what keeps that from being
+  discovered by a visitor.
+- The `us.` prefix on the Anthropic ids in `app/config.py` is load-bearing:
+  those models report `inferenceTypesSupported: [INFERENCE_PROFILE]`, so the
+  bare `anthropic.claude-…` id is not invokable. The open-weight judges are
+  `ON_DEMAND` and take their bare ids. `infra/lambda.tf` grants both ARN
+  shapes for exactly this reason.
+- Judges answer in one token and are parsed tolerantly (case, whitespace,
+  punctuation, markdown). A response that is *not* a verdict degrades — it is
+  never guessed at. The topic classifier's fallback chain is walked on model
+  **errors only**: a model that answered is a model that is up, and re-asking
+  costs a slice of the 55s turn budget for a question the output guard already
+  backstops.
+- `guard_output` is two independent halves. `scrub_failure()` is deterministic
+  (URL allowlist — cadreai.com only — plus PII patterns), runs first, and has
+  no outage mode; the Haiku judgement runs second and may degrade. A guard
+  outage must never be able to leak an external URL.
+- `app/persona.py` is the vetted baseline and the only source of facts until
+  retrieval lands in Phase 3. Nothing else may state a fact about Cadre AI —
+  no prices, no named clients, no invented capabilities — and the prompt says
+  so explicitly rather than leaving it implied. `config.py` re-exports its
+  `GREETING`/`SUGGESTIONS`/`CONTACT_URL` rather than restating them, so the
+  copy `/config` advertises and the persona that must answer for it cannot
+  drift. The dependency runs one way: persona never imports config.
+- `config.BRAIN_MAX_TOKENS` bounds generation so the turn fits CloudFront's 60s
+  origin cap (KB-004); the persona asks for the same brevity, so answers end
+  rather than get truncated. Raising one without the other buys a cut-off
+  sentence.
+
+### Tracing (Phase 2 — not built yet)
+
+Deferred with the rest of Langfuse; the standards are fixed now so the PR that
+adds it has nothing left to decide:
+
 - Every graph invocation emits a Langfuse trace, attached as Langfuse's
   LangChain `CallbackHandler` on the graph run — tracing rides the callback
   surface the orchestration already has, not bespoke logging per call site.
@@ -157,8 +207,11 @@ for filling them are fixed now:
   Lambda-only code paths.
 - Runtime dependencies are exactly `requirements.txt`. Every dependency is
   cold-start weight, so each addition is justified in the PR that adds it —
-  `langgraph` and `langchain-core` came in with the engine, `langchain-aws` and
-  `langfuse` arrive with the model steps and tracing.
+  `langgraph` and `langchain-core` came in with the engine, `langchain-aws`
+  with the model steps, and `langfuse` arrives with tracing in Phase 2.
+- The image copies `app/` only. `scripts/` runs in CI and on a laptop against a
+  real account; shipping it (and its `boto3` import) into the runtime would be
+  cold-start weight for code no invoke ever executes.
 
 ## Verifying
 

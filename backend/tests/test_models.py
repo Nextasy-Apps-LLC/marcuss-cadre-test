@@ -27,6 +27,10 @@ import pytest
 from app import config, llm, persona
 from app.graph import models
 
+# This module drives the real implementations, so it opts out of the autouse
+# fixture that stubs every seam for the protocol tests.
+pytestmark = pytest.mark.real_seams
+
 STATE = {"message": "What does Cadre AI do?", "history": [], "client_id": "abcdefgh"}
 
 
@@ -78,6 +82,11 @@ def factory(mapping: dict[str, FakeChat], record: list | None = None):
 
 def run(coro):
     return asyncio.run(coro)
+
+
+def prompt_of(call) -> str:
+    """The text actually sent, not the repr of the (role, text) pairs."""
+    return "\n".join(text for _, text in call)
 
 
 # --------------------------------------------------------------------------
@@ -222,16 +231,14 @@ class TestTopicClassifier:
         chat = FakeChat(reply="in_scope")
         monkeypatch.setattr(llm, "chat_model", factory({config.MODEL_TOPIC: chat}))
         run(models.classify_topic(STATE))
-        prompt = "".join(str(part) for part in chat.calls[0])
-        assert persona.TOPIC_SCOPE in prompt
+        assert persona.TOPIC_SCOPE in prompt_of(chat.calls[0])
 
     def test_history_is_given_to_the_classifier(self, monkeypatch):
         chat = FakeChat(reply="in_scope")
         monkeypatch.setattr(llm, "chat_model", factory({config.MODEL_TOPIC: chat}))
         state = {**STATE, "history": [{"role": "user", "text": "what is the maturity index"}]}
         run(models.classify_topic(state))
-        prompt = "".join(str(part) for part in chat.calls[0])
-        assert "what is the maturity index" in prompt
+        assert "what is the maturity index" in prompt_of(chat.calls[0])
 
 
 class TestTopicFallbackChain:

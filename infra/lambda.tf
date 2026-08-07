@@ -58,16 +58,22 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# Bedrock invoke rights, scoped to the two models this app actually calls.
+# Bedrock invoke rights, scoped to the models this app actually calls.
 #
 # Auth to Bedrock is SigV4 from this role — there is no API key anywhere in
 # this stack, which is what lets the repo be public with no secret handling.
 #
-# Note on inference profiles: some models are only reachable through a
-# cross-region inference profile rather than the bare foundation-model ARN,
-# so both resource shapes are granted. If an invoke fails with AccessDenied,
-# the CloudWatch message names the exact action and resource it wanted —
-# widen from that, not by guessing.
+# `bedrock:InvokeModel` / `…WithResponseStream` are the actions the Converse
+# and ConverseStream APIs authorize against, so LangChain's
+# `ChatBedrockConverse` needs nothing beyond these two.
+#
+# Note on inference profiles: the Anthropic models report
+# `inferenceTypesSupported: [INFERENCE_PROFILE]` and are reachable only through
+# a cross-region profile, never the bare foundation-model ARN — so both
+# resource shapes are granted. The small open-weight judges are ON_DEMAND and
+# need their own foundation-model ARNs. If an invoke fails with AccessDenied,
+# the CloudWatch message names the exact action and resource it wanted — widen
+# from that, not by guessing.
 data "aws_iam_policy_document" "bedrock" {
   statement {
     effect = "Allow"
@@ -75,11 +81,17 @@ data "aws_iam_policy_document" "bedrock" {
       "bedrock:InvokeModel",
       "bedrock:InvokeModelWithResponseStream",
     ]
-    resources = [
-      "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.brain_model}*",
-      "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.judge_model}*",
-      "arn:aws:bedrock:${var.aws_region}:${var.aws_account_id}:inference-profile/*",
-    ]
+    resources = concat(
+      [
+        "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.brain_model}*",
+        "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.judge_model}*",
+        "arn:aws:bedrock:${var.aws_region}:${var.aws_account_id}:inference-profile/*",
+      ],
+      [
+        for model in var.slm_models :
+        "arn:aws:bedrock:${var.aws_region}::foundation-model/${model}*"
+      ],
+    )
   }
 }
 

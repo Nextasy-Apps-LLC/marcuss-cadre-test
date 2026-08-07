@@ -45,8 +45,22 @@ class TestMissingModels:
 
 class TestTopicFallbackChain:
     def test_the_primary_alone_satisfies_the_chain(self):
-        available = ALL_PRESENT - set(config.MODEL_TOPIC_FALLBACKS)
-        assert assert_models.missing_models(available) == []
+        # Only the fallbacks that aren't *also* required elsewhere can be
+        # taken away: the roster deliberately reuses Haiku as the injection
+        # judge, the output guard and the last topic fallback, and those two
+        # steps have no fallback of their own.
+        droppable = set(config.MODEL_TOPIC_FALLBACKS) - set(assert_models.hard_required())
+        assert droppable, "the chain should have at least one model of its own"
+        assert assert_models.missing_models(ALL_PRESENT - droppable) == []
+
+    def test_a_shared_model_is_still_required_by_the_steps_that_have_no_fallback(self):
+        """The bug this pins: Haiku is a topic fallback *and* the injection
+        judge *and* the output guard. Exempting it because Nemotron kept the
+        chain alive would report a green account with two broken steps."""
+        shared = set(config.MODEL_TOPIC_FALLBACKS) & set(assert_models.hard_required())
+        assert shared, "the roster is expected to reuse a model across steps"
+        missing = assert_models.missing_models(ALL_PRESENT - shared)
+        assert set(missing) == shared
 
     def test_a_fallback_alone_satisfies_the_chain(self):
         available = (ALL_PRESENT - {config.MODEL_TOPIC}) - {config.MODEL_TOPIC_FALLBACKS[0]}

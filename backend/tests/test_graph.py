@@ -7,8 +7,6 @@ rather than as a missing SSE event three tests away.
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from app.graph import models
@@ -66,21 +64,3 @@ class TestValidateInputHasTwoHalves:
         events = ask_events("What does Cadre AI do?")
         assert detail_for(events, "validate_input", "pass") == "degraded"
         assert events[-1][1]["outcome"] == "answered"
-
-
-@pytest.mark.real_seams
-class TestSeamsAreUnimplemented:
-    """Phase 1a ships the seams empty on purpose — Phase 1b fills them."""
-
-    STATE = {"message": "hi", "history": [], "client_id": "abcdefgh"}
-
-    @pytest.mark.parametrize(
-        "seam", ["judge_injection", "classify_topic", "guard_output"]
-    )
-    def test_judge_seams_raise_not_implemented(self, seam):
-        with pytest.raises(NotImplementedError):
-            asyncio.run(getattr(models, seam)(self.STATE))
-
-    def test_stream_reply_raises_not_implemented(self):
-        with pytest.raises(NotImplementedError):
-            models.stream_reply(self.STATE)
