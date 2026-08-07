@@ -28,6 +28,7 @@ report itself as cleanly guarded (KB-009).
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import uuid
@@ -101,6 +102,31 @@ def status_of(events, step):
 
 def reply_text(events):
     return "".join(p["text"] for e, p in events if e == "token")
+
+
+def _iter_sse_stream(response):
+    """Parse SSE frames off a still-streaming httpx response, one at a time.
+
+    `tests.e2e.conftest.parse_sse` parses a complete buffered body after the
+    fact — fine for shape assertions, useless for timing, since by then every
+    frame arrived "at once" as far as the caller can tell. This walks
+    `response.iter_lines()` (which yields as bytes are read off the wire) so a
+    caller can stamp a wall-clock time on each frame as it actually lands.
+    """
+    event = "message"
+    data = ""
+    for line in response.iter_lines():
+        if line.startswith(":"):
+            continue
+        if line == "":
+            if data:
+                yield event, json.loads(data)
+            event, data = "message", ""
+            continue
+        if line.startswith("event:"):
+            event = line[len("event:") :].strip()
+        elif line.startswith("data:"):
+            data = line[len("data:") :].strip()
 
 
 def degraded_steps(events):
@@ -277,6 +303,41 @@ class TestAnsweredTurn:
         assert events[-1] == ("done", events[-1][1])
         assert events[-1][1]["outcome"] == "answered"
 
+    def test_tokens_arrive_incrementally_over_measurable_wall_clock_time(self, http):
+        # A token *count* > 1 is not proof of streaming — a fast model can
+        # answer inside one TCP read and still chunk the reply into several
+        # `token` frames that all land in the same instant. This reads the
+        # response incrementally (http.stream, not the buffered .text every
+        # other test uses) and times every `token` frame as it arrives, so a
+        # buffered blob and a genuinely incremental reply are distinguishable
+        # by wall clock, not just by frame count. Asserts on timing/shape
+        # only — never on which model produced the answer.
+        raw, headers = post_ask_body(
+            {"conversation_id": uuid.uuid4().hex[:16], "message": "What does Cadre AI do?"}
+        )
+        token_times: list[float] = []
+        outcome = None
+        started = time.monotonic()
+        with http.stream("POST", "/ask", content=raw, headers=headers) as response:
+            for event, payload in _iter_sse_stream(response):
+                if event == "token":
+                    token_times.append(time.monotonic() - started)
+                elif event == "done":
+                    outcome = payload
+        elapsed = time.monotonic() - started
+        assert elapsed < TURN_BUDGET_S, f"turn took {elapsed:.1f}s, budget is {TURN_BUDGET_S}s"
+
+        assert outcome is not None, "stream ended without a done event"
+        assert outcome["outcome"] == "answered", f"expected answered, got {outcome}"
+        assert len(token_times) > 1, (
+            f"only {len(token_times)} token frame(s) arrived — not enough to "
+            "tell incremental streaming from one buffered blob"
+        )
+        spread = token_times[-1] - token_times[0]
+        assert spread > 0, (
+            "every token frame landed at the same instant — looks like a "
+            "buffered blob, not incremental streaming"
+        )
 
     def test_every_guard_really_ran(self, http):
         # The assertion that separates a working brain from a fully degraded
