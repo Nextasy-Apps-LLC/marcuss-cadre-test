@@ -64,7 +64,15 @@ markdown_extensions:
   - toc:
       permalink: true
   - pymdownx.details
-  - pymdownx.superfences
+  # The custom fence is what makes ```mermaid blocks render as diagrams instead
+  # of as highlighted code. GitHub renders those fences natively; mkdocs-material
+  # ships the mermaid runtime but only wires it up through this fence config, so
+  # the same ADR source draws diagrams in both places.
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.highlight:
