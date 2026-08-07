@@ -11,7 +11,7 @@ supersedes the old one and update the old one's status — don't edit history.
 
 ## How to write a new ADR
 
-1. Pick the next free number (last is `0001`).
+1. Pick the next free number (last is `0002`).
 2. File name: `NNNN-kebab-case-title.md`.
 3. Status starts as `Proposed`; promote to `Accepted` when it's actually
    being followed.
@@ -24,4 +24,5 @@ supersedes the old one and update the old one's status — don't edit history.
 
 | # | Title | Status |
 |---|---|---|
-| [0001](0001-streaming-chatbot-cloudfront-lambda-s3.md) | Streaming chatbot on one CloudFront distribution, IAM-only Lambda, zero secrets | Accepted |
+| [0001](0001-streaming-chatbot-cloudfront-lambda-s3.md) | Streaming chatbot on one CloudFront distribution, IAM-only Lambda, zero secrets | Accepted (Bedrock-auth statements superseded by 0002) |
+| [0002](0002-bedrock-mantle-api-key.md) | Bedrock over the Mantle endpoint with an API key, not SigV4 | Accepted |

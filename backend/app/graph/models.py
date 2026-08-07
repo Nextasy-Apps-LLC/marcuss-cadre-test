@@ -1,4 +1,4 @@
-"""The model steps — Bedrock through LangChain, one model per job.
+"""The model steps — Bedrock Mantle chat completions, one model per job.
 
 Phase 1a shaped these as seams and proved the engine around them offline.
 This is Phase 1b filling them, and nothing about the graph, the nodes or the
@@ -62,20 +62,33 @@ class Verdict:
 
 DEGRADED = "degraded"
 
-# Judges are told to answer in one token. They mostly do — and then sometimes
-# wrap it in quotes, bold it, add a full stop, or prefix a newline. Stripping
-# to the first alphanumeric run costs nothing and turns a stylistic wobble
-# back into the verdict it was.
-_WORD = re.compile(r"[a-z][a-z_ ]*")
-
 
 def _label(raw: str, allowed: dict[str, str]) -> str | None:
-    """The first recognised label in `raw`, or None if there isn't one."""
-    match = _WORD.search(raw.strip().lower())
-    if not match:
+    """The verdict in `raw`, or None if there isn't one.
+
+    Two decisions here, both learned from what the roster actually returns:
+
+    * **Reasoning is stripped first.** Several Mantle models think out loud in
+      `<think>…</think>` before answering, and a response truncated
+      mid-thought has no verdict at all — `strip_reasoning` returns empty for
+      that case, so a cut-off monologue degrades instead of being mined.
+    * **The last match wins, not the first.** A model that reasons in plain
+      prose says things like "this could pass, but it overrides instructions,
+      so fail". Taking the first label inverts the decision. The conclusion is
+      at the end.
+    """
+    text = llm.strip_reasoning(raw).lower()
+    if not text:
         return None
-    token = match.group(0).strip().replace(" ", "_")
-    return allowed.get(token)
+
+    # Labels may arrive with `_`, a space or a hyphen between words.
+    pattern = "|".join(
+        re.escape(token).replace(r"\_", "[_ -]") for token in sorted(allowed, key=len, reverse=True)
+    )
+    matches = re.findall(rf"\b(?:{pattern})\b", text)
+    if not matches:
+        return None
+    return allowed[matches[-1].replace(" ", "_").replace("-", "_")]
 
 
 async def _judge(
@@ -84,16 +97,21 @@ async def _judge(
     user: str,
     allowed: dict[str, str],
 ) -> str | None:
-    """Ask `model_id` for a single-token verdict.
+    """Ask `model_id` for a verdict.
 
     Returns the parsed label, or None when the model answered something that
     is not one. Raises only if the call itself failed — telling those two
     apart is what lets `classify_topic` decide whether walking to a fallback
     could possibly help.
     """
-    chat = llm.chat_model(model_id, max_tokens=config.JUDGE_MAX_TOKENS, temperature=0)
-    response = await chat.ainvoke([("system", system), ("human", user)])
-    return _label(llm.text_of(response.content), allowed)
+    raw = await llm.chat(
+        model_id,
+        system,
+        [{"role": "user", "content": user}],
+        max_tokens=config.JUDGE_MAX_TOKENS,
+        temperature=config.JUDGE_TEMPERATURE,
+    )
+    return _label(raw, allowed)
 
 
 # --------------------------------------------------------------------------
@@ -341,30 +359,37 @@ async def guard_output(state: ConversationState) -> Verdict:
 # the brain
 # --------------------------------------------------------------------------
 
-_ROLES = {"assistant": "ai", "ai": "ai", "bot": "ai"}
+_ROLES = {"assistant": "assistant", "ai": "assistant", "bot": "assistant"}
 
 
-def _messages(state: ConversationState) -> list[tuple[str, str]]:
-    messages: list[tuple[str, str]] = [("system", persona.SYSTEM_PROMPT)]
+def _messages(state: ConversationState) -> list[dict[str, str]]:
+    """History plus this turn, as OpenAI-shaped messages.
+
+    The system turn is not here — `llm.chat_stream` prepends it, so the
+    persona reaches every call the same way.
+    """
+    messages: list[dict[str, str]] = []
     for turn in state.get("history", []):
-        role = _ROLES.get(str(turn.get("role", "")).lower(), "human")
-        messages.append((role, turn.get("text", "")))
-    messages.append(("human", state.get("message", "")))
+        role = _ROLES.get(str(turn.get("role", "")).lower(), "user")
+        messages.append({"role": role, "content": turn.get("text", "")})
+    messages.append({"role": "user", "content": state.get("message", "")})
     return messages
 
 
 async def stream_reply(state: ConversationState) -> AsyncIterator[str]:
-    """Answer fragments as Opus 5 generates them.
+    """Answer fragments as the brain generates them.
 
     The only step that does not fail open: there is no answer to degrade to,
     so an exception here propagates and `/ask` turns it into a terminal
     `error` event. A brain outage is a broken turn, and saying so is more
     honest than streaming a placeholder.
     """
-    chat = llm.chat_model(config.MODEL_BRAIN, max_tokens=config.BRAIN_MAX_TOKENS)
-    async for chunk in chat.astream(_messages(state)):
-        text = llm.text_of(chunk.content)
-        # Converse brackets a stream with empty content blocks; forwarding
-        # them would emit `token` events carrying nothing to render.
+    async for text in llm.chat_stream(
+        config.MODEL_BRAIN,
+        persona.SYSTEM_PROMPT,
+        _messages(state),
+        max_tokens=config.BRAIN_MAX_TOKENS,
+        temperature=config.BRAIN_TEMPERATURE,
+    ):
         if text:
             yield text

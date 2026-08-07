@@ -44,32 +44,49 @@ class TestMissingModels:
 
 
 class TestTopicFallbackChain:
-    def test_the_primary_alone_satisfies_the_chain(self):
-        # Only the fallbacks that aren't *also* required elsewhere can be
-        # taken away: the roster deliberately reuses Haiku as the injection
-        # judge, the output guard and the last topic fallback, and those two
-        # steps have no fallback of their own.
-        droppable = set(config.MODEL_TOPIC_FALLBACKS) - set(assert_models.hard_required())
-        assert droppable, "the chain should have at least one model of its own"
-        assert assert_models.missing_models(ALL_PRESENT - droppable) == []
+    """Written against the *properties* rather than today's roster: which
+    model sits in which slot is env-overridable and has already changed once,
+    so a test that hard-codes the overlap breaks on a config edit instead of
+    on a regression."""
 
-    def test_a_shared_model_is_still_required_by_the_steps_that_have_no_fallback(self):
-        """The bug this pins: Haiku is a topic fallback *and* the injection
-        judge *and* the output guard. Exempting it because Nemotron kept the
-        chain alive would report a green account with two broken steps."""
-        shared = set(config.MODEL_TOPIC_FALLBACKS) & set(assert_models.hard_required())
-        assert shared, "the roster is expected to reuse a model across steps"
-        missing = assert_models.missing_models(ALL_PRESENT - shared)
-        assert set(missing) == shared
+    def test_a_shared_model_is_still_required_by_the_steps_that_have_no_fallback(
+        self, monkeypatch
+    ):
+        """The bug this pins: the roster is allowed to reuse one id across
+        slots, and it has — at one point the same model was both the
+        input-validity judge and the topic primary. Exempting it because a
+        later chain member kept the classifier alive would report a green
+        account with a broken validate step.
 
-    def test_a_fallback_alone_satisfies_the_chain(self):
-        available = (ALL_PRESENT - {config.MODEL_TOPIC}) - {config.MODEL_TOPIC_FALLBACKS[0]}
-        assert assert_models.missing_models(available) == []
+        Driven through a synthetic roster rather than the live one, so it keeps
+        testing the logic after the next model swap instead of silently
+        skipping.
+        """
+        monkeypatch.setattr(config, "MODEL_VALIDATE", "shared")
+        monkeypatch.setattr(config, "MODEL_TOPIC", "shared")
+        monkeypatch.setattr(config, "MODEL_TOPIC_FALLBACKS", ["backup"])
+        monkeypatch.setattr(config, "MODEL_INJECTION", "judge")
+        monkeypatch.setattr(config, "MODEL_BRAIN", "brain")
+        monkeypatch.setattr(config, "MODEL_GUARD", "judge")
+
+        # "backup" keeps the classifier working, but validate has no fallback.
+        missing = assert_models.missing_models({"backup", "judge", "brain"})
+        assert missing == ["shared"]
+
+    def test_any_single_surviving_chain_member_satisfies_the_chain(self):
+        chain = assert_models.topic_chain()
+        for survivor in chain:
+            available = (ALL_PRESENT - set(chain)) | {survivor} | set(
+                assert_models.hard_required()
+            )
+            assert assert_models.missing_models(available) == [], (
+                f"{survivor} alone should keep the classifier working"
+            )
 
     def test_losing_the_whole_chain_is_reported(self):
-        chain = {config.MODEL_TOPIC, *config.MODEL_TOPIC_FALLBACKS}
+        chain = set(assert_models.topic_chain())
         missing = assert_models.missing_models(ALL_PRESENT - chain)
-        assert set(missing) == chain
+        assert chain <= set(missing)
 
 
 class TestExitCode:

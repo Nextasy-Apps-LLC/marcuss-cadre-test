@@ -152,12 +152,20 @@ jobs:
         # one, and finding that out here beats finding it out in the smoke
         # test.
         working-directory: backend
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
           set -euo pipefail
-          python -m pip install --quiet boto3
-          CADRE_BEDROCK_REGION="$AWS_REGION" python -m scripts.assert_models
+          python -m pip install --quiet httpx
+
+          # Fetched here rather than kept in repo secrets so there is exactly
+          # one copy of this key in the account. `--query`/`--output text`
+          # keeps it off the log; it is never echoed, and the script prints
+          # model ids and HTTP statuses only.
+          AWS_BEARER_TOKEN_BEDROCK="$(aws ssm get-parameter \
+            --name /cadre/bedrock-api-key --with-decryption \
+            --query Parameter.Value --output text)"
+          export AWS_BEARER_TOKEN_BEDROCK
+
+          python -m scripts.assert_models
 
       - uses: docker/setup-qemu-action@v3
         if: inputs.action == 'deploy' && steps.image.outputs.exists == 'false'

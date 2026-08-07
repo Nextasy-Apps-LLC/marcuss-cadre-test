@@ -42,61 +42,77 @@ PING_INTERVAL_S = 15.0
 RATE_LIMIT_TURNS = int(os.environ.get("CADRE_RATE_LIMIT_TURNS", "30"))
 RATE_LIMIT_WINDOW_S = float(os.environ.get("CADRE_RATE_LIMIT_WINDOW_S", "60"))
 
-# ── Bedrock ────────────────────────────────────────────────────────────────
+# ── Bedrock (Mantle, OpenAI-compatible) ────────────────────────────────────
 #
-# One model per step, sized to the job (plan.md's roster). Every id below was
-# verified against `bedrock list-foundation-models` and
-# `list-inference-profiles` in us-east-1; `scripts/assert_models.py` re-checks
-# them against the target account before an image is ever pushed, because every
-# model step fails open and a wrong id therefore ships as a *working* chat with
-# amber rails rather than as a crash (KB-009).
+# Transport is plain HTTPS with a bearer token, not SigV4 — see ADR 0002. The
+# ids below are the ones verified invokable on this account through
+# `GET /v1/models` plus a real completion; `scripts/assert_models.py` re-checks
+# them before an image is ever pushed, because every model step fails open and
+# a wrong id therefore ships as a *working* chat with amber rails rather than
+# as a crash (KB-009).
 #
-# The `us.` prefix on the Anthropic ids is load-bearing: those models report
-# `inferenceTypesSupported: [INFERENCE_PROFILE]`, so the bare
-# `anthropic.claude-…` id is not invokable — it resolves only through the
-# cross-region inference profile.
+# Every id is env-overridable. Several Claude ids appear in `/v1/models` but
+# return access-denied on invoke, so the overrides are the flip switch for the
+# day entitlements land.
 
-BEDROCK_REGION = os.environ.get("CADRE_BEDROCK_REGION", "us-east-1")
-
-# Cheap SLM sanity/validity judge, second half of `validate_input`.
-MODEL_VALIDATE = os.environ.get("CADRE_MODEL_VALIDATE", "nvidia.nemotron-nano-9b-v2")
-
-# Strict single-token prompt-injection classifier. Instruction-following
-# against adversarial input is the whole job, so this one is a Claude.
-MODEL_INJECTION = os.environ.get(
-    "CADRE_MODEL_INJECTION", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+BEDROCK_MANTLE_BASE_URL = os.environ.get(
+    "BEDROCK_MANTLE_BASE_URL", "https://bedrock-mantle.us-east-1.api.aws/v1"
 )
 
-# Three-way route: in_scope / off_topic / needs_human.
-MODEL_TOPIC = os.environ.get("CADRE_MODEL_TOPIC", "nvidia.nemotron-nano-12b-v2")
+# Cheap SLM sanity/validity judge, second half of `validate_input`.
+# A different provider from the topic primary on purpose: this step has no
+# fallback, so it should not share a failure mode with anything else.
+MODEL_VALIDATE = os.environ.get("CADRE_MODEL_VALIDATE", "nvidia.nemotron-nano-12b-v2")
 
-# Walked in order when the primary classifier *errors*. Different provider
-# first: a fallback that shares the primary's provider shares its outage.
+# Strict prompt-injection classifier.
+MODEL_INJECTION = os.environ.get("CADRE_MODEL_INJECTION", "qwen.qwen3-32b")
+
+# Three-way route: in_scope / off_topic / needs_human.
+#
+# `nvidia.nemotron-nano-9b-v2` led this chain until live probing retired it on
+# three counts: an intermittent 503 on this account (~2 calls in 5 in one
+# burst, at any token budget), ~4x the latency of every alternative (p50 1.96s
+# vs ~0.5s), and a reasoning monologue that has to be stripped before the
+# verdict is readable. Measured over 7 cases x 2 runs with the real parser:
+#
+#   google.gemma-3-12b-it             14/14 http  14/14 correct  p50 0.50s
+#   zai.glm-4.7-flash                 14/14       14/14          p50 0.44s
+#   mistral.ministral-3-14b-instruct  14/14       14/14          p50 0.77s
+#   nvidia.nemotron-nano-3-30b        14/14       12/14          p50 0.52s
+#   nvidia.nemotron-nano-9b-v2        14/14       12/14          p50 1.96s
+MODEL_TOPIC = os.environ.get("CADRE_MODEL_TOPIC", "google.gemma-3-12b-it")
+
+# Walked in order when the primary *errors*. Three providers, three failure
+# modes: a fallback that shares the primary's outage is not a fallback.
 MODEL_TOPIC_FALLBACKS = [
     model_id.strip()
     for model_id in os.environ.get(
         "CADRE_MODEL_TOPIC_FALLBACKS",
-        "google.gemma-3-12b-it,us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "nvidia.nemotron-nano-3-30b,mistral.ministral-3-14b-instruct",
     ).split(",")
     if model_id.strip()
 ]
 
-# The brain. Answer quality on nuanced consulting questions is what a visitor
-# actually judges the product on.
-MODEL_BRAIN = os.environ.get("CADRE_MODEL_BRAIN", "us.anthropic.claude-opus-5")
+# The brain.
+MODEL_BRAIN = os.environ.get("CADRE_MODEL_BRAIN", "qwen.qwen3-32b")
 
 # Final gate on the complete streamed answer.
-MODEL_GUARD = os.environ.get("CADRE_MODEL_GUARD", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+MODEL_GUARD = os.environ.get("CADRE_MODEL_GUARD", "qwen.qwen3-32b")
 
-# Verdicts are one token; the ceiling exists so a model that decides to explain
-# itself costs a few tokens rather than a turn budget.
-JUDGE_MAX_TOKENS = int(os.environ.get("CADRE_JUDGE_MAX_TOKENS", "8"))
+# Deliberately generous, not tiny. Several models in the roster reason before
+# answering, and one truncated mid-monologue never reaches its verdict — the
+# same failure family as the `gpt-oss-safeguard` gotcha. The ceiling costs
+# nothing on a terse model, because temperature 0 stops it as soon as it has
+# said the word.
+JUDGE_MAX_TOKENS = int(os.environ.get("CADRE_JUDGE_MAX_TOKENS", "512"))
+JUDGE_TEMPERATURE = float(os.environ.get("CADRE_JUDGE_TEMPERATURE", "0"))
 
 # CloudFront cuts an origin response at 60s and heartbeats do not extend it
-# (KB-004), so the brain's generation has to fit the turn budget with the five
-# other steps. This cap is the enforcement; `persona.SYSTEM_PROMPT` asks for
+# (KB-004), so the brain's generation has to fit the turn budget alongside four
+# judge calls. This cap is the enforcement; `persona.SYSTEM_PROMPT` asks for
 # the same brevity, so the answer ends rather than gets truncated.
 BRAIN_MAX_TOKENS = int(os.environ.get("CADRE_BRAIN_MAX_TOKENS", "700"))
+BRAIN_TEMPERATURE = float(os.environ.get("CADRE_BRAIN_TEMPERATURE", "0.4"))
 
 # Streamed as tokens when the topic classifier routes a turn to a human.
 ESCALATION_TEXT = (
