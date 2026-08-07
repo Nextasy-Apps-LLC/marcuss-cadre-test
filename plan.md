@@ -53,7 +53,7 @@ The FastAPI endpoint bridges the graph to SSE via an asyncio queue; node wrapper
 - `trace` — `{trace_id, url}` as soon as the Langfuse trace exists
 - `done` — `{outcome, refusal_text?}` · `error` · `ping` heartbeat (idle-timeout safety)
 
-Stream-then-retract is explicit: tokens stream during `brain`; a later `output_safety` fail instructs the client to replace the streamed buffer with `refusal_text`.
+Stream-then-retract is explicit: tokens stream during `brain`; a later `output_safety` fail instructs the client to replace the streamed buffer with `refusal_text`, this is non ideal for a production grade chatbot but it is ideal for this submission since it shows the whole process.
 
 ## Traceability — Langfuse
 
