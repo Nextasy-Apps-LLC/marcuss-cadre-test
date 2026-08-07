@@ -30,7 +30,7 @@ CloudFront, with the page served from a private S3 bucket on the same hostname.
 
 | Thing | How it authenticates |
 |---|---|
-| Lambda → Bedrock | Bearer token (Bedrock API key) to the Mantle endpoint — **not** SigV4. See [ADR 0002](../adr/0002-bedrock-mantle-api-key.md): classic `bedrock-runtime` is `NOT_AUTHORIZED` account-wide. The key is an SSM SecureString (`/cadre/bedrock-api-key`) created out of band; Terraform `data`-references it into the Lambda's `AWS_BEARER_TOKEN_BEDROCK`. The execution role has no `bedrock:*` grant at all. |
+| Lambda → Bedrock | Bearer token (Bedrock API key) to the Mantle endpoint — **not** SigV4. See [ADR 0002](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/adr/0002-bedrock-mantle-api-key.md): classic `bedrock-runtime` is `NOT_AUTHORIZED` account-wide. The key is an SSM SecureString (`/cadre/bedrock-api-key`) created out of band; Terraform `data`-references it into the Lambda's `AWS_BEARER_TOKEN_BEDROCK`. The execution role has no `bedrock:*` grant at all. |
 | GitHub Actions → AWS | OIDC, exact sub-claim pinned to `refs/heads/main`. No access key. |
 | CloudFront → Lambda URL | OAC, SigV4-signed. The URL is `AWS_IAM`, not public. |
 | CloudFront → S3 | OAC. The bucket blocks all public access. |
