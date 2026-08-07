@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 
 from app import config, ratelimit, sse
 from app.graph import models
@@ -44,14 +45,23 @@ _CLIENT_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 # helpers
 # --------------------------------------------------------------------------
 
+def _elapsed_ms(started: float) -> int:
+    """Milliseconds since `started` (a `time.monotonic()` timestamp), rounded
+    to the nearest integer — never truncated, so a fast step under 1ms still
+    reads as `0` rather than being pulled down by `int()` on a value like 0.6.
+    """
+    return round((time.monotonic() - started) * 1000)
+
+
 async def _record(
     state: ConversationState,
     emit,
     step: str,
     status: str,
     detail: str | None = None,
+    elapsed_ms: int | None = None,
 ) -> ConversationState:
-    await emit(step, status, detail)
+    await emit(step, status, detail, elapsed_ms)
     result = StepResult(step=step, status=status, detail=detail)
     return {**state, "steps": [*state.get("steps", []), result]}
 
@@ -114,54 +124,90 @@ async def validate_input(state: ConversationState, emit) -> ConversationState:
     without a network call; the model half catches gibberish that is
     structurally fine, and fails open like every other model-backed step.
     """
+    started = time.monotonic()
     await emit(VALIDATE_INPUT, "running")
 
     detail = _validation_failure(state)
     if detail:
-        return await _record(state, emit, VALIDATE_INPUT, "fail", detail)
+        return await _record(
+            state, emit, VALIDATE_INPUT, "fail", detail, _elapsed_ms(started)
+        )
 
     try:
         verdict = await models.validate_llm(state)
     except Exception:  # noqa: BLE001 - fail open, see module docstring
         log.warning("validate_input judge failed, passing degraded", exc_info=True)
-        return await _record(state, emit, VALIDATE_INPUT, "pass", DEGRADED)
+        return await _record(
+            state, emit, VALIDATE_INPUT, "pass", DEGRADED, _elapsed_ms(started)
+        )
 
     if verdict.verdict == "fail":
         return await _record(
-            state, emit, VALIDATE_INPUT, "fail", verdict.detail or "invalid"
+            state,
+            emit,
+            VALIDATE_INPUT,
+            "fail",
+            verdict.detail or "invalid",
+            _elapsed_ms(started),
         )
-    return await _record(state, emit, VALIDATE_INPUT, "pass", verdict.detail)
+    return await _record(
+        state, emit, VALIDATE_INPUT, "pass", verdict.detail, _elapsed_ms(started)
+    )
 
 
 async def injection_check(state: ConversationState, emit) -> ConversationState:
+    started = time.monotonic()
     await emit(INJECTION_CHECK, "running")
     try:
         verdict = await models.judge_injection(state)
     except Exception:  # noqa: BLE001 - fail open, see module docstring
         log.warning("injection_check seam failed, passing degraded", exc_info=True)
-        return await _record(state, emit, INJECTION_CHECK, "pass", DEGRADED)
+        return await _record(
+            state, emit, INJECTION_CHECK, "pass", DEGRADED, _elapsed_ms(started)
+        )
 
     if verdict.verdict == "fail":
         return await _record(
-            state, emit, INJECTION_CHECK, "fail", verdict.detail or "injection"
+            state,
+            emit,
+            INJECTION_CHECK,
+            "fail",
+            verdict.detail or "injection",
+            _elapsed_ms(started),
         )
-    return await _record(state, emit, INJECTION_CHECK, "pass", verdict.detail)
+    return await _record(
+        state, emit, INJECTION_CHECK, "pass", verdict.detail, _elapsed_ms(started)
+    )
 
 
 async def topic_classifier(state: ConversationState, emit) -> ConversationState:
+    started = time.monotonic()
     await emit(TOPIC_CLASSIFIER, "running")
     try:
         verdict = await models.classify_topic(state)
     except Exception:  # noqa: BLE001 - fail open, see module docstring
         log.warning("topic_classifier seam failed, passing degraded", exc_info=True)
-        return await _record(state, emit, TOPIC_CLASSIFIER, "pass", DEGRADED)
+        return await _record(
+            state, emit, TOPIC_CLASSIFIER, "pass", DEGRADED, _elapsed_ms(started)
+        )
 
     if verdict.verdict == "off_topic":
-        return await _record(state, emit, TOPIC_CLASSIFIER, "fail", "off_topic")
+        return await _record(
+            state, emit, TOPIC_CLASSIFIER, "fail", "off_topic", _elapsed_ms(started)
+        )
     if verdict.verdict == "needs_human":
         # Not a failure: the classifier worked and routed the turn to a person.
-        return await _record(state, emit, TOPIC_CLASSIFIER, "pass", "needs_human")
-    return await _record(state, emit, TOPIC_CLASSIFIER, "pass", verdict.detail)
+        return await _record(
+            state,
+            emit,
+            TOPIC_CLASSIFIER,
+            "pass",
+            "needs_human",
+            _elapsed_ms(started),
+        )
+    return await _record(
+        state, emit, TOPIC_CLASSIFIER, "pass", verdict.detail, _elapsed_ms(started)
+    )
 
 
 async def retrieve(state: ConversationState, emit) -> ConversationState:
@@ -174,6 +220,7 @@ async def retrieve(state: ConversationState, emit) -> ConversationState:
 
 
 async def brain(state: ConversationState, emit) -> ConversationState:
+    started = time.monotonic()
     await emit(BRAIN, "running")
     parts: list[str] = []
     async for delta in models.stream_reply(state):
@@ -183,26 +230,36 @@ async def brain(state: ConversationState, emit) -> ConversationState:
             await asyncio.sleep(0)
 
     state = {**state, "answer": "".join(parts)}
-    return await _record(state, emit, BRAIN, "pass")
+    return await _record(state, emit, BRAIN, "pass", elapsed_ms=_elapsed_ms(started))
 
 
 async def output_safety(state: ConversationState, emit) -> ConversationState:
+    started = time.monotonic()
     await emit(OUTPUT_SAFETY, "running")
     try:
         verdict = await models.guard_output(state)
     except Exception:  # noqa: BLE001 - fail open, see module docstring
         log.warning("output_safety seam failed, passing degraded", exc_info=True)
-        state = await _record(state, emit, OUTPUT_SAFETY, "pass", DEGRADED)
+        state = await _record(
+            state, emit, OUTPUT_SAFETY, "pass", DEGRADED, _elapsed_ms(started)
+        )
         return {**state, "outcome": "answered"}
 
     if verdict.verdict == "fail":
         # The answer is already on the visitor's screen; `refuse` tells them to
         # drop it. Stream-then-retract is the deliberate trade-off in plan.md.
         return await _record(
-            state, emit, OUTPUT_SAFETY, "fail", verdict.detail or "unsafe_output"
+            state,
+            emit,
+            OUTPUT_SAFETY,
+            "fail",
+            verdict.detail or "unsafe_output",
+            _elapsed_ms(started),
         )
 
-    state = await _record(state, emit, OUTPUT_SAFETY, "pass", verdict.detail)
+    state = await _record(
+        state, emit, OUTPUT_SAFETY, "pass", verdict.detail, _elapsed_ms(started)
+    )
     return {**state, "outcome": "answered"}
 
 

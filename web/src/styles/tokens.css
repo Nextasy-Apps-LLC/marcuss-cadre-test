@@ -24,12 +24,19 @@
   --fg: #1a1a1a;
   --fg-strong: #0a0a0a;
   --fg-dim: #57534e;
-  --fg-mute: #8a857c;
+  /* Darkened from the ported #8a857c (3.26–3.67:1 against --bg/--bg-2/--bg-3,
+     failing WCAG AA) to #726e67, which clears 4.5:1 against all three —
+     this token backs real body/status text (.step-detail, .step-timing, a
+     stopped message's .msg-body), not decoration. */
+  --fg-mute: #726e67;
 
   --rule: rgba(28, 42, 74, 0.2);
   --ok: #1c5a3a;
   --hot: #b1372f;
-  --warn: #b07e2d;
+  /* Darkened from the ported #b07e2d (3.34–3.58:1 against --bg-2/--bg-3,
+     failing WCAG AA) to #8f6725, which clears 4.5:1 — backs the degraded
+     step's .step-label text, not only its icon. */
+  --warn: #8f6725;
 
   --mono: "JetBrains Mono", "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   --serif: "Newsreader", Georgia, "Times New Roman", serif;
@@ -44,6 +51,13 @@
      reference site's theme-toggle stays rounded in formal too. */
   --radius: 0;
   --tx: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  /* One spacing scale, reused instead of ad hoc per-component pixel values
+     (#40 polish pass) — three steps cover every gap/padding in the
+     masthead, terminal, stepper, and composer. */
+  --space-1: 8px;
+  --space-2: 14px;
+  --space-3: 20px;
 }
 
 *,

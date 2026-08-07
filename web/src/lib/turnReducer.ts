@@ -37,7 +37,12 @@ export function applyState(turn: TurnState, event: StateEvent): TurnState {
     ...turn,
     steps: turn.steps.map((step) =>
       step.name === event.step
-        ? { ...step, status: event.status, detail: event.detail ?? null }
+        ? {
+            ...step,
+            status: event.status,
+            detail: event.detail ?? null,
+            elapsedMs: event.elapsed_ms,
+          }
         : step,
     ),
   };

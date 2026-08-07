@@ -6,7 +6,7 @@
  * nothing at build time can catch that drift, so the names here are
  * deliberately verbatim rather than prettified.
  *
- * Wire events: `state {step, status, detail?}`, `token {text}`,
+ * Wire events: `state {step, status, detail, elapsed_ms}`, `token {text}`,
  * `done {outcome, refusal_text?}` (always terminal), `error {message}`
  * (terminal), and `: ping` comment heartbeats (dropped in sse.ts, never
  * reach this boundary).
@@ -31,6 +31,14 @@ export interface StateEvent {
   step: StepName;
   status: WireStepStatus;
   detail?: string;
+  /**
+   * Milliseconds the step took, `round()`ed server-side — never truncated.
+   * Always present on the wire (never omitted), per KB-005: `null` on
+   * `running`/`skipped` (nothing measured yet, and a skipped step never ran
+   * so `0` would misleadingly imply measurement); an integer `>= 0` on
+   * `pass`/`fail`.
+   */
+  elapsed_ms: number | null;
 }
 
 export interface TokenEvent {
@@ -83,6 +91,8 @@ export interface StepState {
   label: string;
   status: StepStatus;
   detail: string | null;
+  /** Mirrors `StateEvent.elapsed_ms` verbatim — see its doc comment. */
+  elapsedMs: number | null;
 }
 
 /** Human labels for the pipeline steps, in wire order. */
@@ -123,6 +133,7 @@ export function freshSteps(): StepState[] {
     label: STEP_LABELS[name],
     status: "pending" as StepStatus,
     detail: null,
+    elapsedMs: null,
   }));
 }
 

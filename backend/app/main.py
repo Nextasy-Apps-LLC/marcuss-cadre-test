@@ -153,7 +153,12 @@ async def _stream(req: AskRequest) -> AsyncIterator[str]:
                 continue
 
             if kind == "state":
-                yield sse.state(payload["step"], payload["status"], payload["detail"])
+                yield sse.state(
+                    payload["step"],
+                    payload["status"],
+                    payload["detail"],
+                    payload["elapsed_ms"],
+                )
             elif kind == "token":
                 yield sse.token(payload)
             elif kind == "done":
