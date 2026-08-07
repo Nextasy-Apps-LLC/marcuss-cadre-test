@@ -157,6 +157,7 @@ class TestSupportingEndpoints:
             "What does Cadre AI do?",
             "How do I book a call with an AI strategist?",
             "What is the AI Maturity Index?",
+            "How does Cadre AI choose LLMs and handle data security?",
         ]
 
 
