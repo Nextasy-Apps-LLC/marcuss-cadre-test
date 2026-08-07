@@ -62,6 +62,14 @@ def detail_for(events: list[tuple[str, dict]], step: str, status: str) -> str | 
     )
 
 
+def elapsed_for(events: list[tuple[str, dict]], step: str, status: str) -> int | None:
+    return next(
+        p["elapsed_ms"]
+        for e, p in events
+        if e == "state" and p["step"] == step and p["status"] == status
+    )
+
+
 def reply_text(events: list[tuple[str, dict]]) -> str:
     return "".join(p["text"] for e, p in events if e == "token")
 

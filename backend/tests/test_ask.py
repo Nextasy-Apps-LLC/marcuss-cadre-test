@@ -21,6 +21,7 @@ from tests.conftest import (
     ask_events,
     client,
     detail_for,
+    elapsed_for,
     kinds,
     parse_sse,
     reply_text,
@@ -43,7 +44,7 @@ class TestContractConstants:
 
     def test_state_event_shape(self):
         _, payload = next(e for e in ask_events("hello") if e[0] == "state")
-        assert set(payload) == {"step", "status", "detail"}
+        assert set(payload) == {"step", "status", "detail", "elapsed_ms"}
 
     def test_token_event_shape(self):
         _, payload = next(e for e in ask_events("hello") if e[0] == "token")
@@ -306,6 +307,57 @@ class TestFailOpen:
 
         assert detail_for(events, step, "pass") == "degraded"
         assert events[-1][1]["outcome"] == "answered"
+        # A degraded pass is still a real terminal verdict — it reached a
+        # conclusion (just not from the model), so it must be timed like any
+        # other pass/fail, never left null as if it never ran.
+        elapsed = elapsed_for(events, step, "pass")
+        assert isinstance(elapsed, int) and elapsed >= 0
+
+
+class TestElapsedMs:
+    """`elapsed_ms` on the `state` event — always present, `null` while a
+    step hasn't reached a verdict yet, an int once it has (KB-005: this is
+    the exact-shape wire field, mirrored by web/src/types.ts in the next
+    phase of this issue)."""
+
+    def test_present_on_every_state_event(self):
+        events = ask_events("hello")
+        state_payloads = [p for e, p in events if e == "state"]
+        assert state_payloads
+        for payload in state_payloads:
+            assert "elapsed_ms" in payload
+
+    def test_null_while_running(self):
+        events = ask_events("hello")
+        running = [p for e, p in events if e == "state" and p["status"] == "running"]
+        assert running
+        for payload in running:
+            assert payload["elapsed_ms"] is None
+
+    def test_null_when_skipped(self):
+        # A blank message fails validate_input; everything after it is
+        # server-authoritative skipped — never ran, so nothing to time.
+        events = ask_events("   ")
+        skipped = [p for e, p in events if e == "state" and p["status"] == "skipped"]
+        assert skipped
+        for payload in skipped:
+            assert payload["elapsed_ms"] is None
+
+    def test_nonnegative_int_on_pass_or_fail(self):
+        events = ask_events("hello")
+        terminal = [
+            p for e, p in events if e == "state" and p["status"] in ("pass", "fail")
+        ]
+        assert terminal
+        for payload in terminal:
+            assert isinstance(payload["elapsed_ms"], int)
+            assert not isinstance(payload["elapsed_ms"], bool)
+            assert payload["elapsed_ms"] >= 0
+
+    def test_fail_verdict_is_also_timed(self):
+        events = ask_events("   ")  # blank -> validate_input fails
+        elapsed = elapsed_for(events, "validate_input", "fail")
+        assert isinstance(elapsed, int) and elapsed >= 0
 
 
 class TestStreamFailure:
