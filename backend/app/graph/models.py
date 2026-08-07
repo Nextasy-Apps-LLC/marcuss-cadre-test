@@ -81,9 +81,15 @@ def _label(raw: str, allowed: dict[str, str]) -> str | None:
     if not text:
         return None
 
-    # Labels may arrive with `_`, a space or a hyphen between words.
+    # Labels may arrive with `_`, a space or a hyphen between words. Built
+    # from the raw token rather than `re.escape(token)`: escaping a token
+    # first and then hunting for `\_` in the result is a no-op on Python
+    # 3.7+, where `re.escape` stopped escaping `_` — this alternation must
+    # fire post-escape, so it's built pre-escape instead. Every key in
+    # `allowed` is `[a-z_]` only (see call sites), so no other character
+    # needs escaping.
     pattern = "|".join(
-        re.escape(token).replace(r"\_", "[_ -]") for token in sorted(allowed, key=len, reverse=True)
+        token.replace("_", "[_ -]") for token in sorted(allowed, key=len, reverse=True)
     )
     matches = re.findall(rf"\b(?:{pattern})\b", text)
     if not matches:

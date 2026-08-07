@@ -97,6 +97,28 @@
     },
     {
       "id": "KB-008",
+      "type": "gotcha",
+      "area": ["backend"],
+      "tags": ["langgraph", "sse", "streaming", "state", "callbacks", "config"],
+      "title": "Per-request objects (SSE emitter, Langfuse handler) belong in LangGraph's config[\"configurable\"], never in the state channel",
+      "detail": "A LangGraph node receives only the state and the RunnableConfig, so it is tempting to hang the request's SSE emitter (or callback handler, or queue) on the state TypedDict. Don't: state channels are the checkpointable, serializable half of the graph, and a live asyncio.Queue there breaks any future checkpointer and is exactly how one visitor's stream ends up attached to another's turn. Pass them as graph.ainvoke(state, config={\"configurable\": {\"emit\": emit}}) and keep nodes on a plain (state, emit) signature with a thin bind wrapper that unpacks the config (app/graph/build.py `_bind`). Phase 2's Langfuse CallbackHandler rides the same path.",
+      "source": { "issue": 24, "pr": 28 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-009",
+      "type": "gotcha",
+      "area": ["backend"],
+      "tags": ["fail-open", "bedrock", "degraded", "guardrails", "misconfiguration", "credentials"],
+      "title": "Fail-open guard steps make a misconfigured model look like a healthy pipeline",
+      "detail": "The injection/topic/output guards pass with detail:\"degraded\" when their model call raises — right for an outage, but it means a wrong model id, a missing Bedrock permission or absent credentials all surface as a *passing* turn with an amber chip, evidenced only by a log line. Seen in Phase 1a, where unimplemented seams produced a clean-looking degraded turn end to end. When wiring the real models, never treat 'the turn answered' as proof the guards ran: assert detail is None on the guard steps in at least one e2e case, and grep the container log for 'seam failed, passing degraded' before calling a model change verified. Reconfirmed by #32's round-2 review (pullrequestreview-4886787080): `_label()`'s space/hyphen tolerance was dead code (re.escape stopped escaping `_` in Python 3.7+), so any topic-classifier reply using a spaced or hyphenated label degraded to a *passing* in_scope verdict with no visible sign the parse had failed — the exact failure mode this entry warns about, caught by asserting `detail is None` rather than just `.verdict` on the parametrized parser test.",
+      "source": { "issue": 24, "pr": 28 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-014",
       "type": "debug",
       "area": ["infra", "backend"],
       "tags": ["bedrock", "mantle", "model-access", "authorization", "ValidationException", "api-key", "sigv4", "aws"],
@@ -107,7 +129,7 @@
       "status": "active"
     },
     {
-      "id": "KB-009",
+      "id": "KB-015",
       "type": "gotcha",
       "area": ["backend"],
       "tags": ["langchain-aws", "ChatBedrockConverse", "temperature", "opus-5", "sampling", "bedrock"],
@@ -118,7 +140,7 @@
       "status": "superseded"
     },
     {
-      "id": "KB-010",
+      "id": "KB-016",
       "type": "gotcha",
       "area": ["backend"],
       "tags": ["langchain-aws", "ChatBedrockConverse", "content-blocks", "parsing", "bedrock", "llm-judge"],
@@ -158,6 +180,17 @@
       "title": "Under a fail-open policy, an un-retried 5xx silently downgrades a guard that had a verdict",
       "detail": "Fail-open guards turn transport blips into permanent-looking degradation: on the wire, a single 503 is indistinguishable from a model that genuinely could not decide. Retry 5xx and transport errors — bounded, 3 attempts, sub-second backoff — before degrading; never retry 4xx, which is a statement about the request (bad key, unentitled model) and will say the same thing next time. Two constraints: the retry budget comes out of the request's own latency budget, so bound it against that (here CloudFront's 60s origin cap, KB-004); and for STREAMING calls retry only before the first delta — once a fragment has reached the user, restarting rewrites the answer mid-sentence, so a mid-stream failure must propagate instead. Symptom that sent us here: every `validate_input` reporting `degraded` in e2e while the same model answered fine when probed by hand.",
       "source": { "issue": 25, "pr": 32 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-010",
+      "type": "learning",
+      "area": ["backend", "ci"],
+      "tags": ["sse", "streaming", "e2e", "buffering", "content-length", "testing"],
+      "title": "Assert an SSE response carries no Content-Length — the cheapest machine-checkable buffering detector",
+      "detail": "Every buffering failure this stack has hit (buffered LWA invoke mode, a proxy that re-encodes, a client that collects the body) passes the unit tests, because all the events are present — just delivered at once at the end. An e2e case that opens the stream and asserts `content-length` is absent from the response headers catches the whole class in one line, before anyone opens a browser. It does not replace the browser check (KB-007), which is what proves tokens paint incrementally; it is the part CI can run unattended.",
+      "source": { "issue": 24, "pr": 28 },
       "date": "2026-08-07",
       "status": "active"
     }
