@@ -94,6 +94,28 @@
       "source": { "issue": null, "pr": null },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-008",
+      "type": "learning",
+      "area": ["web", "process"],
+      "tags": ["playwright", "chromium", "e2e", "manual-verification", "headless-browser", "sandbox"],
+      "title": "No `chromium-cli` in this sandbox — bootstrap Playwright yourself, and re-run `install` if the cached browser build is stale",
+      "detail": "The `run` skill's browser-driven pattern assumes `chromium-cli`, which is not installed here. Instead: `npm install playwright` in a scratch dir (not the repo — it is not a runtime dep) and drive it with a short `.mjs` script (`chromium.launch({args:['--no-sandbox']})` -> `page.goto`/`fill`/`press`/`screenshot`). The sandbox's `~/Library/Caches/ms-playwright` can hold an older Chromium build than the npm package you just installed expects (`browserType.launch: Executable doesn't exist at .../chromium_headless_shell-<N>`) — `npx playwright install chromium` fixes it in ~1-2 min, no special network access needed beyond the download. Also: the visually-hidden real submit button in a form can be occluded by a decorative absolutely-positioned sibling for click purposes even though it's clickable by real users via Enter — `page.press(input, 'Enter')` is both more robust and more representative than `page.click()` on that button.",
+      "source": { "issue": 26, "pr": null },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-009",
+      "type": "debug",
+      "area": ["backend", "web", "process"],
+      "tags": ["bedrock", "langgraph", "stub", "notimplementederror", "e2e", "phase-1b"],
+      "title": "feat/issue-24-langgraph-engine's backend image always terminates in a generic `error` — the model seams are stubbed, not broken",
+      "detail": "Symptom: every /ask turn against the #24 backend image ends `done{outcome:\"error\"}` (or the client's generic error text) no matter what's asked, with `injection_check`/`topic_classifier` rendering `degraded` and `retrieve` `skipped`. Actual cause: `app/graph/models.py`'s `judge_injection`/`classify_topic`/`stream_reply` seams are `raise NotImplementedError(f\"... is wired in Phase 1b (Bedrock via langchain-aws)\")` on that branch as of 2026-08-07 — Bedrock wiring is issue #25's scope, not yet in #24. Fastest diagnostic path: `docker logs` the container for `NotImplementedError` mentioning \"Phase 1b\" before suspecting your own client code. Consequence for e2e: the #24 image alone can only exercise the fail-open/degraded and server-authoritative-skip paths live; `answered`/`refused`/`escalated` terminal outcomes need #25's Bedrock wiring merged in too — until then, cover those paths with unit tests against the wire contract, not live e2e.",
+      "source": { "issue": 26, "pr": null },
+      "date": "2026-08-07",
+      "status": "active"
     }
   ]
 }
