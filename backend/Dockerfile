@@ -26,4 +26,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
+# The AWS Lambda base image ships an ENTRYPOINT (/lambda-entrypoint.sh) that
+# treats CMD[0] as a Python handler name. Left in place it swallows the uvicorn
+# command and the init crashes with "entrypoint requires the handler name to be
+# the first argument" — the adapter extension, not the entrypoint, is what talks
+# to the Lambda runtime API here, so the entrypoint must be cleared.
+ENTRYPOINT []
+
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
