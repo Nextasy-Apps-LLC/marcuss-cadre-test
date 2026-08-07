@@ -204,4 +204,33 @@ resource "aws_cloudfront_distribution" "this" {
     ssl_support_method             = var.enable_custom_domain ? "sni-only" : null
     minimum_protocol_version       = var.enable_custom_domain ? "TLSv1.2_2021" : null
   }
+
+  lifecycle {
+    precondition {
+      # Once the certificate is ISSUED, `enable_custom_domain = false` is no
+      # longer "still bootstrapping" — it is a stale override that silently
+      # reverts a live custom-domain attachment back to the CloudFront
+      # default certificate (no alias, no ACM cert). That's exactly what
+      # happened on 2026-08-07 (issue #37): a local `terraform apply` picked
+      # up a `terraform.tfvars` where this line was never deleted after
+      # issuance, and it reverted a working cadre.marcuss.pro back to
+      # *.cloudfront.net with zero warning, mid-apply.
+      #
+      # This only ever fires for a local apply — CI's plan/apply jobs never
+      # pass -var enable_custom_domain, so they always use this variable's
+      # `true` default and are unaffected.
+      condition     = var.enable_custom_domain || aws_acm_certificate.this.status != "ISSUED"
+      error_message = <<-EOT
+        enable_custom_domain = false, but the ACM certificate for
+        ${var.domain_name} is already ISSUED. Applying this would tear the
+        custom domain off the live distribution (see infra/terraform.tfvars.example's
+        "delete the line once ISSUED" comment, and issue #37 for the incident
+        this exact override caused). If you are intentionally rebuilding from
+        scratch, destroy the certificate first; otherwise remove the
+        enable_custom_domain override from your local terraform.tfvars and
+        resync via the CI Terraform workflow (workflow_dispatch, action:
+        apply) instead of a local apply.
+      EOT
+    }
+  }
 }
