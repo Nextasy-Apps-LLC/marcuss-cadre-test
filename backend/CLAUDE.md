@@ -111,48 +111,56 @@ progress. Rules, each with its why:
 
 ## The brain (`app/llm.py`, `app/graph/models.py`, `app/persona.py`)
 
-- All LLM/Bedrock calls go through LangChain (`langchain-aws`'s
-  `ChatBedrockConverse`), never raw `boto3` `bedrock-runtime` calls — one
-  orchestration layer gives the pipeline composable chains, a single callback
-  surface for tracing, and consistent tool-calling instead of hand-rolled
-  invoke shapes. (LangChain/LangGraph is a coding standard set here, not an ADR
-  decision — nothing in ADR 0001 constrains the orchestration library.)
-- `app/llm.py`'s `chat_model()` is the only place a Bedrock client is
-  constructed. Callers pass a model id and a token budget and nothing else, so
-  the region, the sampling-parameter rules and (in Phase 2) the callback
-  handler are set once rather than six times. Read every response through
-  `llm.text_of()` — `ChatBedrockConverse` returns a bare `str` for some models
-  and a list of typed blocks for others, and which you get depends on the
-  model, not the call.
-- **Sampling parameters are not universal.** Claude Opus 5 removed
-  `temperature`/`top_p`/`top_k`; `langchain-aws` does not error on one, it logs
-  `Model … does not support temperature; ignoring the provided value` and drops
-  it. `chat_model()` therefore refuses to send `temperature` to a model that
-  would discard it, so "temperature=0" never silently means "whatever the model
-  felt like".
-- **Model ids are checked before an image is pushed, not at the first
-  request** — `scripts/assert_models.py`, wired into `deploy.yml` ahead of the
-  build. It asserts both that a model exists *and* that the account is
-  authorised to invoke it, because a fresh account lists the whole catalogue
-  while being authorised for none of it. Every model step fails open, so a
-  wrong or unauthorised id ships as a working-looking chat with amber rails
-  rather than as a crash — the assertion is what keeps that from being
-  discovered by a visitor.
-- The `us.` prefix on the Anthropic ids in `app/config.py` is load-bearing:
-  those models report `inferenceTypesSupported: [INFERENCE_PROFILE]`, so the
-  bare `anthropic.claude-…` id is not invokable. The open-weight judges are
-  `ON_DEMAND` and take their bare ids. `infra/lambda.tf` grants both ARN
-  shapes for exactly this reason.
-- Judges answer in one token and are parsed tolerantly (case, whitespace,
-  punctuation, markdown). A response that is *not* a verdict degrades — it is
-  never guessed at. The topic classifier's fallback chain is walked on model
-  **errors only**: a model that answered is a model that is up, and re-asking
-  costs a slice of the 55s turn budget for a question the output guard already
-  backstops.
+- **Model calls are plain HTTP to Bedrock's OpenAI-compatible Mantle endpoint,
+  authenticated with a bearer token — no boto3, no SigV4, no LangChain in the
+  model path.** [ADR 0002](../adr/0002-bedrock-mantle-api-key.md) records why:
+  classic `bedrock-runtime` Converse is `NOT_AUTHORIZED` account-wide, while
+  Mantle answers the same models over an ordinary HTTPS call. LangGraph still
+  owns orchestration; only the transport changed.
+- `app/llm.py` is the whole transport: `chat()` and `chat_stream()`, plus the
+  parsing helpers. Two things in it are load-bearing:
+  - **The key is resolved per request** inside `_headers()`, never captured at
+    import or baked into the client, so rotating `AWS_BEARER_TOKEN_BEDROCK`
+    needs no cold start and a key missing at import does not poison the
+    instance. A missing key raises, and the caller's fail-open policy turns
+    that into a visibly degraded turn rather than a crash.
+  - **`_client()` wraps an `lru_cache`d `AsyncClient`** — one connection pool
+    per instance instead of a TLS handshake per judge, and one
+    `monkeypatch.setattr` for tests. Unit tests must always replace it; they
+    may never reach the live endpoint.
+- **Read the end of a response, not the start.** Several models in the roster
+  reason before answering: `nvidia.nemotron-nano-9b-v2` emits a
+  `<think>…</think>` monologue into `content` and only then its verdict.
+  `strip_reasoning()` removes closed blocks and discards an *unclosed* one
+  entirely — an unclosed block means `finish_reason: length` cut the model off
+  mid-thought, so there is no verdict and mining the fragment for one would
+  turn a hypothetical into a decision. `_label()` then takes the **last**
+  match, because prose reasoning ("this could pass, but … so fail") inverts
+  under a first-match parse. `extract_content()` falls back to the `reasoning`
+  field when `content` is null, which some models require.
+- **Judge token budgets are generous, not tiny** (`JUDGE_MAX_TOKENS`, default
+  512). A reasoning model truncated mid-monologue never reaches its verdict —
+  the same failure family as the `gpt-oss-safeguard` models, which emit their
+  verdict only inside a truncating `reasoning` field and are deliberately not
+  in the roster. The ceiling is free on a terse model, because temperature 0
+  stops it as soon as it has said the word.
+- **Model ids are checked before an image is pushed** — `scripts/assert_models.py`,
+  wired into `deploy.yml` ahead of the build. It lists `GET /v1/models` *and*
+  spends a real one-token completion per id, because listing is not
+  entitlement: several Claude ids appear in the catalogue on this account and
+  still refuse to run. Every model step fails open, so a wrong or unentitled id
+  ships as a working-looking chat with amber rails rather than as a crash — the
+  assertion is what keeps that from being discovered by a visitor.
+- Judges answer with a label and are parsed tolerantly (case, whitespace,
+  punctuation, markdown, reasoning preamble). A response that is *not* a
+  verdict degrades — it is never guessed at. The topic classifier's fallback
+  chain is walked on model **errors only**: a model that answered is a model
+  that is up, and re-asking costs a slice of the 55s turn budget for a question
+  the output guard already backstops.
 - `guard_output` is two independent halves. `scrub_failure()` is deterministic
   (URL allowlist — cadreai.com only — plus PII patterns), runs first, and has
-  no outage mode; the Haiku judgement runs second and may degrade. A guard
-  outage must never be able to leak an external URL.
+  no outage mode; the guard model runs second and may degrade. A guard outage
+  must never be able to leak an external URL.
 - `app/persona.py` is the vetted baseline and the only source of facts until
   retrieval lands in Phase 3. Nothing else may state a fact about Cadre AI —
   no prices, no named clients, no invented capabilities — and the prompt says
@@ -161,9 +169,9 @@ progress. Rules, each with its why:
   copy `/config` advertises and the persona that must answer for it cannot
   drift. The dependency runs one way: persona never imports config.
 - `config.BRAIN_MAX_TOKENS` bounds generation so the turn fits CloudFront's 60s
-  origin cap (KB-004); the persona asks for the same brevity, so answers end
-  rather than get truncated. Raising one without the other buys a cut-off
-  sentence.
+  origin cap (KB-004) *alongside four judge calls*; the persona asks for the
+  same brevity, so answers end rather than get truncated. Judge latency is part
+  of that budget — measure it before swapping a slot to a slower model.
 
 ### Tracing (Phase 2 — not built yet)
 
@@ -207,11 +215,16 @@ adds it has nothing left to decide:
   Lambda-only code paths.
 - Runtime dependencies are exactly `requirements.txt`. Every dependency is
   cold-start weight, so each addition is justified in the PR that adds it —
-  `langgraph` and `langchain-core` came in with the engine, `langchain-aws`
-  with the model steps, and `langfuse` arrives with tracing in Phase 2.
-- The image copies `app/` only. `scripts/` runs in CI and on a laptop against a
-  real account; shipping it (and its `boto3` import) into the runtime would be
-  cold-start weight for code no invoke ever executes.
+  `langgraph` and `langchain-core` came in with the engine, `httpx` with the
+  model steps, and `langfuse` arrives with tracing in Phase 2. There is
+  deliberately no boto3: since ADR 0002 nothing in the request path signs
+  anything.
+- The image copies `app/` only. `scripts/` runs in CI and on a laptop against
+  a real account; shipping it into the runtime would be cold-start weight for
+  code no invoke ever executes.
+- `AWS_BEARER_TOKEN_BEDROCK` is a *runtime* environment variable — Terraform
+  sets it on the function from SSM, and local runs pass it with `docker run
+  -e`. It must never be baked into an image layer, committed, or echoed.
 
 ## Verifying
 

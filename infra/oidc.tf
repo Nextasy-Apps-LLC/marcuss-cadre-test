@@ -124,21 +124,18 @@ data "aws_iam_policy_document" "ci_deploy" {
     resources = [aws_cloudfront_distribution.this.arn]
   }
 
-  # Bedrock: read-only, for the pre-build model assertion
-  # (backend/scripts/assert_models.py). Catalogue and availability lookups
-  # only — the deploy role must never be able to *invoke* a model, which is
-  # the Lambda execution role's job and nobody else's. These actions describe
-  # the account rather than a resource in it, so they do not support
-  # resource-level scoping.
+  # The Bedrock API key, for the pre-build model assertion
+  # (backend/scripts/assert_models.py). Since ADR 0002 the model catalogue is
+  # behind the Mantle endpoint rather than the AWS API, so the check needs the
+  # key rather than `bedrock:*` IAM actions — those grants are gone.
+  #
+  # Read-only, and scoped to this one parameter. The workflow passes it to the
+  # script as an environment variable and never echoes it.
   statement {
-    sid    = "BedrockModelAvailability"
-    effect = "Allow"
-    actions = [
-      "bedrock:ListFoundationModels",
-      "bedrock:ListInferenceProfiles",
-      "bedrock:GetFoundationModelAvailability",
-    ]
-    resources = ["*"]
+    sid       = "BedrockApiKeyRead"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.bedrock_api_key_parameter}"]
   }
 }
 

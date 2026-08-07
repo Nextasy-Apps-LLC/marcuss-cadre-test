@@ -254,3 +254,97 @@ class TestStripReasoning:
         never arrives. Whatever is left is reasoning, not a verdict — returning
         it would let a truncated thought be parsed as an answer."""
         assert llm.strip_reasoning("<think>Okay, the user is asking abo") == ""
+
+
+# --------------------------------------------------------------------------
+# transient failures
+# --------------------------------------------------------------------------
+
+class TestRetries:
+    """`nvidia.nemotron-nano-9b-v2` returns an intermittent 503 on this
+    account — roughly two calls in five, at any token budget, while the other
+    models in the roster never do. A 503 is the endpoint saying "not now", not
+    the model saying anything, so treating it as an answer would degrade a
+    step that has a perfectly good verdict one retry away."""
+
+    @pytest.fixture(autouse=True)
+    def _key(self, monkeypatch):
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "k")
+        monkeypatch.setattr(llm, "_RETRY_BACKOFF_S", 0.0)
+
+    def _handler(self, statuses):
+        seen = {"n": 0}
+
+        def handler(request):
+            i = seen["n"]
+            seen["n"] += 1
+            status = statuses[min(i, len(statuses) - 1)]
+            if status == 200:
+                return completion("pass")
+            return httpx.Response(status, json={"message": "nope"})
+
+        return handler, seen
+
+    def test_a_503_is_retried_and_the_verdict_survives(self, monkeypatch):
+        handler, seen = self._handler([503, 200])
+        monkeypatch.setattr(llm, "_client", lambda: mock_client(handler))
+        assert run(llm.chat("m", "s", [{"role": "user", "content": "u"}], max_tokens=8)) == "pass"
+        assert seen["n"] == 2
+
+    def test_a_500_is_retried(self, monkeypatch):
+        handler, seen = self._handler([500, 200])
+        monkeypatch.setattr(llm, "_client", lambda: mock_client(handler))
+        assert run(llm.chat("m", "s", [{"role": "user", "content": "u"}], max_tokens=8)) == "pass"
+        assert seen["n"] == 2
+
+    def test_retries_are_bounded_and_then_it_gives_up(self, monkeypatch):
+        """Bounded because the turn budget is (KB-004). Retrying a genuinely
+        down endpoint forever would burn the whole 55s and still degrade."""
+        handler, seen = self._handler([503])
+        monkeypatch.setattr(llm, "_client", lambda: mock_client(handler))
+        with pytest.raises(httpx.HTTPStatusError):
+            run(llm.chat("m", "s", [{"role": "user", "content": "u"}], max_tokens=8))
+        assert seen["n"] == llm.MAX_ATTEMPTS
+
+    def test_a_403_is_not_retried(self, monkeypatch):
+        """A bad key or an unentitled model is not going to fix itself, and
+        spending the turn budget discovering that helps nobody."""
+        handler, seen = self._handler([403])
+        monkeypatch.setattr(llm, "_client", lambda: mock_client(handler))
+        with pytest.raises(httpx.HTTPStatusError):
+            run(llm.chat("m", "s", [{"role": "user", "content": "u"}], max_tokens=8))
+        assert seen["n"] == 1
+
+    def test_a_transport_error_is_retried(self, monkeypatch):
+        seen = {"n": 0}
+
+        def handler(request):
+            seen["n"] += 1
+            if seen["n"] == 1:
+                raise httpx.ConnectError("boom")
+            return completion("pass")
+
+        monkeypatch.setattr(llm, "_client", lambda: mock_client(handler))
+        assert run(llm.chat("m", "s", [{"role": "user", "content": "u"}], max_tokens=8)) == "pass"
+
+    def test_a_stream_that_fails_before_any_delta_is_retried(self, monkeypatch):
+        seen = {"n": 0}
+
+        def handler(request):
+            seen["n"] += 1
+            if seen["n"] == 1:
+                return httpx.Response(503, json={"message": "nope"})
+            return sse(delta("hi"), "[DONE]")
+
+        monkeypatch.setattr(llm, "_client", lambda: mock_client(handler))
+
+        async def collect():
+            return [
+                c
+                async for c in llm.chat_stream(
+                    "m", "s", [{"role": "user", "content": "u"}], max_tokens=64
+                )
+            ]
+
+        assert run(collect()) == ["hi"]
+        assert seen["n"] == 2
