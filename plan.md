@@ -39,7 +39,7 @@ All chat models via `langchain-aws` (`ChatBedrockConverse`); availability in us-
 | input validation | deterministic checks + **Nemotron 3 Nano 9B v2** (Bedrock serverless) | cheap SLM sanity/validity judge |
 | injection check | **Claude Haiku 4.5** strict single-token classifier | fast, strong instruction-following against adversarial input; Bedrock Guardrails prompt-attack filter evaluated as a complement |
 | topic classifier | **Nemotron 3 Nano 12B v2** (fallbacks: **Google Gemma** on Bedrock, then Haiku 4.5) | 3-way route: `in_scope` / `off_topic` / `needs_human` |
-| query condensing | **Claude Haiku 4.5** | rewrite follow-ups into standalone retrieval queries |
+| query condensing | **Google Gemma 3 12B** (`CADRE_MODEL_CONDENSE`) | rewrite follow-ups into standalone retrieval queries. plan.md specified Haiku 4.5; no Claude id answers through Mantle (ADR 0002), so the slot took the fastest entitled model. Probed before pinning: 10/10 usable rewrites, p50 0.39s, and condensing lifts the mean top-hit score on 5 real follow-ups from 0.250 (raw message) to 0.602 — "how much does that cost?" alone retrieves nothing at all |
 | brain | **Claude Opus 5** (streaming) | answer quality on nuanced consulting questions |
 | output safety | **Claude Haiku 4.5** guard + deterministic PII/URL scrub | final gate on the streamed answer |
 | embeddings | **OpenAI `text-embedding-3-large`** (3072 native) | KB requirement; on a corpus this small the cost difference is noise and retrieval quality is the only axis that matters (decision recorded in #62, superseding `-3-small`) |
@@ -68,10 +68,10 @@ Stream-then-retract is explicit: tokens stream during `brain`; a later `output_s
 **The KB is consulted on every in-scope user message, as a first-class LangGraph node (`retrieve`)** — the standard LangGraph RAG pattern (retrieval as a graph step, not a hidden call inside the brain). It runs **after `topic_classifier` passes and before `brain`**: refused/escalated messages never spend an embedding call, and the brain always has its context before generating. As a node it gets its own SSE `state` events (`retrieve: running → pass/skipped`) and its own Langfuse span (query, top-k hits, scores — all visible in the public trace).
 
 Inside `retrieve`:
-1. **Query condensing** (multi-turn): with non-empty history, Haiku 4.5 rewrites the message into a standalone query ("how much does *that* cost?" → "Cadre AI Maturity Index pricing").
+1. **Query condensing** (multi-turn): with non-empty history, Gemma 3 12B rewrites the message into a standalone query ("how much does *that* cost?" → "Cadre AI Maturity Index pricing"). With empty history the call is skipped entirely — a first message is already standalone, and confirming that would spend part of the 60s turn budget on a no-op.
 2. Embed the query with OpenAI `text-embedding-3-large` — the same model at the same 3072 dimensions the artifact was built with. A mismatch does not raise, it returns wrong neighbours, so `retrieve` checks the query vector against `app/kb/manifest.json` before it searches.
 3. Vector search top-k≈6 with a similarity floor; hits (chunk text + source title/URL) are injected into the brain prompt with an instruction to cite sources inline as a simple small "see more" link at the end that when clicked takes you the original http, it should not show the long url.
-4. **Fail-open**: an embeddings/DB outage degrades to persona-baseline answers; the `state` event reports `retrieve: skipped`, never a user-facing error.
+4. **Fail-open**: an embeddings/DB outage degrades to persona-baseline answers; the `state` event reports `retrieve: skipped`, never a user-facing error. Each way of giving up is its own machine-readable `detail` — `kb_unavailable`, `kb_disabled`, `kb_dimension_mismatch`, `kb_timeout` — because "the KB is off" and "the KB is answering from the wrong corpus" need different people woken up. Zero hits is a `pass`/`no_hits`, not a skip: the KB ran, it had nothing.
 
 ### KB infrastructure — embedded LanceDB, not a database server
 
@@ -111,7 +111,7 @@ Cadre AI support assistant for prospective and existing clients: services (AI St
 
 - [x] **Phase 1 — LangGraph engine + SSE v2**: `StateGraph`, nodes with mocked-seam unit tests, `state` events, refusal/escalation states, persona v1, frontend protocol update + pipeline stepper. — shipped via #24/#25/#26/#27 (PRs #29, #31, #35)
 - [ ] **Phase 2 — Langfuse traceability**: keys via SSM SecureString (`SET_OUT_OF_BAND` pattern), callback wiring, public traces, `trace` event, frontend trace link, flush hardening for Lambda.
-- [ ] **Phase 3 — RAG KB**: ingestion pipeline + LanceDB artifact; `retrieve` node (condense → embed → search) wired between `topic_classifier` and `brain`; inline citations; OpenAI key via SSM; IAM/env deltas.
+- [ ] **Phase 3 — RAG KB**: ingestion pipeline + LanceDB artifact (shipped: 55 pages → 131 chunks, 1.80 MB); `retrieve` node (condense → embed → search) wired between `topic_classifier` and `brain`, fail-open with per-cause `detail`s and its own Langfuse span; cited answers via `persona.system_prompt(context)`; OpenAI key `data`-read from SSM into the function (`infra/openai.tf`). Remaining: the web half — linkify's KB-017 fix and the `/case-studies` / `/articles` label mappings.
 - [ ] **Phase 4 — Evaluation harness**: golden dataset; headless graph runner; deterministic outcome/citation assertions; LLM-judge rubric (groundedness, correctness, persona) on a non-brain model family; runs logged as Langfuse experiments for before/after comparison.
 - [ ] **Phase 5 — UX polish + e2e**: stepper/linkify/suggestions polish; no-op thumbs up/down; `BASE_URL`-pointable e2e suite (healthz, config, grounded-answer-with-citation, off-topic refusal, injection refusal) run against local Docker, then prod.
 - [ ] **Phase 6 — Hardening + live verification**: the assignment's support scenarios exercised live in a browser, including escalation and trace-link click-through; a final eval run recorded as the submission baseline.

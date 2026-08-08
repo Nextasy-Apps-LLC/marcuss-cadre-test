@@ -62,18 +62,42 @@ keeps that distinction honest by requiring a never-created id to come back
 trace being readable), so the read-back retries for up to three minutes before
 failing — a slow trace and a missing trace must not look alike here.
 
+## The `CADRE_E2E_KB` gate
+
+`tests/e2e/test_rag_e2e.py` is gated the third time for the third instance of
+the same reason. `retrieve` is **fail-open**: a target with no `OPENAI_API_KEY`,
+or with an artifact whose manifest disagrees with the deploy, answers every
+question cheerfully from `prompts/baseline.txt` and reports
+`retrieve: skipped`. Nothing about that turn looks broken, so a human has to
+assert that this target is supposed to have a knowledge base.
+
+The **target** needs `OPENAI_API_KEY` in its environment (Terraform injects it
+in Lambda from `/cadre/openai-api-key` — see `infra/openai.tf`; locally it goes
+on `docker run -e`) and the committed artifact in the image. The suite itself
+needs no key: it reads the wire, then fetches the cited cadreai.com page to
+prove the citation is a real page rather than a plausible-looking one.
+
+The grounded case asks which Claude tier suits document classification —
+deliberately something `/articles/ai-model-selection` answers and the baseline
+does not, because a question the baseline already covers passes with retrieval
+switched off entirely. `TestRefusedTurnsNeverRetrieve` runs ungated and is the
+counterweight: a refused turn must never emit a `retrieve running` frame, which
+is the wire-level proof that no embedding was bought on the way out.
+
 ## Local: the real image in docker
 
 ```bash
 docker build -t cadre-backend:local backend            # arm64 host, or add --platform
 docker run --rm -p 8080:8080 \
   -e AWS_BEARER_TOKEN_BEDROCK \
+  -e OPENAI_API_KEY \
   -e LANGFUSE_PUBLIC_KEY -e LANGFUSE_SECRET_KEY -e LANGFUSE_HOST \
   cadre-backend:local
 
 BASE_URL=http://localhost:8080 pytest -m e2e            # from backend/, deterministic + fail-open-honesty cases only
 CADRE_E2E_BEDROCK=1 BASE_URL=http://localhost:8080 pytest -m e2e   # + the live-model cases, needs a valid key above
 CADRE_E2E_LANGFUSE=1 BASE_URL=http://localhost:8080 pytest -m e2e  # + the trace cases, needs the LANGFUSE_* trio above
+CADRE_E2E_KB=1 BASE_URL=http://localhost:8080 pytest -m e2e        # + the grounded-answer cases, needs OPENAI_API_KEY above
 ```
 
 Drop the three `LANGFUSE_*` flags and the container still boots and answers —
@@ -96,6 +120,7 @@ boto3/SigV4 anywhere in the model path, only the bearer token.
 BASE_URL=https://cadre.marcuss.pro pytest -m e2e
 CADRE_E2E_BEDROCK=1 BASE_URL=https://cadre.marcuss.pro pytest -m e2e
 CADRE_E2E_LANGFUSE=1 BASE_URL=https://cadre.marcuss.pro pytest -m e2e
+CADRE_E2E_KB=1 BASE_URL=https://cadre.marcuss.pro pytest -m e2e
 ```
 
 Against CloudFront every POST needs `x-amz-content-sha256` (KB-002) — the

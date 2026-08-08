@@ -130,6 +130,15 @@ resource "aws_lambda_function" "this" {
       CADRE_MODEL_VALIDATE        = var.validate_model
       CADRE_MODEL_TOPIC           = var.topic_model
       CADRE_MODEL_TOPIC_FALLBACKS = join(",", var.topic_fallback_models)
+      CADRE_MODEL_CONDENSE        = var.condense_model
+
+      # Read per request by `backend/app/embeddings.py` (never captured at
+      # import, so a rotation needs no cold start). `retrieve` fails open, so
+      # a missing or wrong key here is a turn that answers from the persona
+      # baseline with `retrieve: skipped` and a log line — never a broken
+      # turn, and never a user-facing error. The parameter is data-referenced,
+      # never created — see infra/openai.tf.
+      OPENAI_API_KEY = data.aws_ssm_parameter.openai_api_key.value
 
       # Read once at container start by `backend/app/tracing.py`, never per
       # request — an SSM or credential round trip inside a turn would spend part

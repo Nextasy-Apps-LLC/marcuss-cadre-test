@@ -60,9 +60,15 @@ def state(
     """A pipeline transition.
 
     `detail` carries the machine-readable reason: the failing check
-    (`off_topic`, `rate_limited`, …), `kb_not_wired` for a step that is not
-    built yet, or `degraded` on a pass that came from the fail-open policy
-    rather than a real verdict — a degraded pass renders amber, never green.
+    (`off_topic`, `rate_limited`, …), why a fail-open step gave up
+    (`kb_unavailable`, `kb_disabled`, `kb_dimension_mismatch`, `kb_timeout`
+    on `retrieve`; `kb_not_wired` was retired with the stub in #62), or
+    `degraded` on a pass that came from the fail-open policy rather than a
+    real verdict — a degraded pass renders amber, never green.
+
+    New `detail` *values* are additive and need no client change: the web
+    side reads `detail` as an opaque string. New *fields* would not be
+    (KB-005).
 
     `elapsed_ms` is always present on the wire but is only ever a real
     integer once the step has reached a terminal verdict (`pass`/`fail`); it

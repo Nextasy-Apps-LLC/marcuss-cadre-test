@@ -14,6 +14,7 @@ definition, imported one way — persona never imports this module back.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from app.persona import CONTACT_URL, GREETING, SUGGESTIONS
 
@@ -96,21 +97,117 @@ MODEL_TOPIC_FALLBACKS = [
     if model_id.strip()
 ]
 
+# Rewrites a follow-up into a standalone retrieval query, inside `retrieve`.
+#
+# plan.md names Haiku 4.5. No Haiku id answers through this transport (ADR
+# 0002 — the Mantle host serves only /v1/chat/completions, which 400s on a
+# Claude id), so the slot defaults to the fastest entitled model instead and
+# keeps the env var so a Haiku id can be swapped in without a code deploy.
+#
+# Probed KB-012-style before pinning: 5 real follow-up cases x 2 runs through
+# `models.condense_query`'s own parser, and then — because a rewrite is only
+# as good as what it retrieves — each rewrite embedded and searched against
+# the committed corpus. All three candidates were reliable and fast; the
+# retrieval column is what decided it (mean top-hit score over the 5 cases):
+#
+#   google.gemma-3-12b-it             10/10 http  10/10 rewrote  p50 0.39s  0.602
+#   mistral.ministral-3-14b-instruct  10/10       10/10          p50 0.34s  0.600
+#   zai.glm-4.7-flash                 10/10       10/10          p50 0.39s  0.532
+#   (no condensing — the raw follow-up)                                     0.250
+#
+# The bottom row is the reason this call exists at all: "how much does that
+# cost?" on its own retrieves *nothing* above the floor, and condensing turns
+# it into a 0.54 hit on /contact. gemma and ministral tie on score; gemma is
+# picked because it anchors every rewrite to Cadre AI, which is what put the
+# right page first in all 5 cases (ministral sent the pricing follow-up to an
+# article instead of /contact). This slot has no fallback chain on purpose:
+# it fails open to the visitor's own words, which is a worse query, never a
+# broken turn.
+MODEL_CONDENSE = os.environ.get("CADRE_MODEL_CONDENSE", "google.gemma-3-12b-it")
+
+# A standalone query is a sentence, not an essay. Small on purpose: this call
+# is spent out of the same 60s turn budget as four judges and the generation
+# (KB-004), and a condenser that writes a paragraph has already failed.
+CONDENSE_MAX_TOKENS = int(os.environ.get("CADRE_CONDENSE_MAX_TOKENS", "128"))
+
+# Longer than a question and shorter than a paragraph. A rewrite past this is
+# not a query — it is the model having answered instead of condensed — and the
+# node falls back to the visitor's own words.
+CONDENSE_MAX_CHARS = int(os.environ.get("CADRE_CONDENSE_MAX_CHARS", "300"))
+
 # The brain.
 MODEL_BRAIN = os.environ.get("CADRE_MODEL_BRAIN", "qwen.qwen3-32b")
 
 # Final gate on the complete streamed answer.
 MODEL_GUARD = os.environ.get("CADRE_MODEL_GUARD", "qwen.qwen3-32b")
 
+# ── The knowledge base (issue #62) ─────────────────────────────────────────
+#
+# The embedding model and its width are the one setting in this file that is
+# load-bearing in both directions: they must equal what `app/kb/manifest.json`
+# records, because a mismatch does not raise at query time — it returns
+# confident, wrong neighbours. `app/kb/store.py` compares the two on every
+# open and disables the KB rather than searching. Env-overridable only so the
+# mismatch path is testable and so a re-ingest at a different width can be
+# rolled forward without a code change; changing it without rebuilding the
+# artifact turns the KB off, which is the intended failure.
+EMBEDDING_MODEL = os.environ.get("CADRE_EMBEDDING_MODEL", "text-embedding-3-large")
+EMBEDDING_DIMENSION = int(os.environ.get("CADRE_EMBEDDING_DIMENSION", "3072"))
+
+# Absolute, derived from this file rather than the working directory: the
+# Lambda's cwd is /var/task but nothing guarantees it, and a KB that resolves
+# only when uvicorn happens to be started from `backend/` is a KB that is
+# silently absent in production.
+#
+# `cadre_kb.lance` is the LanceDB *database directory*; the table inside it is
+# `chunks` (LanceDB names a table's directory after the table, hence the
+# `chunks.lance` directory one level down). Connect to the database, open the
+# table by name — never connect to `chunks.lance` directly.
+KB_PATH = Path(
+    os.environ.get(
+        "CADRE_KB_PATH", str(Path(__file__).resolve().parent / "kb" / "cadre_kb.lance")
+    )
+)
+KB_TABLE = "chunks"
+KB_MANIFEST_PATH = Path(
+    os.environ.get("CADRE_KB_MANIFEST_PATH", str(KB_PATH.parent / "manifest.json"))
+)
+
+# The kill switch. Local development without the artifact is the normal case
+# for it; retrieval then reports `skipped`/`kb_disabled` and the turn answers
+# from the persona baseline exactly as it did before Phase 3.
+KB_ENABLED = os.environ.get("CADRE_KB_ENABLED", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+)
+
+RETRIEVE_TOP_K = int(os.environ.get("CADRE_RETRIEVE_TOP_K", "6"))
+
+# Cosine-similarity floor. Measured against the committed artifact on 7 real
+# probes: the worst true positive scored 0.495 and the best false positive
+# ("weather in Paris", "write me a quicksort") 0.095, so 0.25 sits in the gap
+# with room on both sides. Raising it past ~0.45 starts dropping genuine
+# article hits; lowering it below ~0.15 starts admitting noise.
+RETRIEVE_MIN_SCORE = float(os.environ.get("CADRE_RETRIEVE_MIN_SCORE", "0.25"))
+
+# Hard ceiling on the whole node — condense + embed + search. Retrieval is an
+# augmentation, not the answer, so it is not allowed to eat the visitor's turn
+# (KB-004): past this it reports `skipped`/`kb_timeout` and the brain runs on
+# the baseline. Sized against the measured p50s (condense ~0.6s, embed ~0.5s,
+# search ~3ms) with room for one bounded retry on each.
+RETRIEVE_TIMEOUT_S = float(os.environ.get("CADRE_RETRIEVE_TIMEOUT_S", "6.0"))
+
 # Step → display name for the model that runs it, served by /config so the
-# web stepper can label each chip. `retrieve` has no model id yet — it reports
-# `skipped`/`kb_not_wired` without calling a model, so it is absent on purpose.
-# The values below are readable shorthand; keep them in sync when MODEL_* ids
-# change.
+# web stepper can label each chip. `retrieve` is labelled by its *embedding*
+# model: the condenser only runs on follow-ups, the embedding runs on every
+# in-scope turn, and one chip carries one name. The values below are readable
+# shorthand; keep them in sync when MODEL_* ids change.
 _MODEL_DISPLAY = {
     MODEL_VALIDATE: "nemotron 12b",
     MODEL_INJECTION: "qwen3-32b",
     MODEL_TOPIC: "gemma-3-12b",
+    EMBEDDING_MODEL: "embed-3-large",
     MODEL_BRAIN: "qwen3-32b",
     MODEL_GUARD: "qwen3-32b",
 }
@@ -121,6 +218,7 @@ STEP_MODELS: dict[str, str] = {
         ("validate_input", MODEL_VALIDATE),
         ("injection_check", MODEL_INJECTION),
         ("topic_classifier", MODEL_TOPIC),
+        ("retrieve", EMBEDDING_MODEL),
         ("brain", MODEL_BRAIN),
         ("output_safety", MODEL_GUARD),
     )

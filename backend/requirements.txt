@@ -13,3 +13,14 @@ langfuse>=4.14.0
 # It costs almost nothing: `langchain` requires only langchain-core, langgraph
 # and pydantic, all of which are already above.
 langchain>=1.0.0
+# The knowledge base, at *query* time (issue #62). `app/kb/store.py` opens the
+# committed `app/kb/cadre_kb.lance` dataset in-process and runs an exact flat
+# scan over 131 rows — no vector server, no VPC, no cold-start network call.
+# `pyarrow` arrives with lancedb and is named anyway: `store.py` reads the
+# table's Arrow schema to compare the vector column's width against the
+# manifest, so an unpinned transitive dependency dropping it would break the
+# one check that stands between a mismatched artifact and confidently wrong
+# citations. Both ship prebuilt arm64 manylinux wheels, so the image build
+# stays a download rather than a compile.
+lancedb>=0.13.0
+pyarrow>=17.0.0

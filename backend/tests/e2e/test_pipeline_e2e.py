@@ -289,14 +289,13 @@ class TestAnsweredTurn:
         assert "soc2 certified" not in answer
         assert "gdpr-compliant" not in answer
 
-    def test_state_events_arrive_in_steps_order_with_retrieve_skipped_and_tokens_after_every_pre_brain_pass(
+    def test_state_events_arrive_in_steps_order_with_tokens_after_every_pre_brain_pass(
         self, http
     ):
         # The exact wire contract for an answered turn (issue #27 case 2):
         # every `state` step appears in STEPS order, every pre-brain step
-        # reaches a terminal status before the first `token`, `retrieve`
-        # reports `skipped` (Phase 1 — no KB wired yet), at least one token
-        # streams, and the turn ends in `done{outcome:"answered"}`.
+        # reaches a terminal status before the first `token`, at least one
+        # token streams, and the turn ends in `done{outcome:"answered"}`.
         events = parse_sse(ask(http, "What does Cadre AI do?").text)
 
         step_order = list(dict.fromkeys(p["step"] for e, p in events if e == "state"))
@@ -315,7 +314,11 @@ class TestAnsweredTurn:
                 f"{step} had not reached a terminal status before the first token"
             )
 
-        assert status_of(events, "retrieve") == "skipped"
+        # `pass` on a target with the KB up, `skipped` on one without it —
+        # what this contract test cares about is that it reached a terminal
+        # verdict in order, not which one. The grounded case that insists on
+        # `pass` lives in `test_rag_e2e.py` behind its own gate.
+        assert status_of(events, "retrieve") in {"pass", "skipped"}
 
         tokens = [p for e, p in events if e == "token"]
         assert len(tokens) >= 1

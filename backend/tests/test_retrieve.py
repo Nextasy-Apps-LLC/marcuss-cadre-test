@@ -326,6 +326,7 @@ class TestCitationInjection:
         assert persona.system_prompt("") == persona.SYSTEM_PROMPT
         assert persona.system_prompt("   ") == persona.SYSTEM_PROMPT
 
+    @pytest.mark.real_seams
     def test_stream_reply_hands_the_context_prompt_to_the_transport(self, monkeypatch):
         seen: dict = {}
 
