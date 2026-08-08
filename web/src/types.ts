@@ -8,7 +8,7 @@
  *
  * Wire events: `trace {trace_id, url}` (at most once, the first frame of the
  * turn, only when tracing is up — see `TraceEvent` below), `state {step,
- * status, detail, elapsed_ms}`, `token {text}`, `done {outcome,
+ * status, detail, elapsed_ms, retrieval}`, `token {text}`, `done {outcome,
  * refusal_text?}` (always terminal), `error {message}` (terminal), and
  * `: ping` comment heartbeats (dropped in sse.ts, never reach this
  * boundary).
@@ -29,6 +29,30 @@ export type StepName = (typeof STEPS)[number];
 /** Statuses a `state` event can carry on the wire. */
 export type WireStepStatus = "running" | "pass" | "fail" | "skipped";
 
+/**
+ * What `retrieve` searched for and what came back — mirroring
+ * `backend/app/sse.py`'s `Retrieval` TypedDict verbatim.
+ *
+ * `query` is the **condensed** query, and only when the backend judged it
+ * different from the visitor's own message: `null` on a first message
+ * (condensing never runs) and on the fallback where condensing gave up and
+ * embedded the visitor's words. The decision is made server-side, so this
+ * client never needs the raw message to know whether the query is worth
+ * showing.
+ *
+ * `hit_count` and `top_score` describe the final slate the brain read —
+ * after the score floor, the per-URL dedupe and the top-k cut. `top_score`
+ * is `null` exactly when `hit_count` is 0.
+ *
+ * No chunk text and no URLs: the wire carries the count, the best score and
+ * the query, nothing else.
+ */
+export interface RetrievalInfo {
+  query: string | null;
+  hit_count: number;
+  top_score: number | null;
+}
+
 export interface StateEvent {
   step: StepName;
   status: WireStepStatus;
@@ -41,6 +65,17 @@ export interface StateEvent {
    * `pass`/`fail`.
    */
   elapsed_ms: number | null;
+  /**
+   * Retrieval facts, on exactly the same always-present/null-when-N/A terms
+   * as `elapsed_ms` (KB-005): `null` for every step other than `retrieve`,
+   * for `retrieve`'s own `running` frame, and for every fail-open
+   * `skipped` path (`kb_unavailable`, `kb_timeout`, `kb_disabled`,
+   * `kb_dimension_mismatch`) where the search never completed. Non-null
+   * only on `retrieve`'s terminal `pass`, including the `no_hits` case —
+   * which reports `hit_count: 0`, so an empty corpus result is legible
+   * rather than looking like an empty success.
+   */
+  retrieval: RetrievalInfo | null;
 }
 
 export interface TokenEvent {
@@ -108,6 +143,8 @@ export interface StepState {
   detail: string | null;
   /** Mirrors `StateEvent.elapsed_ms` verbatim — see its doc comment. */
   elapsedMs: number | null;
+  /** Mirrors `StateEvent.retrieval` verbatim — see its doc comment. */
+  retrieval: RetrievalInfo | null;
   /**
    * Model id that runs this step, from `/config`'s `step_models` map.
    * Additive and generic — this type doesn't special-case any step name, so
@@ -156,6 +193,7 @@ export function freshSteps(models?: Partial<Record<StepName, string>>): StepStat
     status: "pending" as StepStatus,
     detail: null,
     elapsedMs: null,
+    retrieval: null,
     model: models?.[name],
   }));
 }

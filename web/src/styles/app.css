@@ -414,6 +414,17 @@
   font-size: 0.72rem;
 }
 
+/* `retrieve`'s condensed query (#74) reuses `.step-detail` for its
+   subordinate size/colour and only adds containment: the string is derived
+   from visitor input, so even after the 80-char cap in `lib/retrieval.ts` it
+   must never be able to stretch the row. Same treatment `.step-model`
+   already uses. */
+.step-retrieval-query {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* pending/skipped opacity intentionally stays low-contrast: both are inert
    states (not yet run / never ran), which WCAG 1.4.3 exempts as "text that
    is part of an inactive user interface component" — unlike --lost below,

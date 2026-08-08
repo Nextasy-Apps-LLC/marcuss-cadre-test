@@ -1,3 +1,4 @@
+import { formatRetrievalQuery, formatRetrievalStats } from "../lib/retrieval";
 import { isDegraded, stepIcon, type StepState } from "../types";
 
 interface Props {
@@ -50,6 +51,12 @@ export function PipelineStepper({ steps, open, onToggle }: Props) {
         {steps.map((step) => {
           const degraded = isDegraded(step);
           const variant = degraded ? "degraded" : step.status;
+          // Non-null only on `retrieve`'s terminal pass — see
+          // `StateEvent.retrieval`. `query` is null unless condensing
+          // actually rewrote the visitor's question.
+          const retrievalQuery = step.retrieval
+            ? formatRetrievalQuery(step.retrieval.query)
+            : null;
 
           return (
             <li
@@ -76,6 +83,27 @@ export function PipelineStepper({ steps, open, onToggle }: Props) {
               {step.detail && !degraded && (
                 <div className="step-detail">└─ {step.detail.replace(/_/g, " ")}</div>
               )}
+
+              {/* What `retrieve` actually searched for and what came back.
+                  Both are React text nodes: the query is derived from
+                  visitor input via a model, and `dangerouslySetInnerHTML` is
+                  banned repo-wide with no exception for "the model wrote
+                  it". `formatRetrievalQuery` has already collapsed the
+                  whitespace and capped the length. */}
+              {retrievalQuery && (
+                <div
+                  className="step-detail step-retrieval-query"
+                  data-testid="step-retrieval-query"
+                >
+                  └─ q: “{retrievalQuery}”
+                </div>
+              )}
+              {step.retrieval && (
+                <div className="step-detail" data-testid="step-retrieval-stats">
+                  └─ {formatRetrievalStats(step.retrieval)}
+                </div>
+              )}
+
               {step.elapsedMs != null && (
                 <span className="step-timing" data-testid={`step-timing-${step.name}`}>
                   {step.elapsedMs}ms

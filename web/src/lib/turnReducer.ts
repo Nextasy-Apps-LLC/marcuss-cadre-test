@@ -44,6 +44,7 @@ export function applyState(turn: TurnState, event: StateEvent): TurnState {
             status: event.status,
             detail: event.detail ?? null,
             elapsedMs: event.elapsed_ms,
+            retrieval: event.retrieval ?? null,
           }
         : step,
     ),

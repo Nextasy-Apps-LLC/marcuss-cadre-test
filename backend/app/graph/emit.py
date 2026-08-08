@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 
+from app import sse
+
 
 class QueueEmitter:
     """Pushes graph progress onto the queue the SSE generator is draining.
@@ -35,6 +37,7 @@ class QueueEmitter:
         status: str,
         detail: str | None = None,
         elapsed_ms: int | None = None,
+        retrieval: sse.Retrieval | None = None,
     ) -> None:
         await self._queue.put(
             (
@@ -44,6 +47,7 @@ class QueueEmitter:
                     "status": status,
                     "detail": detail,
                     "elapsed_ms": elapsed_ms,
+                    "retrieval": retrieval,
                 },
             )
         )

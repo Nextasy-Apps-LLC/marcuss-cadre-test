@@ -43,8 +43,13 @@ class TestContractConstants:
         ]
 
     def test_state_event_shape(self):
+        # `retrieval` joined the payload in #74. Like `elapsed_ms` before it,
+        # it is *always* on the wire and `null` when it does not apply, so
+        # this stays an exact match rather than becoming a subset check —
+        # the exactness is what makes web/src/types.ts's mirror provable
+        # (KB-005). See test_retrieve_wire.py for what it carries.
         _, payload = next(e for e in ask_events("hello") if e[0] == "state")
-        assert set(payload) == {"step", "status", "detail", "elapsed_ms"}
+        assert set(payload) == {"step", "status", "detail", "elapsed_ms", "retrieval"}
 
     def test_token_event_shape(self):
         _, payload = next(e for e in ask_events("hello") if e[0] == "token")

@@ -352,7 +352,7 @@ class _Emit:
     def __init__(self):
         self.events: list[tuple] = []
 
-    async def __call__(self, step, status, detail=None, elapsed_ms=None):
+    async def __call__(self, step, status, detail=None, elapsed_ms=None, retrieval=None):
         self.events.append((step, status, detail))
 
     async def token(self, text):  # pragma: no cover - retrieve never streams

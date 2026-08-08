@@ -66,6 +66,7 @@ describe("isDegraded / stepIcon", () => {
       status: "pending",
       detail: null,
       elapsedMs: null,
+      retrieval: null,
       ...overrides,
     };
   }

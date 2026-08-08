@@ -87,7 +87,7 @@ comment heartbeat:
 | Event | Payload |
 |---|---|
 | `trace` | `trace_id`, `url` — the public Langfuse trace link, sent as the **first** frame of the turn; absent entirely when tracing is down (fail-open) |
-| `state` | `step`, `status` (`running` \| `pass` \| `fail` \| `skipped`), `detail?`, `elapsed_ms?` (int on `pass`/`fail`, `null` otherwise — the same numbers the trace reports) |
+| `state` | `step`, `status` (`running` \| `pass` \| `fail` \| `skipped`), `detail?`, `elapsed_ms` (int on `pass`/`fail`, `null` otherwise — the same numbers the trace reports), `retrieval` (`{query, hit_count, top_score}` on `retrieve`'s terminal `pass`, `null` everywhere else — the same facts the trace's retrieval span records, minus the URLs) |
 | `token` | `text` |
 | `done` | `outcome` (`answered` \| `refused` \| `escalated` \| `error`), `refusal_text?` |
 | `error` | `message` |
