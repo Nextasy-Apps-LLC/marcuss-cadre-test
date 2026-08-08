@@ -1,617 +1,575 @@
 {
- "version": 1,
- "_about": "Compound-engineering Knowledge Base. Every development cycle reads this before an issue is written (via the kb-filter agent) and appends to it after implementation (via a learnings PR stacked on the dev branch). Marcus merges or rejects learnings PRs independently of the code they came from.",
- "_taxonomy": {
-  "gotcha": "A trap that silently breaks something when you don't know about it — a setting, ordering, or invariant that looks optional but isn't. Written as: what breaks, and what to do instead.",
-  "debug": "A symptom-to-cause mapping that cost real time to find. Written as: symptom observed, actual cause, fastest diagnostic path.",
-  "learning": "A reusable practice or decision heuristic that made a cycle go better and should be applied in the next one."
- },
- "_entry_contract": {
-  "id": "KB-NNN, sequential, never reused",
-  "type": "gotcha | debug | learning",
-  "area": "one or more of: backend | web | infra | ci | process",
-  "tags": "free-form keywords used by the kb-filter agent for matching",
-  "title": "one line",
-  "detail": "concrete and self-contained — a reader with no context should know what to do",
-  "source": "issue and/or PR number the learning came from (null when predating the workflow)",
-  "date": "YYYY-MM-DD the learning was captured",
-  "status": "active | superseded (superseded entries stay for history, filter skips them)"
- },
- "entries": [
-  {
-   "id": "KB-001",
-   "type": "gotcha",
-   "area": [
-    "backend",
-    "ci"
-   ],
-   "tags": [
-    "docker",
-    "lambda",
-    "dockerfile",
-    "container",
-    "cold-start",
-    "uvicorn"
-   ],
-   "title": "The Lambda base image's ENTRYPOINT must be cleared (`ENTRYPOINT []`) or init crashes",
-   "detail": "public.ecr.aws/lambda/python ships /lambda-entrypoint.sh as ENTRYPOINT, which treats CMD[0] as a Python handler name. Left in place it swallows the uvicorn command and the function crashes at init with 'entrypoint requires the handler name to be the first argument'. The Lambda Web Adapter extension talks to the runtime API, so the entrypoint must be `ENTRYPOINT []`. CI builds the image but never boots it — this class of bug only surfaces on invoke, so smoke any Dockerfile change with `docker run -p 8080:8080` locally.",
-   "source": {
-    "issue": null,
-    "pr": 12
-   },
-   "date": "2026-08-07",
-   "status": "active"
+  "version": 1,
+  "_about": "Compound-engineering Knowledge Base. Every development cycle reads this before an issue is written (via the kb-filter agent) and appends to it after implementation (via a learnings PR stacked on the dev branch). Marcus merges or rejects learnings PRs independently of the code they came from.",
+  "_taxonomy": {
+    "gotcha": "A trap that silently breaks something when you don't know about it — a setting, ordering, or invariant that looks optional but isn't. Written as: what breaks, and what to do instead.",
+    "debug": "A symptom-to-cause mapping that cost real time to find. Written as: symptom observed, actual cause, fastest diagnostic path.",
+    "learning": "A reusable practice or decision heuristic that made a cycle go better and should be applied in the next one."
   },
-  {
-   "id": "KB-002",
-   "type": "gotcha",
-   "area": [
-    "web",
-    "infra"
-   ],
-   "tags": [
-    "cloudfront",
-    "oac",
-    "sigv4",
-    "post",
-    "403",
-    "fetch",
-    "headers"
-   ],
-   "title": "Every viewer POST through CloudFront→Lambda OAC must send x-amz-content-sha256",
-   "detail": "CloudFront's OAC signs over the payload hash header. A POST without `x-amz-content-sha256: <hex sha256 of the body>` fails Lambda's signature check with a 403 'signature does not match'. The web client computes it in sha256Hex before every /ask POST; any new POSTing client (tests, scripts, new pages) must do the same. GETs are exempt.",
-   "source": {
-    "issue": null,
-    "pr": 13
-   },
-   "date": "2026-08-07",
-   "status": "active"
+  "_entry_contract": {
+    "id": "KB-NNN, sequential, never reused",
+    "type": "gotcha | debug | learning",
+    "area": "one or more of: backend | web | infra | ci | process",
+    "tags": "free-form keywords used by the kb-filter agent for matching",
+    "title": "one line",
+    "detail": "concrete and self-contained — a reader with no context should know what to do",
+    "source": "issue and/or PR number the learning came from (null when predating the workflow)",
+    "date": "YYYY-MM-DD the learning was captured",
+    "status": "active | superseded (superseded entries stay for history, filter skips them)"
   },
-  {
-   "id": "KB-003",
-   "type": "debug",
-   "area": [
-    "infra"
-   ],
-   "tags": [
-    "lambda",
-    "function-url",
-    "403",
-    "iam",
-    "permissions",
-    "cloudfront"
-   ],
-   "title": "Function-URL 403s need TWO permissions, and the missing-permission body looks like a bad signature",
-   "detail": "Function URLs created since Oct 2025 require `lambda:InvokeFunction` IN ADDITION TO `lambda:InvokeFunctionUrl` for the calling principal, and the missing-permission 403 body is byte-identical to a bad-signature 403. Before deep signature archaeology: check both statements exist on the function, then bisect with an in-account signed call (`aws lambda invoke-with-response-stream` or awscurl) — if that succeeds, the fault is upstream (org perimeter policy), not in this stack.",
-   "source": {
-    "issue": null,
-    "pr": null
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-004",
-   "type": "gotcha",
-   "area": [
-    "infra",
-    "backend"
-   ],
-   "tags": [
-    "cloudfront",
-    "timeout",
-    "streaming",
-    "sse",
-    "lambda"
-   ],
-   "title": "CloudFront caps origin response at 60s — Lambda timeout must match, and long streams must fit",
-   "detail": "CloudFront's origin response timeout is hard-capped at 60s without a quota increase. The Lambda timeout is aligned to it (PR #17); raising the Lambda timeout alone buys nothing because CloudFront cuts the stream first. Any feature whose SSE turn could exceed ~55s (slow model, long generation) must reduce work per turn, not raise timeouts. SSE heartbeats keep intermediaries from reaping an idle-looking connection but do not extend the hard cap.",
-   "source": {
-    "issue": null,
-    "pr": 17
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-005",
-   "type": "gotcha",
-   "area": [
-    "backend",
-    "web"
-   ],
-   "tags": [
-    "sse",
-    "contract",
-    "types",
-    "breaking-change",
-    "events"
-   ],
-   "title": "The SSE contract is mirrored in backend/app/sse.py and web/src/types.ts — change both sides in one PR or neither",
-   "detail": "Four events (rail, token, done, error) and the rail1..rail6 order are duplicated verbatim on both sides of the wire. Nothing imports across the boundary, so a field rename compiles green on both sides and breaks silently in production (a trace panel that stops updating). Any contract change must touch both files plus both test suites in the same PR. Additive optional fields are the safe evolution path.",
-   "source": {
-    "issue": null,
-    "pr": 13
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-006",
-   "type": "debug",
-   "area": [
-    "ci",
-    "infra"
-   ],
-   "tags": [
-    "oidc",
-    "github-actions",
-    "sts",
-    "assume-role",
-    "environment",
-    "production"
-   ],
-   "title": "A job inside `environment: production` gets an environment: OIDC sub that REPLACES the ref form",
-   "detail": "GitHub OIDC tokens for jobs gated by an environment carry sub `repo:<owner>/<repo>:environment:production`, not the ref form — and both the name-cased and id-qualified repo spellings occur. An IAM trust condition listing only the ref form fails with a bare 'Not authorized to perform sts:AssumeRoleWithWebIdentity' that only reproduces AFTER the approval click. Every new gated job means re-checking the trust conditions for (2 repo spellings) x (applicable sub forms). Fixed in PR #4.",
-   "source": {
-    "issue": null,
-    "pr": 4
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-007",
-   "type": "learning",
-   "area": [
-    "infra",
-    "process"
-   ],
-   "tags": [
-    "curl",
-    "smoke-test",
-    "streaming",
-    "http3",
-    "browser",
-    "verification"
-   ],
-   "title": "A curl-green smoke test does not prove streaming works — verify in a real browser",
-   "detail": "curl ignores alt-svc, so HTTP/3 breakage passes curl and breaks every real browser. Local http.server infers MIMEs that prod may not. For any change touching streaming, CloudFront behaviors, or static assets: verify in a browser tab watching tokens arrive (or assert MIMEs with curl -I against the live URL), and only then claim 'tested'.",
-   "source": {
-    "issue": null,
-    "pr": null
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-008",
-   "type": "gotcha",
-   "area": [
-    "backend"
-   ],
-   "tags": [
-    "langgraph",
-    "sse",
-    "streaming",
-    "state",
-    "callbacks",
-    "config"
-   ],
-   "title": "Per-request objects (SSE emitter, Langfuse handler) belong in LangGraph's config[\"configurable\"], never in the state channel",
-   "detail": "A LangGraph node receives only the state and the RunnableConfig, so it is tempting to hang the request's SSE emitter (or callback handler, or queue) on the state TypedDict. Don't: state channels are the checkpointable, serializable half of the graph, and a live asyncio.Queue there breaks any future checkpointer and is exactly how one visitor's stream ends up attached to another's turn. Pass them as graph.ainvoke(state, config={\"configurable\": {\"emit\": emit}}) and keep nodes on a plain (state, emit) signature with a thin bind wrapper that unpacks the config (app/graph/build.py `_bind`). Phase 2's Langfuse CallbackHandler rides the same path.",
-   "source": {
-    "issue": 24,
-    "pr": 28
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-009",
-   "type": "gotcha",
-   "area": [
-    "backend"
-   ],
-   "tags": [
-    "fail-open",
-    "bedrock",
-    "degraded",
-    "guardrails",
-    "misconfiguration",
-    "credentials"
-   ],
-   "title": "Fail-open guard steps make a misconfigured model look like a healthy pipeline",
-   "detail": "The injection/topic/output guards pass with detail:\"degraded\" when their model call raises — right for an outage, but it means a wrong model id, a missing Bedrock permission or absent credentials all surface as a *passing* turn with an amber chip, evidenced only by a log line. Seen in Phase 1a, where unimplemented seams produced a clean-looking degraded turn end to end. When wiring the real models, never treat 'the turn answered' as proof the guards ran: assert detail is None on the guard steps in at least one e2e case, and grep the container log for 'seam failed, passing degraded' before calling a model change verified.",
-   "source": {
-    "issue": 24,
-    "pr": 28
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-014",
-   "type": "debug",
-   "area": [
-    "infra",
-    "backend"
-   ],
-   "tags": [
-    "bedrock",
-    "mantle",
-    "model-access",
-    "authorization",
-    "ValidationException",
-    "api-key",
-    "sigv4",
-    "aws"
-   ],
-   "title": "Bedrock SigV4 dead on an account? Try the Mantle (OpenAI-compatible) endpoint before negotiating entitlements",
-   "detail": "Classic `bedrock-runtime` (InvokeModel/Converse/ConverseStream) returning `ValidationException: Operation not allowed` for EVERY model id — including Amazon's own Nova, and with AdministratorAccess — is not an IAM, region, or model-id problem. It means the account has no model access granted; confirm in one call with `aws bedrock get-foundation-model-availability --model-id <id>` (`authorizationStatus: NOT_AUTHORIZED`). Do NOT stop there, and do NOT accept the AWS Marketplace agreement yourself — that is a billing and legal decision for the account owner. Bedrock's newer OpenAI-compatible **Mantle** endpoint (https://bedrock-mantle.<region>.api.aws/v1 — `GET /models`, `POST /chat/completions`) serves the same models using a Bedrock API key as a plain bearer token, and works on accounts where SigV4 Converse does not. Swapping transports unblocked a whole phase here in under a day. Cost to weigh: the stack stops being secret-free — budget for an SSM SecureString, key rotation, and a Terraform state file that now holds the key.",
-   "source": {
-    "issue": 25,
-    "pr": 32
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-015",
-   "type": "gotcha",
-   "area": [
-    "backend"
-   ],
-   "tags": [
-    "langchain-aws",
-    "ChatBedrockConverse",
-    "temperature",
-    "opus-5",
-    "sampling",
-    "bedrock"
-   ],
-   "title": "langchain-aws silently drops sampling params a model doesn't support — temperature=0 can be a no-op",
-   "detail": "Claude Opus 5 removed `temperature`, `top_p` and `top_k`. `ChatBedrockConverse` does not raise on them: it logs `UserWarning: Model anthropic.claude-opus-5 does not support temperature; ignoring the provided value` and drops the parameter. In a service that pipes warnings to a log nobody reads, a judge you believe is pinned to `temperature=0` is running at the model's default. Decide per model inside the client factory rather than at each call site, and keep the list of no-sampling model families next to it. The same applies in reverse when choosing a model for a step that genuinely needs determinism: confirm it accepts the knob before relying on it. Related: langchain-aws also disables streaming for providers it has not verified (`nvidia`, `google`), silently falling back to non-streaming Converse with a warning — pass `disable_streaming=False` to override. SUPERSEDED for this repo by ADR 0002: the model path no longer uses langchain-aws at all (plain httpx to the Mantle endpoint), so this trap cannot fire here. Kept for history, and still true for any project on ChatBedrockConverse.",
-   "source": {
-    "issue": 25,
-    "pr": 32
-   },
-   "date": "2026-08-07",
-   "status": "superseded"
-  },
-  {
-   "id": "KB-016",
-   "type": "gotcha",
-   "area": [
-    "backend"
-   ],
-   "tags": [
-    "langchain-aws",
-    "ChatBedrockConverse",
-    "content-blocks",
-    "parsing",
-    "bedrock",
-    "llm-judge"
-   ],
-   "title": "ChatBedrockConverse `.content` is a str for some models and a block list for others",
-   "detail": "The same `.ainvoke()` / `.astream()` call returns `content` as a bare `str` for some Bedrock models and as a list of typed blocks (`[{'type': 'text', 'text': '...'}]`, plus reasoning and tool blocks) for others — and which one you get depends on the model, not on the call. Code that does `response.content.strip()` or regex-matches it directly works on one model and quietly misbehaves on another: a single-token LLM judge reads `[{'type':'text','text':'fail'}]` as unparseable and, under a fail-open policy, degrades a perfectly good refusal into a pass. Flatten every response through one helper (app/llm.py::text_of) before parsing, and cover the block-list shape in unit tests — swapping a model id must never change how responses are read. SUPERSEDED for this repo by ADR 0002 (no langchain-aws in the model path). The general lesson survives as KB-011: normalise every model response through one helper before parsing.",
-   "source": {
-    "issue": 25,
-    "pr": 32
-   },
-   "date": "2026-08-07",
-   "status": "superseded"
-  },
-  {
-   "id": "KB-011",
-   "type": "gotcha",
-   "area": [
-    "backend"
-   ],
-   "tags": [
-    "llm-judge",
-    "reasoning-model",
-    "parsing",
-    "bedrock",
-    "mantle",
-    "nemotron",
-    "verdict"
-   ],
-   "title": "A reasoning model puts its verdict LAST — parse the end, and treat a truncated monologue as no answer",
-   "detail": "Single-token LLM judges break on reasoning models in three separate ways, and all three are silent. (1) The model monologues before answering — `nvidia.nemotron-nano-9b-v2` emits `<think>…</think>` into `message.content` and only then the label — so parsing the FRONT of the response returns an essay. (2) Prose reasoning names the wrong label on the way (\"this could pass, but … so fail\"), so a first-match parse INVERTS the verdict; take the LAST match. (3) A tight `max_tokens` truncates mid-thought: `finish_reason: length`, no closing tag, no verdict — mining that fragment turns a hypothetical into a decision, so discard an unclosed block entirely and let the caller degrade. Give judge slots a generous budget (512, not 8): the ceiling is free on a terse model because temperature 0 stops it early. Also read `message.reasoning` when `content` is null — some models answer only there (the `gpt-oss-safeguard-*` family emits its verdict inside a truncating `reasoning` field, which is why it is not in this roster).",
-   "source": {
-    "issue": 25,
-    "pr": 32
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-012",
-   "type": "learning",
-   "area": [
-    "backend",
-    "process"
-   ],
-   "tags": [
-    "model-selection",
-    "benchmark",
-    "latency",
-    "reliability",
-    "bedrock",
-    "mantle",
-    "fallback"
-   ],
-   "title": "Probe candidate models for reliability and latency before pinning them — a spec's list order is not evidence",
-   "detail": "A model id named in a spec is a hypothesis, not a measurement. Probing the roster against the real endpoint (7 cases x 2 runs, through the actual parser) changed three of five slots here: the specced topic primary `nvidia.nemotron-nano-9b-v2` turned out to 503 intermittently (~2 calls in 5, at any token budget), run ~4x slower than every alternative (p50 1.96s vs ~0.50s), AND need reasoning-stripping — while `google.gemma-3-12b-it` scored 14/14 correct at p50 0.50s. Probe for three things: HTTP success rate over repeated calls (not one call), accuracy through your own parser (not a raw string match), and p50 latency against your turn budget. Then pick fallbacks from DIFFERENT PROVIDERS — a fallback sharing the primary's outage is not a fallback — and put the slot that has no fallback of its own on the most reliable model you measured. Budget ~20 minutes; it is cheaper than one debugging cycle.",
-   "source": {
-    "issue": 25,
-    "pr": 32
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-013",
-   "type": "gotcha",
-   "area": [
-    "backend"
-   ],
-   "tags": [
-    "retry",
-    "5xx",
-    "503",
-    "fail-open",
-    "llm-judge",
-    "resilience",
-    "turn-budget"
-   ],
-   "title": "Under a fail-open policy, an un-retried 5xx silently downgrades a guard that had a verdict",
-   "detail": "Fail-open guards turn transport blips into permanent-looking degradation: on the wire, a single 503 is indistinguishable from a model that genuinely could not decide. Retry 5xx and transport errors — bounded, 3 attempts, sub-second backoff — before degrading; never retry 4xx, which is a statement about the request (bad key, unentitled model) and will say the same thing next time. Two constraints: the retry budget comes out of the request's own latency budget, so bound it against that (here CloudFront's 60s origin cap, KB-004); and for STREAMING calls retry only before the first delta — once a fragment has reached the user, restarting rewrites the answer mid-sentence, so a mid-stream failure must propagate instead. Symptom that sent us here: every `validate_input` reporting `degraded` in e2e while the same model answered fine when probed by hand.",
-   "source": {
-    "issue": 25,
-    "pr": 32
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-010",
-   "type": "learning",
-   "area": [
-    "backend",
-    "ci"
-   ],
-   "tags": [
-    "sse",
-    "streaming",
-    "e2e",
-    "buffering",
-    "content-length",
-    "testing"
-   ],
-   "title": "Assert an SSE response carries no Content-Length — the cheapest machine-checkable buffering detector",
-   "detail": "Every buffering failure this stack has hit (buffered LWA invoke mode, a proxy that re-encodes, a client that collects the body) passes the unit tests, because all the events are present — just delivered at once at the end. An e2e case that opens the stream and asserts `content-length` is absent from the response headers catches the whole class in one line, before anyone opens a browser. It does not replace the browser check (KB-007), which is what proves tokens paint incrementally; it is the part CI can run unattended.",
-   "source": {
-    "issue": 24,
-    "pr": 28
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-017",
-   "type": "gotcha",
-   "area": [
-    "web",
-    "backend"
-   ],
-   "tags": [
-    "linkify",
-    "regex",
-    "markdown",
-    "llm-output",
-    "url-parsing"
-   ],
-   "title": "A URL-extraction regex tuned for plain text mangles a markdown-style [text](url) link from the model",
-   "detail": "linkify.ts's URL regex (`/https?:\\/\\/[^\\s<>\"')]+/g`) excludes `)` from the match but not `(` or `]`. It works for a bare URL in prose, but when the model occasionally answers with a markdown-formatted link — `[https://cadreai.com/contact](https://cadreai.com/contact)` — the regex greedily swallows the `](https://...` tail into one 'URL', which then fails to parse as a real URL and renders as garbage (`[see more)` instead of a clean link). Confirmed live via a Playwright browser check against a real Bedrock answer, not from unit tests alone (unit tests only fed plain-URL fixtures). If a URL-matching regex will run against LLM-generated text rather than hand-authored text, test it against markdown-link-formatted input too, and exclude `(`, `[`, `]` from the match's character class alongside `)`. Left unfixed in #40/#47 because the issue specified the regex character-for-character as a decision-free constraint; flagged as a follow-up rather than silently widened.",
-   "source": {
-    "issue": 40,
-    "pr": 47
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-018",
-   "type": "gotcha",
-   "area": [
-    "web"
-   ],
-   "tags": [
-    "playwright",
-    "e2e",
-    "browser-check",
-    "chat-message",
-    "status",
-    "kb-007"
-   ],
-   "title": "In this app's message model, the user's own ChatMessage is stamped status: \"done\" immediately — a bare [data-status=\"done\"] browser wait fires before the bot's reply exists",
-   "detail": "useCadreChat.send() pushes the 'you' message with status: 'done' synchronously, alongside the 'cadre' reply at status: 'pending' (useCadreChat.ts). A KB-007 browser check (Playwright or otherwise) that waits on `document.querySelectorAll('[data-status=\"done\"]').length > 0` to detect turn completion resolves instantly on the user's own message — long before any state/token/done SSE event has arrived — producing a false-positive 'the turn settled' read against an empty or half-rendered stepper. Scope the wait to the bot's own row instead: `.msg--cadre[data-status=\"done\"]`. Cost about ten minutes of a wrong-conclusion debug in #40/#47's browser check (an empty per-step timing array) before this was caught.",
-   "source": {
-    "issue": 40,
-    "pr": 47
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-019",
-   "type": "gotcha",
-   "area": [
-    "backend"
-   ],
-   "tags": [
-    "langfuse",
-    "tracing",
-    "trace-id",
-    "sdk",
-    "public-trace",
-    "phase-2"
-   ],
-   "title": "Langfuse v4 SDK silently rejects a uuid4 trace id and stores the trace under a different one — always mint ids with create_trace_id()",
-   "detail": "Passing uuid.uuid4().hex as a Langfuse trace id looks valid (32 hex chars) but the v4 SDK discards it and generates its own OTLP-compliant id. The trace lands in Langfuse under THAT id, while the URL handed to the client carries yours — so the link points at a trace that will never exist, and the failure looks like permanent ingestion lag rather than an id mismatch. Use the SDK's client.create_trace_id() and fall back to uuid only when the SDK is unavailable (tests). Root cause of nextasy-comms issue #126; the fix is documented in its src/ask_marcus/langfuse_callbacks.py TraceContext.__post_init__.",
-   "source": "#53",
-   "date": "2026-08-08",
-   "status": "active"
-  },
-  {
-   "id": "KB-020",
-   "type": "gotcha",
-   "area": [
-    "backend",
-    "web"
-   ],
-   "tags": [
-    "langfuse",
-    "tracing",
-    "ingestion-lag",
-    "trace-link",
-    "redirect",
-    "ux",
-    "phase-2"
-   ],
-   "title": "Langfuse Cloud ingestion is async (seconds to ~90s) — never hand a visitor a direct trace URL or gate it behind a fixed timer; redirect through your own endpoint",
-   "detail": "A trace is not viewable the moment a turn ends. Measured on this project: ~8-14s before the API returns it complete, and the Langfuse UI's own query path (events.byTraceId) lags further, rendering 'Trace not found'; ask-marcus documents 30-90s in production. Any fixed client-side pending timer (5s/10s/20s) is therefore a guess that sometimes ships a dead link. A client-side readiness probe is also impossible: the Langfuse public API returns 401 without credentials (only the trace PAGE is public), and it is cross-origin. The working pattern (nextasy-comms webhook.py trace_redirect): emit a URL to YOUR OWN backend, /trace/{id}; that endpoint probes readiness server-side where the credentials live, 302s to {LANGFUSE_BASE}/public/traces/{id} once ready, and otherwise serves a small wait page that polls ?format=json and navigates when ingestion lands (with a <noscript> meta-refresh fallback). Note /public/traces/{id} simply 307s to the project trace page — both render publicly, so the URL form was never the problem; the lag is.",
-   "source": "#53",
-   "date": "2026-08-08",
-   "status": "active"
-  },
-  {
-   "id": "KB-021",
-   "type": "debug",
-   "area": [
-    "backend"
-   ],
-   "tags": [
-    "langfuse",
-    "tracing",
-    "quota",
-    "free-tier",
-    "403",
-    "fail-open",
-    "phase-2"
-   ],
-   "title": "Symptom: trace links never resolve and the UI sits on 'preparing trace…' forever — cause: Langfuse free-tier ingestion suspended (403), swallowed by best-effort flush",
-   "detail": "When the Langfuse free-tier usage threshold is exceeded, every flush returns 403 'Ingestion suspended: Usage threshold exceeded'. Because tracing is (correctly) fail-open, flush() swallows it and the turn still answers — but the code keeps handing out optimistic trace URLs for traces that were never stored, so the UI waits forever. Fastest diagnostic: check the service's stderr/log for the quota-403 rather than debugging the link path. Fix pattern (nextasy-comms PR #161): latch a process-wide suspended flag on the quota-403 specifically (not on transient or auth errors), clear it on the next clean flush so it self-heals, and emit a null trace URL plus a trace_status:'suspended' field so the UI shows an honest 'tracing paused' note instead of a dead link. This project shares that free tier — expect it.",
-   "source": "#53",
-   "date": "2026-08-08",
-   "status": "active"
-  },
-  {
-   "id": "KB-022",
-   "type": "learning",
-   "area": [
-    "process"
-   ],
-   "tags": [
-    "prior-art",
-    "ask-marcus",
-    "nextasy-comms",
-    "research",
-    "spec"
-   ],
-   "title": "Before specifying anything Langfuse/chatbot-shaped, read the previous ask-marcus generations — their commit history and OPEN PRs carry solved versions of the same problems",
-   "detail": "Two earlier generations of this chatbot exist and have already paid for these lessons: Nextasy-Apps-LLC/nextasy-comms (src/ask_marcus/, the retired Mac/NATS/claude-CLI version) and Nextasy-Apps-LLC/marcuss.pro chatbot/ (the live Bedrock Mantle version). Reading them turned a guessed fixed-timer design into the correct server-side redirect design and surfaced two traps (KB-019, KB-021) before a line was written. Crucially, look at OPEN and unmerged PRs too — nextasy-comms PR #161 and #167 describe current reality that main does not, and the deployed marcuss.pro image ran code that had never been merged. Do not trust a repo's main branch or its ADRs as the description of what is deployed; verify against the running artifact.",
-   "source": "#53",
-   "date": "2026-08-08",
-   "status": "active"
-  },
-  {
-   "id": "KB-023",
-   "type": "learning",
-   "area": [
-    "process"
-   ],
-   "tags": [
-    "kb-filter",
-    "stale-checkout",
-    "compound-workflow",
-    "kb-drift"
-   ],
-   "title": "kb-filter reads kb/learnings.json off the session's actual working tree — a stale/detached main checkout silently hides recently-merged KB entries",
-   "detail": "Spawning kb-filter from a shared main checkout whose HEAD is stale or detached behind origin/main (e.g. left mid-investigation by a prior session) makes it miss any KB entries that only exist in newer merged commits — it returns a confident result, not a suspiciously-small one flagged as incomplete. Concretely for #57: the local main checkout topped out at KB-018, so kb-filter never saw KB-019 through KB-022 (merged via PR #54) even though origin/main already had them — and KB-020 (Langfuse ingestion is async, never hand out a bare direct link) was the single most relevant entry for the feature being specced. Fix: before trusting a kb-filter result, confirm the checkout it read from is at or ahead of origin/main (git status showing a detached HEAD, or `git rev-parse HEAD` differing from `git rev-parse origin/main`, is reason to cross-check with `git show origin/main:kb/learnings.json` directly rather than accept the agent output as complete).",
-   "source": {
-    "issue": 57,
-    "pr": null
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-024",
-   "type": "learning",
-   "area": [
-    "web"
-   ],
-   "tags": [
-    "testing",
-    "vitest",
-    "jsdom",
-    "renderToStaticMarkup",
-    "react-dom-server",
-    "component-test"
-   ],
-   "title": "Assert on real rendered JSX in this repo's node-env vitest suite via react-dom/server's renderToStaticMarkup — no jsdom/RTL needed",
-   "detail": "This repo's vitest config runs environment: 'node' with include: ['src/**/*.test.ts'] on purpose (the SSE parser and pure turn-reducer logic don't need a DOM), which reads like a hard blocker the first time a feature needs an actual component-render assertion (e.g. #57's trace-link footnote and its aria-describedby wiring). It isn't one: react-dom/server's renderToStaticMarkup renders a React tree to an HTML string in plain Node — react-dom is already a runtime dependency, so this costs zero new dependencies and zero vite.config.ts changes. Write the test file as .ts (build the tree with React.createElement, not JSX) so it still matches the existing include glob, then assert against the returned HTML string with substring/regex checks. Reach for this before jsdom + React Testing Library; only escalate to a real DOM if a test needs interaction (clicks, focus, event handlers) that a static string render can't exercise.",
-   "source": {
-    "issue": 57,
-    "pr": null
-   },
-   "date": "2026-08-07",
-   "status": "active"
-  },
-  {
-   "id": "KB-025",
-   "type": "gotcha",
-   "area": [
-    "backend"
-   ],
-   "tags": [
-    "output-guard",
-    "llm-judge",
-    "rag",
-    "grounding",
-    "context",
-    "retraction",
-    "false-positive"
-   ],
-   "title": "A guard that judges generated output against a static scope will fail every RAG-grounded specific — give the judge the same context the generator had",
-   "detail": "The output-safety judge was prompted with only the vetted baseline scope while the brain answered from baseline + retrieved passages. Result: every correct, grounded, fact-dense answer (dates, percentages, names, addresses quoted from the corpus) 'was not in scope' and got retracted after streaming — 10 of 17 refusals in a 98-question eval, on exactly the questions a serious visitor asks first. The fix is structural, not prompt-tuning: build the judge's prompt per turn with the turn's retrieved context (load the template raw at import, format per call like persona.system_prompt does), state explicitly that grounded specificity is permitted, and keep negatives in the fixture set (facts in NEITHER scope nor passages must still fail) so the rail is retuned rather than disabled. Rule of thumb: any judge of model output must see everything the generator was allowed to use, or it will punish the generator's best answers.",
-   "source": "#70 / PR #71",
-   "date": "2026-08-08",
-   "status": "active"
-  },
-  {
-   "id": "KB-029",
-   "type": "gotcha",
-   "area": [
-    "backend"
-   ],
-   "tags": [
-    "classifier",
-    "escalation",
-    "history",
-    "feedback-loop",
-    "fixtures",
-    "multi-turn",
-    "eval"
-   ],
-   "title": "A classifier that reads history treats the bot's own fallback replies as evidence — one escalation begets the next, and short synthetic histories hide it",
-   "detail": "The topic classifier saw the full conversation, so an escalation reply ('better answered by a person...') sitting in history became a signal to escalate the next question too: with the real multi-turn transcript gemma returned needs_human 6/6 at temp 0, while the same question over a short synthetic history was in_scope 12/12 — a self-locking loop invisible to any fixture that wasn't the real transcript. Two practices follow. (1) In any judge prompt that reads conversation history, state explicitly that the assistant's own prior fallback/refusal/escalation replies are not classification signals, and classify the latest message on its own merits. (2) Regression fixtures for multi-turn judges must be captured real transcripts (pull them from Langfuse, verbatim, including the bot's replies), because the failure only reproduces with the length and content of a real history — the synthetic version of the same question passes.",
-   "source": "#70 / PR #71",
-   "date": "2026-08-08",
-   "status": "active"
-  }
- ]
+  "entries": [
+    {
+      "id": "KB-001",
+      "type": "gotcha",
+      "area": [
+        "backend",
+        "ci"
+      ],
+      "tags": [
+        "docker",
+        "lambda",
+        "dockerfile",
+        "container",
+        "cold-start",
+        "uvicorn"
+      ],
+      "title": "The Lambda base image's ENTRYPOINT must be cleared (`ENTRYPOINT []`) or init crashes",
+      "detail": "public.ecr.aws/lambda/python ships /lambda-entrypoint.sh as ENTRYPOINT, which treats CMD[0] as a Python handler name. Left in place it swallows the uvicorn command and the function crashes at init with 'entrypoint requires the handler name to be the first argument'. The Lambda Web Adapter extension talks to the runtime API, so the entrypoint must be `ENTRYPOINT []`. CI builds the image but never boots it — this class of bug only surfaces on invoke, so smoke any Dockerfile change with `docker run -p 8080:8080` locally.",
+      "source": {
+        "issue": null,
+        "pr": 12
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-002",
+      "type": "gotcha",
+      "area": [
+        "web",
+        "infra"
+      ],
+      "tags": [
+        "cloudfront",
+        "oac",
+        "sigv4",
+        "post",
+        "403",
+        "fetch",
+        "headers"
+      ],
+      "title": "Every viewer POST through CloudFront→Lambda OAC must send x-amz-content-sha256",
+      "detail": "CloudFront's OAC signs over the payload hash header. A POST without `x-amz-content-sha256: <hex sha256 of the body>` fails Lambda's signature check with a 403 'signature does not match'. The web client computes it in sha256Hex before every /ask POST; any new POSTing client (tests, scripts, new pages) must do the same. GETs are exempt.",
+      "source": {
+        "issue": null,
+        "pr": 13
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-003",
+      "type": "debug",
+      "area": [
+        "infra"
+      ],
+      "tags": [
+        "lambda",
+        "function-url",
+        "403",
+        "iam",
+        "permissions",
+        "cloudfront"
+      ],
+      "title": "Function-URL 403s need TWO permissions, and the missing-permission body looks like a bad signature",
+      "detail": "Function URLs created since Oct 2025 require `lambda:InvokeFunction` IN ADDITION TO `lambda:InvokeFunctionUrl` for the calling principal, and the missing-permission 403 body is byte-identical to a bad-signature 403. Before deep signature archaeology: check both statements exist on the function, then bisect with an in-account signed call (`aws lambda invoke-with-response-stream` or awscurl) — if that succeeds, the fault is upstream (org perimeter policy), not in this stack.",
+      "source": {
+        "issue": null,
+        "pr": null
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-004",
+      "type": "gotcha",
+      "area": [
+        "infra",
+        "backend"
+      ],
+      "tags": [
+        "cloudfront",
+        "timeout",
+        "streaming",
+        "sse",
+        "lambda"
+      ],
+      "title": "CloudFront caps origin response at 60s — Lambda timeout must match, and long streams must fit",
+      "detail": "CloudFront's origin response timeout is hard-capped at 60s without a quota increase. The Lambda timeout is aligned to it (PR #17); raising the Lambda timeout alone buys nothing because CloudFront cuts the stream first. Any feature whose SSE turn could exceed ~55s (slow model, long generation) must reduce work per turn, not raise timeouts. SSE heartbeats keep intermediaries from reaping an idle-looking connection but do not extend the hard cap.",
+      "source": {
+        "issue": null,
+        "pr": 17
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-005",
+      "type": "gotcha",
+      "area": [
+        "backend",
+        "web"
+      ],
+      "tags": [
+        "sse",
+        "contract",
+        "types",
+        "breaking-change",
+        "events"
+      ],
+      "title": "The SSE contract is mirrored in backend/app/sse.py and web/src/types.ts — change both sides in one PR or neither",
+      "detail": "Four events (rail, token, done, error) and the rail1..rail6 order are duplicated verbatim on both sides of the wire. Nothing imports across the boundary, so a field rename compiles green on both sides and breaks silently in production (a trace panel that stops updating). Any contract change must touch both files plus both test suites in the same PR. Additive optional fields are the safe evolution path.",
+      "source": {
+        "issue": null,
+        "pr": 13
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-006",
+      "type": "debug",
+      "area": [
+        "ci",
+        "infra"
+      ],
+      "tags": [
+        "oidc",
+        "github-actions",
+        "sts",
+        "assume-role",
+        "environment",
+        "production"
+      ],
+      "title": "A job inside `environment: production` gets an environment: OIDC sub that REPLACES the ref form",
+      "detail": "GitHub OIDC tokens for jobs gated by an environment carry sub `repo:<owner>/<repo>:environment:production`, not the ref form — and both the name-cased and id-qualified repo spellings occur. An IAM trust condition listing only the ref form fails with a bare 'Not authorized to perform sts:AssumeRoleWithWebIdentity' that only reproduces AFTER the approval click. Every new gated job means re-checking the trust conditions for (2 repo spellings) x (applicable sub forms). Fixed in PR #4.",
+      "source": {
+        "issue": null,
+        "pr": 4
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-007",
+      "type": "learning",
+      "area": [
+        "infra",
+        "process"
+      ],
+      "tags": [
+        "curl",
+        "smoke-test",
+        "streaming",
+        "http3",
+        "browser",
+        "verification"
+      ],
+      "title": "A curl-green smoke test does not prove streaming works — verify in a real browser",
+      "detail": "curl ignores alt-svc, so HTTP/3 breakage passes curl and breaks every real browser. Local http.server infers MIMEs that prod may not. For any change touching streaming, CloudFront behaviors, or static assets: verify in a browser tab watching tokens arrive (or assert MIMEs with curl -I against the live URL), and only then claim 'tested'.",
+      "source": {
+        "issue": null,
+        "pr": null
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-008",
+      "type": "gotcha",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "langgraph",
+        "sse",
+        "streaming",
+        "state",
+        "callbacks",
+        "config"
+      ],
+      "title": "Per-request objects (SSE emitter, Langfuse handler) belong in LangGraph's config[\"configurable\"], never in the state channel",
+      "detail": "A LangGraph node receives only the state and the RunnableConfig, so it is tempting to hang the request's SSE emitter (or callback handler, or queue) on the state TypedDict. Don't: state channels are the checkpointable, serializable half of the graph, and a live asyncio.Queue there breaks any future checkpointer and is exactly how one visitor's stream ends up attached to another's turn. Pass them as graph.ainvoke(state, config={\"configurable\": {\"emit\": emit}}) and keep nodes on a plain (state, emit) signature with a thin bind wrapper that unpacks the config (app/graph/build.py `_bind`). Phase 2's Langfuse CallbackHandler rides the same path.",
+      "source": {
+        "issue": 24,
+        "pr": 28
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-009",
+      "type": "gotcha",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "fail-open",
+        "bedrock",
+        "degraded",
+        "guardrails",
+        "misconfiguration",
+        "credentials"
+      ],
+      "title": "Fail-open guard steps make a misconfigured model look like a healthy pipeline",
+      "detail": "The injection/topic/output guards pass with detail:\"degraded\" when their model call raises — right for an outage, but it means a wrong model id, a missing Bedrock permission or absent credentials all surface as a *passing* turn with an amber chip, evidenced only by a log line. Seen in Phase 1a, where unimplemented seams produced a clean-looking degraded turn end to end. When wiring the real models, never treat 'the turn answered' as proof the guards ran: assert detail is None on the guard steps in at least one e2e case, and grep the container log for 'seam failed, passing degraded' before calling a model change verified.",
+      "source": {
+        "issue": 24,
+        "pr": 28
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-014",
+      "type": "debug",
+      "area": [
+        "infra",
+        "backend"
+      ],
+      "tags": [
+        "bedrock",
+        "mantle",
+        "model-access",
+        "authorization",
+        "ValidationException",
+        "api-key",
+        "sigv4",
+        "aws"
+      ],
+      "title": "Bedrock SigV4 dead on an account? Try the Mantle (OpenAI-compatible) endpoint before negotiating entitlements",
+      "detail": "Classic `bedrock-runtime` (InvokeModel/Converse/ConverseStream) returning `ValidationException: Operation not allowed` for EVERY model id — including Amazon's own Nova, and with AdministratorAccess — is not an IAM, region, or model-id problem. It means the account has no model access granted; confirm in one call with `aws bedrock get-foundation-model-availability --model-id <id>` (`authorizationStatus: NOT_AUTHORIZED`). Do NOT stop there, and do NOT accept the AWS Marketplace agreement yourself — that is a billing and legal decision for the account owner. Bedrock's newer OpenAI-compatible **Mantle** endpoint (https://bedrock-mantle.<region>.api.aws/v1 — `GET /models`, `POST /chat/completions`) serves the same models using a Bedrock API key as a plain bearer token, and works on accounts where SigV4 Converse does not. Swapping transports unblocked a whole phase here in under a day. Cost to weigh: the stack stops being secret-free — budget for an SSM SecureString, key rotation, and a Terraform state file that now holds the key.",
+      "source": {
+        "issue": 25,
+        "pr": 32
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-015",
+      "type": "gotcha",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "langchain-aws",
+        "ChatBedrockConverse",
+        "temperature",
+        "opus-5",
+        "sampling",
+        "bedrock"
+      ],
+      "title": "langchain-aws silently drops sampling params a model doesn't support — temperature=0 can be a no-op",
+      "detail": "Claude Opus 5 removed `temperature`, `top_p` and `top_k`. `ChatBedrockConverse` does not raise on them: it logs `UserWarning: Model anthropic.claude-opus-5 does not support temperature; ignoring the provided value` and drops the parameter. In a service that pipes warnings to a log nobody reads, a judge you believe is pinned to `temperature=0` is running at the model's default. Decide per model inside the client factory rather than at each call site, and keep the list of no-sampling model families next to it. The same applies in reverse when choosing a model for a step that genuinely needs determinism: confirm it accepts the knob before relying on it. Related: langchain-aws also disables streaming for providers it has not verified (`nvidia`, `google`), silently falling back to non-streaming Converse with a warning — pass `disable_streaming=False` to override. SUPERSEDED for this repo by ADR 0002: the model path no longer uses langchain-aws at all (plain httpx to the Mantle endpoint), so this trap cannot fire here. Kept for history, and still true for any project on ChatBedrockConverse.",
+      "source": {
+        "issue": 25,
+        "pr": 32
+      },
+      "date": "2026-08-07",
+      "status": "superseded"
+    },
+    {
+      "id": "KB-016",
+      "type": "gotcha",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "langchain-aws",
+        "ChatBedrockConverse",
+        "content-blocks",
+        "parsing",
+        "bedrock",
+        "llm-judge"
+      ],
+      "title": "ChatBedrockConverse `.content` is a str for some models and a block list for others",
+      "detail": "The same `.ainvoke()` / `.astream()` call returns `content` as a bare `str` for some Bedrock models and as a list of typed blocks (`[{'type': 'text', 'text': '...'}]`, plus reasoning and tool blocks) for others — and which one you get depends on the model, not on the call. Code that does `response.content.strip()` or regex-matches it directly works on one model and quietly misbehaves on another: a single-token LLM judge reads `[{'type':'text','text':'fail'}]` as unparseable and, under a fail-open policy, degrades a perfectly good refusal into a pass. Flatten every response through one helper (app/llm.py::text_of) before parsing, and cover the block-list shape in unit tests — swapping a model id must never change how responses are read. SUPERSEDED for this repo by ADR 0002 (no langchain-aws in the model path). The general lesson survives as KB-011: normalise every model response through one helper before parsing.",
+      "source": {
+        "issue": 25,
+        "pr": 32
+      },
+      "date": "2026-08-07",
+      "status": "superseded"
+    },
+    {
+      "id": "KB-011",
+      "type": "gotcha",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "llm-judge",
+        "reasoning-model",
+        "parsing",
+        "bedrock",
+        "mantle",
+        "nemotron",
+        "verdict"
+      ],
+      "title": "A reasoning model puts its verdict LAST — parse the end, and treat a truncated monologue as no answer",
+      "detail": "Single-token LLM judges break on reasoning models in three separate ways, and all three are silent. (1) The model monologues before answering — `nvidia.nemotron-nano-9b-v2` emits `<think>…</think>` into `message.content` and only then the label — so parsing the FRONT of the response returns an essay. (2) Prose reasoning names the wrong label on the way (\"this could pass, but … so fail\"), so a first-match parse INVERTS the verdict; take the LAST match. (3) A tight `max_tokens` truncates mid-thought: `finish_reason: length`, no closing tag, no verdict — mining that fragment turns a hypothetical into a decision, so discard an unclosed block entirely and let the caller degrade. Give judge slots a generous budget (512, not 8): the ceiling is free on a terse model because temperature 0 stops it early. Also read `message.reasoning` when `content` is null — some models answer only there (the `gpt-oss-safeguard-*` family emits its verdict inside a truncating `reasoning` field, which is why it is not in this roster).",
+      "source": {
+        "issue": 25,
+        "pr": 32
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-012",
+      "type": "learning",
+      "area": [
+        "backend",
+        "process"
+      ],
+      "tags": [
+        "model-selection",
+        "benchmark",
+        "latency",
+        "reliability",
+        "bedrock",
+        "mantle",
+        "fallback"
+      ],
+      "title": "Probe candidate models for reliability and latency before pinning them — a spec's list order is not evidence",
+      "detail": "A model id named in a spec is a hypothesis, not a measurement. Probing the roster against the real endpoint (7 cases x 2 runs, through the actual parser) changed three of five slots here: the specced topic primary `nvidia.nemotron-nano-9b-v2` turned out to 503 intermittently (~2 calls in 5, at any token budget), run ~4x slower than every alternative (p50 1.96s vs ~0.50s), AND need reasoning-stripping — while `google.gemma-3-12b-it` scored 14/14 correct at p50 0.50s. Probe for three things: HTTP success rate over repeated calls (not one call), accuracy through your own parser (not a raw string match), and p50 latency against your turn budget. Then pick fallbacks from DIFFERENT PROVIDERS — a fallback sharing the primary's outage is not a fallback — and put the slot that has no fallback of its own on the most reliable model you measured. Budget ~20 minutes; it is cheaper than one debugging cycle.",
+      "source": {
+        "issue": 25,
+        "pr": 32
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-013",
+      "type": "gotcha",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "retry",
+        "5xx",
+        "503",
+        "fail-open",
+        "llm-judge",
+        "resilience",
+        "turn-budget"
+      ],
+      "title": "Under a fail-open policy, an un-retried 5xx silently downgrades a guard that had a verdict",
+      "detail": "Fail-open guards turn transport blips into permanent-looking degradation: on the wire, a single 503 is indistinguishable from a model that genuinely could not decide. Retry 5xx and transport errors — bounded, 3 attempts, sub-second backoff — before degrading; never retry 4xx, which is a statement about the request (bad key, unentitled model) and will say the same thing next time. Two constraints: the retry budget comes out of the request's own latency budget, so bound it against that (here CloudFront's 60s origin cap, KB-004); and for STREAMING calls retry only before the first delta — once a fragment has reached the user, restarting rewrites the answer mid-sentence, so a mid-stream failure must propagate instead. Symptom that sent us here: every `validate_input` reporting `degraded` in e2e while the same model answered fine when probed by hand.",
+      "source": {
+        "issue": 25,
+        "pr": 32
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-010",
+      "type": "learning",
+      "area": [
+        "backend",
+        "ci"
+      ],
+      "tags": [
+        "sse",
+        "streaming",
+        "e2e",
+        "buffering",
+        "content-length",
+        "testing"
+      ],
+      "title": "Assert an SSE response carries no Content-Length — the cheapest machine-checkable buffering detector",
+      "detail": "Every buffering failure this stack has hit (buffered LWA invoke mode, a proxy that re-encodes, a client that collects the body) passes the unit tests, because all the events are present — just delivered at once at the end. An e2e case that opens the stream and asserts `content-length` is absent from the response headers catches the whole class in one line, before anyone opens a browser. It does not replace the browser check (KB-007), which is what proves tokens paint incrementally; it is the part CI can run unattended.",
+      "source": {
+        "issue": 24,
+        "pr": 28
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-017",
+      "type": "gotcha",
+      "area": [
+        "web",
+        "backend"
+      ],
+      "tags": [
+        "linkify",
+        "regex",
+        "markdown",
+        "llm-output",
+        "url-parsing"
+      ],
+      "title": "A URL-extraction regex tuned for plain text mangles a markdown-style [text](url) link from the model",
+      "detail": "linkify.ts's URL regex (`/https?:\\/\\/[^\\s<>\"')]+/g`) excludes `)` from the match but not `(` or `]`. It works for a bare URL in prose, but when the model occasionally answers with a markdown-formatted link — `[https://cadreai.com/contact](https://cadreai.com/contact)` — the regex greedily swallows the `](https://...` tail into one 'URL', which then fails to parse as a real URL and renders as garbage (`[see more)` instead of a clean link). Confirmed live via a Playwright browser check against a real Bedrock answer, not from unit tests alone (unit tests only fed plain-URL fixtures). If a URL-matching regex will run against LLM-generated text rather than hand-authored text, test it against markdown-link-formatted input too, and exclude `(`, `[`, `]` from the match's character class alongside `)`. Left unfixed in #40/#47 because the issue specified the regex character-for-character as a decision-free constraint; flagged as a follow-up rather than silently widened.",
+      "source": {
+        "issue": 40,
+        "pr": 47
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-018",
+      "type": "gotcha",
+      "area": [
+        "web"
+      ],
+      "tags": [
+        "playwright",
+        "e2e",
+        "browser-check",
+        "chat-message",
+        "status",
+        "kb-007"
+      ],
+      "title": "In this app's message model, the user's own ChatMessage is stamped status: \"done\" immediately — a bare [data-status=\"done\"] browser wait fires before the bot's reply exists",
+      "detail": "useCadreChat.send() pushes the 'you' message with status: 'done' synchronously, alongside the 'cadre' reply at status: 'pending' (useCadreChat.ts). A KB-007 browser check (Playwright or otherwise) that waits on `document.querySelectorAll('[data-status=\"done\"]').length > 0` to detect turn completion resolves instantly on the user's own message — long before any state/token/done SSE event has arrived — producing a false-positive 'the turn settled' read against an empty or half-rendered stepper. Scope the wait to the bot's own row instead: `.msg--cadre[data-status=\"done\"]`. Cost about ten minutes of a wrong-conclusion debug in #40/#47's browser check (an empty per-step timing array) before this was caught.",
+      "source": {
+        "issue": 40,
+        "pr": 47
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-019",
+      "type": "gotcha",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "langfuse",
+        "tracing",
+        "trace-id",
+        "sdk",
+        "public-trace",
+        "phase-2"
+      ],
+      "title": "Langfuse v4 SDK silently rejects a uuid4 trace id and stores the trace under a different one — always mint ids with create_trace_id()",
+      "detail": "Passing uuid.uuid4().hex as a Langfuse trace id looks valid (32 hex chars) but the v4 SDK discards it and generates its own OTLP-compliant id. The trace lands in Langfuse under THAT id, while the URL handed to the client carries yours — so the link points at a trace that will never exist, and the failure looks like permanent ingestion lag rather than an id mismatch. Use the SDK's client.create_trace_id() and fall back to uuid only when the SDK is unavailable (tests). Root cause of nextasy-comms issue #126; the fix is documented in its src/ask_marcus/langfuse_callbacks.py TraceContext.__post_init__.",
+      "source": "#53",
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-020",
+      "type": "gotcha",
+      "area": [
+        "backend",
+        "web"
+      ],
+      "tags": [
+        "langfuse",
+        "tracing",
+        "ingestion-lag",
+        "trace-link",
+        "redirect",
+        "ux",
+        "phase-2"
+      ],
+      "title": "Langfuse Cloud ingestion is async (seconds to ~90s) — never hand a visitor a direct trace URL or gate it behind a fixed timer; redirect through your own endpoint",
+      "detail": "A trace is not viewable the moment a turn ends. Measured on this project: ~8-14s before the API returns it complete, and the Langfuse UI's own query path (events.byTraceId) lags further, rendering 'Trace not found'; ask-marcus documents 30-90s in production. Any fixed client-side pending timer (5s/10s/20s) is therefore a guess that sometimes ships a dead link. A client-side readiness probe is also impossible: the Langfuse public API returns 401 without credentials (only the trace PAGE is public), and it is cross-origin. The working pattern (nextasy-comms webhook.py trace_redirect): emit a URL to YOUR OWN backend, /trace/{id}; that endpoint probes readiness server-side where the credentials live, 302s to {LANGFUSE_BASE}/public/traces/{id} once ready, and otherwise serves a small wait page that polls ?format=json and navigates when ingestion lands (with a <noscript> meta-refresh fallback). Note /public/traces/{id} simply 307s to the project trace page — both render publicly, so the URL form was never the problem; the lag is.",
+      "source": "#53",
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-021",
+      "type": "debug",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "langfuse",
+        "tracing",
+        "quota",
+        "free-tier",
+        "403",
+        "fail-open",
+        "phase-2"
+      ],
+      "title": "Symptom: trace links never resolve and the UI sits on 'preparing trace…' forever — cause: Langfuse free-tier ingestion suspended (403), swallowed by best-effort flush",
+      "detail": "When the Langfuse free-tier usage threshold is exceeded, every flush returns 403 'Ingestion suspended: Usage threshold exceeded'. Because tracing is (correctly) fail-open, flush() swallows it and the turn still answers — but the code keeps handing out optimistic trace URLs for traces that were never stored, so the UI waits forever. Fastest diagnostic: check the service's stderr/log for the quota-403 rather than debugging the link path. Fix pattern (nextasy-comms PR #161): latch a process-wide suspended flag on the quota-403 specifically (not on transient or auth errors), clear it on the next clean flush so it self-heals, and emit a null trace URL plus a trace_status:'suspended' field so the UI shows an honest 'tracing paused' note instead of a dead link. This project shares that free tier — expect it.",
+      "source": "#53",
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-022",
+      "type": "learning",
+      "area": [
+        "process"
+      ],
+      "tags": [
+        "prior-art",
+        "ask-marcus",
+        "nextasy-comms",
+        "research",
+        "spec"
+      ],
+      "title": "Before specifying anything Langfuse/chatbot-shaped, read the previous ask-marcus generations — their commit history and OPEN PRs carry solved versions of the same problems",
+      "detail": "Two earlier generations of this chatbot exist and have already paid for these lessons: Nextasy-Apps-LLC/nextasy-comms (src/ask_marcus/, the retired Mac/NATS/claude-CLI version) and Nextasy-Apps-LLC/marcuss.pro chatbot/ (the live Bedrock Mantle version). Reading them turned a guessed fixed-timer design into the correct server-side redirect design and surfaced two traps (KB-019, KB-021) before a line was written. Crucially, look at OPEN and unmerged PRs too — nextasy-comms PR #161 and #167 describe current reality that main does not, and the deployed marcuss.pro image ran code that had never been merged. Do not trust a repo's main branch or its ADRs as the description of what is deployed; verify against the running artifact.",
+      "source": "#53",
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-023",
+      "type": "learning",
+      "area": [
+        "process"
+      ],
+      "tags": [
+        "kb-filter",
+        "stale-checkout",
+        "compound-workflow",
+        "kb-drift"
+      ],
+      "title": "kb-filter reads kb/learnings.json off the session's actual working tree — a stale/detached main checkout silently hides recently-merged KB entries",
+      "detail": "Spawning kb-filter from a shared main checkout whose HEAD is stale or detached behind origin/main (e.g. left mid-investigation by a prior session) makes it miss any KB entries that only exist in newer merged commits — it returns a confident result, not a suspiciously-small one flagged as incomplete. Concretely for #57: the local main checkout topped out at KB-018, so kb-filter never saw KB-019 through KB-022 (merged via PR #54) even though origin/main already had them — and KB-020 (Langfuse ingestion is async, never hand out a bare direct link) was the single most relevant entry for the feature being specced. Fix: before trusting a kb-filter result, confirm the checkout it read from is at or ahead of origin/main (git status showing a detached HEAD, or `git rev-parse HEAD` differing from `git rev-parse origin/main`, is reason to cross-check with `git show origin/main:kb/learnings.json` directly rather than accept the agent output as complete).",
+      "source": {
+        "issue": 57,
+        "pr": null
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-024",
+      "type": "learning",
+      "area": [
+        "web"
+      ],
+      "tags": [
+        "testing",
+        "vitest",
+        "jsdom",
+        "renderToStaticMarkup",
+        "react-dom-server",
+        "component-test"
+      ],
+      "title": "Assert on real rendered JSX in this repo's node-env vitest suite via react-dom/server's renderToStaticMarkup — no jsdom/RTL needed",
+      "detail": "This repo's vitest config runs environment: 'node' with include: ['src/**/*.test.ts'] on purpose (the SSE parser and pure turn-reducer logic don't need a DOM), which reads like a hard blocker the first time a feature needs an actual component-render assertion (e.g. #57's trace-link footnote and its aria-describedby wiring). It isn't one: react-dom/server's renderToStaticMarkup renders a React tree to an HTML string in plain Node — react-dom is already a runtime dependency, so this costs zero new dependencies and zero vite.config.ts changes. Write the test file as .ts (build the tree with React.createElement, not JSX) so it still matches the existing include glob, then assert against the returned HTML string with substring/regex checks. Reach for this before jsdom + React Testing Library; only escalate to a real DOM if a test needs interaction (clicks, focus, event handlers) that a static string render can't exercise.",
+      "source": {
+        "issue": 57,
+        "pr": null
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    }
+  ]
 }
