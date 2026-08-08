@@ -248,6 +248,25 @@ def sample_row() -> dict[str, Any]:
     return _table().head(1).to_pylist()[0]
 
 
+def dedupe_hits(hits: Sequence[Hit], cap: int) -> list[Hit]:
+    """At most `cap` hits per URL, order otherwise preserved.
+
+    One page must not fill the slate (issue #70): a chunked page whose every
+    chunk scores well — the homepage, /about — can push the single on-point
+    article chunk out of the top-k entirely. The caller over-fetches
+    (`config.RETRIEVE_FETCH_K`) so the next URL's chunk exists to be promoted,
+    then truncates the deduped list back to top-k.
+    """
+    counts: dict[str, int] = {}
+    kept: list[Hit] = []
+    for hit in hits:
+        seen = counts.get(hit.url, 0)
+        if seen < cap:
+            kept.append(hit)
+            counts[hit.url] = seen + 1
+    return kept
+
+
 # --------------------------------------------------------------------------
 # rendering for the prompt
 # --------------------------------------------------------------------------

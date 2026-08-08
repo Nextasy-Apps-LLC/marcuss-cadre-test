@@ -225,11 +225,16 @@ async def _retrieve(state: ConversationState, emit, started: float) -> Conversat
         query = await models.condense_query(state)
 
     vector = await embeddings.embed_query(query)
+    # Fetch deeper than top-k, cap chunks per URL, then cut back to top-k:
+    # one well-scoring chunked page (the homepage, /about) must not fill the
+    # slate and push the single on-point article chunk out (issue #70). The
+    # extra depth is sub-millisecond on a 131-row flat scan.
     hits = [
         hit
-        for hit in kb.search(vector, config.RETRIEVE_TOP_K)
+        for hit in kb.search(vector, config.RETRIEVE_FETCH_K)
         if hit.score >= config.RETRIEVE_MIN_SCORE
     ]
+    hits = kb.dedupe_hits(hits, config.RETRIEVE_MAX_PER_URL)[: config.RETRIEVE_TOP_K]
     tracing.record_retrieval(getattr(emit, "trace_id", None), query, hits)
 
     if not hits:

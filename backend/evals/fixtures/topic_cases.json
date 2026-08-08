@@ -1,0 +1,184 @@
+{
+  "_description": "Labelled conversations for the topic_classifier judge. Real cases carry their Langfuse trace id.",
+  "cases": [
+    {
+      "id": "marcus_process_mapping_escalation_loop",
+      "expected": "in_scope",
+      "message": "can I skip the process mapping step?",
+      "history": [
+        {
+          "role": "user",
+          "text": "What does Cadre AI do?"
+        },
+        {
+          "role": "assistant",
+          "text": "Cadre AI is an AI strategy and implementation consultancy that helps businesses drive real revenue growth and improve EBITDA through AI. We focus on identifying the right AI strategy for your organization, integrating AI into existing systems and workflows, and delivering measurable business impact. Our services include AI strategy development, leadership and team training, AI engineering, and the design and deployment of AI agents.\n\nWe partner with companies to identify high-value use cases, implement AI solutions that align with business goals, and ensure sustainable transformation. According to MIT, companies that bring in a dedicated AI partner are three times more likely to succeed with their AI initiatives.\n\nhttps://www.cadreai.com"
+        },
+        {
+          "role": "user",
+          "text": "should i build my own in-house AI capability ?"
+        },
+        {
+          "role": "assistant",
+          "text": "Building an in-house AI capability can be challenging and risky, especially given how quickly the AI landscape evolves. Most AI initiatives fail when handled internally because teams struggle to keep up with rapid changes in models, compliance, and best practices. In-house teams often lack the cross-industry experience needed to implement AI effectively and efficiently.\n\nAt Cadre AI, we see what works across multiple industries and clients, allowing us to deliver battle-tested solutions tailored to your business needs. Partnering with an experienced AI consultancy can accelerate your AI journey and avoid common pitfalls that come with in-house implementation.\n\nIf you're considering building in-house AI capabilities, it’s worth evaluating whether a strategic AI partner like Cadre AI could provide a faster, more impactful path to success.\n\nhttps://www.cadreai.com/articles/why-hiring-in-house-ai-talent-will-fail"
+        },
+        {
+          "role": "user",
+          "text": "should i start with tool selection my journey to AI implementation?"
+        },
+        {
+          "role": "assistant",
+          "text": "Starting your AI implementation journey with tool selection is not the most effective approach. At Cadre AI, we recommend beginning with a deep understanding of your business processes and identifying where AI can create the most value. This involves mapping out workflows, calculating potential ROI for different use cases, and prioritizing based on impact and feasibility.\n\nOnce you have a clear picture of where AI can drive business impact, you can then select the right tools or custom solutions that align with your specific needs. Focusing on integration, workflow redesign, and adoption ensures that the tools you choose are implemented successfully and deliver measurable results.\n\nFor a step-by-step approach to AI implementation, we recommend starting with a structured strategy that aligns with your business goals.\n\nhttps://www.cadreai.com/articles/the-ceos-ai-decision-why-buy-first-is-the-smartest-path-to-ai-roi"
+        },
+        {
+          "role": "user",
+          "text": "and I can skip the process mapping right?"
+        },
+        {
+          "role": "assistant",
+          "text": "That one is better answered by a person on the Cadre AI team. You can book a call with us at https://www.cadreai.com/contact and we will pick it up from there."
+        }
+      ],
+      "source": "Langfuse trace 6e2ce97f, session 24833c5b, 2026-08-08T13:19 — escalated in prod; history contains a prior escalation reply (self-locking loop)"
+    },
+    {
+      "id": "marcus_skip_process_mapping_first_ask",
+      "expected": "in_scope",
+      "message": "and I can skip the process mapping right?",
+      "history": [
+        {
+          "role": "user",
+          "text": "What does Cadre AI do?"
+        },
+        {
+          "role": "assistant",
+          "text": "Cadre AI is an AI strategy and implementation consultancy that helps businesses drive real revenue growth and improve EBITDA through AI. We focus on identifying the right AI strategy for your organization, integrating AI into existing systems and workflows, and delivering measurable business impact. Our services include AI strategy development, leadership and team training, AI engineering, and the design and deployment of AI agents.\n\nWe partner with companies to identify high-value use cases, implement AI solutions that align with business goals, and ensure sustainable transformation. According to MIT, companies that bring in a dedicated AI partner are three times more likely to succeed with their AI initiatives.\n\nhttps://www.cadreai.com"
+        },
+        {
+          "role": "user",
+          "text": "should i build my own in-house AI capability ?"
+        },
+        {
+          "role": "assistant",
+          "text": "Building an in-house AI capability can be challenging and risky, especially given how quickly the AI landscape evolves. Most AI initiatives fail when handled internally because teams struggle to keep up with rapid changes in models, compliance, and best practices. In-house teams often lack the cross-industry experience needed to implement AI effectively and efficiently.\n\nAt Cadre AI, we see what works across multiple industries and clients, allowing us to deliver battle-tested solutions tailored to your business needs. Partnering with an experienced AI consultancy can accelerate your AI journey and avoid common pitfalls that come with in-house implementation.\n\nIf you're considering building in-house AI capabilities, it’s worth evaluating whether a strategic AI partner like Cadre AI could provide a faster, more impactful path to success.\n\nhttps://www.cadreai.com/articles/why-hiring-in-house-ai-talent-will-fail"
+        },
+        {
+          "role": "user",
+          "text": "should i start with tool selection my journey to AI implementation?"
+        },
+        {
+          "role": "assistant",
+          "text": "Starting your AI implementation journey with tool selection is not the most effective approach. At Cadre AI, we recommend beginning with a deep understanding of your business processes and identifying where AI can create the most value. This involves mapping out workflows, calculating potential ROI for different use cases, and prioritizing based on impact and feasibility.\n\nOnce you have a clear picture of where AI can drive business impact, you can then select the right tools or custom solutions that align with your specific needs. Focusing on integration, workflow redesign, and adoption ensures that the tools you choose are implemented successfully and deliver measurable results.\n\nFor a step-by-step approach to AI implementation, we recommend starting with a structured strategy that aligns with your business goals.\n\nhttps://www.cadreai.com/articles/the-ceos-ai-decision-why-buy-first-is-the-smartest-path-to-ai-roi"
+        }
+      ],
+      "source": "Langfuse trace 7b3e48e9, session 24833c5b, 2026-08-08T13:18 — escalated in prod before any escalation reply existed"
+    },
+    {
+      "id": "marcus_internal_ai_team_opener",
+      "expected": "in_scope",
+      "message": "I'm thinking on having an applied ai internal team, what do you think?",
+      "history": [],
+      "source": "Langfuse trace 3eb776cb, session d0e5285c, 2026-08-08T13:04"
+    },
+    {
+      "id": "first_person_messy_sales_data",
+      "expected": "in_scope",
+      "message": "our sales data is inconsistent but leadership wants forecasting live this quarter — can we clean it later?",
+      "history": [],
+      "source": "98-question eval 2026-08-08 — escalated pre-retrieval in prod; answered by /articles/ai-readiness-starts-with-your-data-not-the-model"
+    },
+    {
+      "id": "first_person_messy_customer_data_pilot",
+      "expected": "in_scope",
+      "message": "our customer data is messy and scattered — can we pilot now and clean up later?",
+      "history": [],
+      "source": "98-question eval 2026-08-08 — escalated pre-retrieval in prod"
+    },
+    {
+      "id": "first_person_already_bought_licenses",
+      "expected": "in_scope",
+      "message": "we already bought AI tool licenses for everyone — isn't the hard part done?",
+      "history": [],
+      "source": "98-question eval 2026-08-08 — escalated pre-retrieval in prod"
+    },
+    {
+      "id": "first_person_stale_sops",
+      "expected": "in_scope",
+      "message": "our SOPs are stale and nobody reads them — is documentation even worth it?",
+      "history": [],
+      "source": "98-question eval 2026-08-08 — escalated pre-retrieval in prod; answered by the process-mapping and operational-efficiency articles"
+    },
+    {
+      "id": "in_scope_after_an_escalation_reply",
+      "expected": "in_scope",
+      "message": "ok — what services does Cadre AI offer?",
+      "history": [
+        {
+          "role": "user",
+          "text": "I want to talk to a person about my contract"
+        },
+        {
+          "role": "assistant",
+          "text": "That one is better answered by a person on the Cadre AI team. You can book a call with us at https://www.cadreai.com/contact and we will pick it up from there."
+        }
+      ],
+      "source": "synthetic — a prior escalation reply in history must not drag an ordinary question into needs_human"
+    },
+    {
+      "id": "in_scope_what_does_cadre_do",
+      "expected": "in_scope",
+      "message": "What does Cadre AI do?",
+      "history": [],
+      "source": "suggestion chip"
+    },
+    {
+      "id": "in_scope_maturity_index",
+      "expected": "in_scope",
+      "message": "What is the AI Maturity Index?",
+      "history": [],
+      "source": "suggestion chip"
+    },
+    {
+      "id": "needs_human_explicit_person",
+      "expected": "needs_human",
+      "message": "Can I speak to a real person on your team please?",
+      "history": [],
+      "source": "synthetic — explicit request for a human"
+    },
+    {
+      "id": "needs_human_billing",
+      "expected": "needs_human",
+      "message": "There's a mistake on last month's invoice for our engagement — who do I talk to?",
+      "history": [],
+      "source": "synthetic — account/billing matter"
+    },
+    {
+      "id": "needs_human_legal",
+      "expected": "needs_human",
+      "message": "Our counsel needs to renegotiate the liability clause in our contract with Cadre AI.",
+      "history": [],
+      "source": "synthetic — legal/contractual"
+    },
+    {
+      "id": "needs_human_complaint",
+      "expected": "needs_human",
+      "message": "I want to file a formal complaint about the service we received from Cadre AI.",
+      "history": [],
+      "source": "synthetic — complaint about the service"
+    },
+    {
+      "id": "off_topic_weather",
+      "expected": "off_topic",
+      "message": "What's the weather like in Paris today?",
+      "history": [],
+      "source": "synthetic"
+    },
+    {
+      "id": "off_topic_code",
+      "expected": "off_topic",
+      "message": "Write me a quicksort implementation in Python.",
+      "history": [],
+      "source": "synthetic"
+    }
+  ]
+}

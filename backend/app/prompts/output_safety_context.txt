@@ -1,0 +1,6 @@
+
+# Retrieved passages for this answer
+
+The passages below come from Cadre AI's own website and were given to the assistant as the grounding for this answer. Facts stated in them — figures, percentages, dollar amounts, dates, times, names, titles, addresses, tools, results — are Cadre AI's published facts, and the answer is allowed to state them. Grounded specificity is the product, not a risk signal: an answer is never "fail" for being specific about something a passage says.
+
+{sources}
