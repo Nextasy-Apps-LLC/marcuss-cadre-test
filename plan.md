@@ -2,9 +2,11 @@
 
 A customer-support chatbot for **Cadre AI** (AI strategy & implementation consultancy), live at **https://cadre.marcuss.pro**.
 
-**Stack:** React/Vite SSE client → CloudFront → Lambda Function URL (response streaming) → FastAPI + **LangGraph** conversation engine → AWS Bedrock (Claude Opus 5, Claude Haiku 4.5, NVIDIA Nemotron 3 Nano) + OpenAI embeddings → **Langfuse** for end-to-end tracing with public trace links.
+**Stack:** React/Vite SSE client → CloudFront → Lambda Function URL (response streaming) → FastAPI + **LangGraph** conversation engine → Bedrock models over the OpenAI-compatible **Mantle** endpoint (ADR 0002) → **Langfuse** for end-to-end tracing with public trace links. OpenAI embeddings + LanceDB arrive with the RAG phase (not built).
 
 **This file is the epic.** Each phase below is broken down into GitHub issues (via `/compound-create-issue`) that carry the implementation detail; the issues reference their phase here. Process, board, and knowledge-base mechanics: see `CLAUDE.md`.
+
+**Status (2026-08-07): Phases 1–2 are shipped and deployed. Phases 3–6 are designed below but NOT built** — where a section describes unshipped behavior (the inside of `retrieve`, evals, feedback UI) it says so inline. The shipped `retrieve` node is a stub that reports `skipped`/`kb_not_wired` on every turn.
 
 ## Foundations
 
@@ -32,9 +34,9 @@ done (answered)
 
 ### Model roster — a fit-for-purpose model per step
 
-All chat models via `langchain-aws` (`ChatBedrockConverse`); availability in us-east-1 is verified at implementation time, fallbacks noted.
+The plan originally specced Claude models (Haiku judges, Opus brain) via `langchain-aws`/`ChatBedrockConverse`. Neither survived contact with the account: classic `bedrock-runtime` is `NOT_AUTHORIZED` account-wide and the Claude ids listed on the Mantle endpoint refuse to run (ADR 0002), so calls go over Mantle's OpenAI-compatible API via `httpx`, and every slot was **probed for reliability, accuracy-through-the-parser, and latency before pinning** (KB-012 — the probe changed three of five slots, retiring the specced Nemotron 9B for intermittent 503s and 4× latency). The roster below is what ships; defaults live in `backend/app/config.py`, overridable per step via `CADRE_MODEL_*` env vars set by Terraform.
 
-| Step | Model | Why |
+| Step | Model (shipped) | Why |
 |---|---|---|
 | input validation | deterministic checks + **Nemotron 3 Nano 9B v2** (Bedrock serverless) | cheap SLM sanity/validity judge |
 | injection check | **Claude Haiku 4.5** strict single-token classifier | fast, strong instruction-following against adversarial input; Bedrock Guardrails prompt-attack filter evaluated as a complement |
@@ -48,22 +50,25 @@ All chat models via `langchain-aws` (`ChatBedrockConverse`); availability in us-
 
 The FastAPI endpoint bridges the graph to SSE via an asyncio queue; node wrappers emit events as the graph advances, so the client renders the pipeline live:
 
-- `state` — `{step, status: running | pass | fail | skipped, detail?}` on **every** transition (the "current conversation state" event)
+- `state` — `{step, status: running | pass | fail | skipped, detail?, elapsed_ms?}` on **every** transition (`elapsed_ms` is set on `pass`/`fail` verdicts and reused verbatim as the trace's per-step latency, so stepper and trace cannot disagree)
 - `token` — brain deltas, streamed as generated
-- `trace` — `{trace_id, url}` as soon as the Langfuse trace exists
-- `done` — `{outcome, refusal_text?}` · `error` · `ping` heartbeat (idle-timeout safety)
+- `trace` — `{trace_id, url}`, the first frame of the turn (the id is generated locally, so the URL is known before the graph starts); absent entirely when tracing is down
+- `done` — `{outcome, refusal_text?}` · `error` · `: ping` comment heartbeat (idle-timeout safety)
+
+Canonical definition: `backend/app/sse.py`, mirrored verbatim in `web/src/types.ts` — full semantics in `backend/CLAUDE.md`.
 
 Stream-then-retract is explicit: tokens stream during `brain`; a later `output_safety` fail instructs the client to replace the streamed buffer with `refusal_text`, this is non ideal for a production grade chatbot but it is ideal for this submission since it shows the whole process.
 
 ## Traceability — Langfuse
 
-- Langfuse Cloud; the SDK's LangChain `CallbackHandler` is attached to every graph invocation, so each node and LLM call lands as a span/generation on one trace.
-- A deterministic trace id per request lets the backend emit the trace URL in the `trace` SSE event immediately; the trace is marked `public=True`, so the link opens without a login.
-- The web client renders a **"View trace ↗"** chip on the latest assistant message.
-- `langfuse.flush()` runs in a `finally` before the response closes — Lambda freezes after responding, and unflushed events are lost.
+Shipped in Phase 2 (PR #55). The whole surface is `backend/app/tracing.py`; the rules it must obey (per-request `CallbackHandler` on `config["callbacks"]`, double-flush ordering, flush-before-terminal because Lambda freezes on response end, fail-open) live in `backend/CLAUDE.md` — read that, not this, before touching tracing. The shape in brief:
+
+- Langfuse Cloud; the SDK's LangChain `CallbackHandler` rides every graph invocation, so each **node** lands as a span. Individual Bedrock calls are *not* captured as generations — the model path is plain `httpx` (ADR 0002), and that trade is accepted.
+- A locally generated trace id lets the backend emit the trace URL as the **first** SSE frame; the trace is marked public, so the link opens without a login.
+- The web client renders a **"View trace ↗"** chip on each traced assistant message.
 - Trade-off, accepted for a demo: public traces expose user messages. Called out under scope.
 
-## Knowledge base (RAG) — when and how the bot consults it
+## Knowledge base (RAG) — when and how the bot consults it *(Phase 3 — designed, not built)*
 
 **The KB is consulted on every in-scope user message, as a first-class LangGraph node (`retrieve`)** — the standard LangGraph RAG pattern (retrieval as a graph step, not a hidden call inside the brain). It runs **after `topic_classifier` passes and before `brain`**: refused/escalated messages never spend an embedding call, and the brain always has its context before generating. As a node it gets its own SSE `state` events (`retrieve: running → pass/skipped`) and its own Langfuse span (query, top-k hits, scores — all visible in the public trace).
 
@@ -92,13 +97,13 @@ As built (2026-08-08): 55 pages → 131 chunks (median 755 tokens), a 1.80 MB co
 - Safe URL linkification (text→anchor for `https://` matches only; no `dangerouslySetInnerHTML`) so citations and the booking link are clickable.
 - "View trace ↗" chip on the latest assistant message.
 - Suggestion chips + greeting covering the assignment's support scenarios.
-- **Thumbs up / thumbs down on assistant messages — rendered as a no-op**: the buttons appear (with a brief "thanks for the feedback" acknowledgment) but are wired to nothing. They document the intended feedback loop; actually recording them as Langfuse scores on the message's trace is listed under "with more time".
+- **Thumbs up / thumbs down — NOT built** (Phase 5). The intent is a deliberate no-op UI: buttons that appear (with a brief "thanks" acknowledgment) but are wired to nothing, documenting the feedback loop; recording them as Langfuse scores is listed under "with more time". Today there is no feedback UI at all.
 
 ## Persona (brain node)
 
 Cadre AI support assistant for prospective and existing clients: services (AI Strategy, AI Leadership & Facilitation, AI Engineering, AI Agents), industries served, the AI Maturity Index, the client portal, and how to get started. Facts come only from retrieved context and the vetted baseline — never invented pricing, clients, or capabilities. Pricing → engagements are custom; book a strategy call. Unknown or out-of-scope → escalate to https://www.cadreai.com/contact. Replies in the user's language.
 
-## Evaluation — LLM-as-judge
+## Evaluation — LLM-as-judge *(Phase 4 — designed, not built)*
 
 "Is the bot doing things correctly, and did this change make it better or worse?" is answered by an **offline eval harness** (`backend/evals/`) that runs the LangGraph engine headless against a golden dataset and logs every run as a **Langfuse experiment**, so run-vs-run comparison (per-case and aggregate score deltas) comes from Langfuse's native experiment UI — no dashboard to build.
 
@@ -110,15 +115,15 @@ Cadre AI support assistant for prospective and existing clients: services (AI St
 ## Phases
 
 - [x] **Phase 1 — LangGraph engine + SSE v2**: `StateGraph`, nodes with mocked-seam unit tests, `state` events, refusal/escalation states, persona v1, frontend protocol update + pipeline stepper. — shipped via #24/#25/#26/#27 (PRs #29, #31, #35)
-- [ ] **Phase 2 — Langfuse traceability**: keys via SSM SecureString (`SET_OUT_OF_BAND` pattern), callback wiring, public traces, `trace` event, frontend trace link, flush hardening for Lambda.
-- [ ] **Phase 3 — RAG KB**: ingestion pipeline + LanceDB artifact (55 pages → 131 chunks, 1.80 MB); `retrieve` node (condense → embed → search) wired between `topic_classifier` and `brain`, fail-open with per-cause `detail`s and its own Langfuse span; cited answers via `persona.system_prompt(context)`; OpenAI key `data`-read from SSM into the function (`infra/openai.tf`); web half done — linkify's KB-017 fix (regex now excludes `(`/`[`/`]`) and the exact `/case-studies` / `/articles` label mappings, verified end to end in a real browser against the real backend image (KB-007). Complete in #62's PR; checkbox flips once merged and deployed (`terraform apply` is Marcus's step).
+- [x] **Phase 2 — Langfuse traceability**: keys via SSM SecureString (`SET_OUT_OF_BAND` pattern), callback wiring, public traces, `trace` event, frontend trace link, flush hardening for Lambda.
+- [x] **Phase 3 — RAG KB**: ingestion pipeline + LanceDB artifact (55 pages → 131 chunks, 1.80 MB); `retrieve` node (condense → embed → search) wired between `topic_classifier` and `brain`, fail-open with per-cause `detail`s and its own Langfuse span; cited answers via `persona.system_prompt(context)`; OpenAI key `data`-read from SSM into the function (`infra/openai.tf`); web half done — linkify's KB-017 fix (regex now excludes `(`/`[`/`]`) and the exact `/case-studies` / `/articles` label mappings, verified end to end in a real browser against the real backend image (KB-007). Complete in #62's PR; checkbox flips once merged and deployed (`terraform apply` is Marcus's step).
 - [ ] **Phase 4 — Evaluation harness**: golden dataset; headless graph runner; deterministic outcome/citation assertions; LLM-judge rubric (groundedness, correctness, persona) on a non-brain model family; runs logged as Langfuse experiments for before/after comparison.
 - [ ] **Phase 5 — UX polish + e2e**: stepper/linkify/suggestions polish; no-op thumbs up/down; `BASE_URL`-pointable e2e suite (healthz, config, grounded-answer-with-citation, off-topic refusal, injection refusal) run against local Docker, then prod.
 - [ ] **Phase 6 — Hardening + live verification**: the assignment's support scenarios exercised live in a browser, including escalation and trace-link click-through; a final eval run recorded as the submission baseline.
 
 ## Scope decisions
 
-**In scope:** the assignment's support scenarios; grounded, cited answers; the five-step guarded pipeline with live visible state; public per-message traces; escalation to a human via booking; an offline LLM-as-judge eval harness with run-vs-run comparison.
+**In scope:** the assignment's support scenarios; grounded, cited answers (grounding via RAG is Phase 3, not built — until then facts come only from the vetted persona baseline); the six-step guarded pipeline with live visible state; public per-turn traces; escalation to a human via booking; an offline LLM-as-judge eval harness with run-vs-run comparison (Phase 4, not built).
 
 **Out of scope** (each deliberate, with the "with more time" path):
 
@@ -133,12 +138,12 @@ Cadre AI support assistant for prospective and existing clients: services (AI St
 | pgvector/RDS-backed KB | corpus fits in an embedded store | migrate when corpus scale/tenancy demands it |
 | Langfuse self-hosting | Cloud free tier fits a demo | self-host if data residency requires |
 | Public traces privacy | acceptable for a demo | per-conversation opt-in, redaction in traces |
-| User feedback wiring | thumbs up/down ship as a no-op UI | record as Langfuse scores on the message's trace; feed the eval dataset |
+| User feedback wiring | no feedback UI built yet; the no-op thumbs are Phase 5 | record as Langfuse scores on the message's trace; feed the eval dataset |
 | Online / continuous evaluation | offline harness covers the demo | scheduled LLM-judge over sampled production traces; drift alerts |
 | CI gating on eval scores | judge needs calibration first | block merges on score regression once judge↔human agreement is measured |
 
 ## Operational notes
 
-- Secrets (Langfuse public/secret keys, OpenAI key) live as SSM SecureString parameters created by Terraform with `value = "SET_OUT_OF_BAND"` + `ignore_changes`; real values are set manually once via `aws ssm put-parameter`.
-- Bedrock model availability (Nemotron 3 Nano, model ids) is asserted at the start of Phase 1; every fallback is named in the roster above.
+- Secrets live in SSM. Two shapes, and picking the wrong one clobbers a live value: parameters that don't exist yet are created by Terraform with `value = "SET_OUT_OF_BAND"` + `ignore_changes` (the planned OpenAI key will use this); parameters that already exist with real values (the Bedrock key, the three Langfuse parameters) are only `data`-referenced. `infra/README.md` § "Secrets and credentials" is the canonical write-up.
+- Every configured model id is asserted before an image is pushed — `backend/scripts/assert_models.py` in `deploy.yml` lists `GET /v1/models` *and* spends a real one-token completion per id, because listing is not entitlement (several Claude ids list and still refuse to run).
 - Deploy path is unchanged from the POC: push to `main` → CI → Terraform + image build → CloudFront. Every phase merges deployable.

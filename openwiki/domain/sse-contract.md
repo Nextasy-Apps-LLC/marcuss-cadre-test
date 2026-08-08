@@ -1,7 +1,7 @@
 ---
 type: API Contract
 title: SSE contract v2 — steps, states, tokens
-description: The cadre SSE v2 wire format — state, token, done, error events plus the ping heartbeat; the six pipeline steps in order; status semantics (degraded, skipped, lost, stream-then-retract); the LangGraph backend and hand-rolled fetch-SSE client; and the tests that pin the contract.
+description: The cadre SSE v2 wire format — trace, state, token, done, error events plus the ping heartbeat; the six pipeline steps in order; status semantics (degraded, skipped, lost, stream-then-retract); the LangGraph backend and hand-rolled fetch-SSE client; and the tests that pin the contract.
 tags: [sse, contract, steps, streaming, langgraph, fastapi, react]
 ---
 
@@ -21,7 +21,8 @@ slow step, and the client drops them.
 
 | Event | Payload | Meaning |
 |---|---|---|
-| `state` | `step`, `status` (`running`/`pass`/`fail`/`skipped`), `detail?` | One pipeline transition; each of the six steps emits `running` then its verdict. |
+| `trace` | `trace_id`, `url` | The public Langfuse trace link — at most once, the first frame of the turn; absent entirely when tracing is down (fail-open). |
+| `state` | `step`, `status` (`running`/`pass`/`fail`/`skipped`), `detail?`, `elapsed_ms?` | One pipeline transition; each of the six steps emits `running` then its verdict. `elapsed_ms` is an int on `pass`/`fail`, `null` otherwise. |
 | `token` | `text` | A fragment of the answer, only while `brain` (or the escalation text) streams. |
 | `done` | `outcome` (`answered`/`refused`/`escalated`/`error`), `refusal_text?` | Always the terminal event of a normal stream. |
 | `error` | `message` | Terminal on its own — no `done` follows. Generic on the wire, detailed in the log. |

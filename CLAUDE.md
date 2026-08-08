@@ -8,6 +8,12 @@ plus a `POST /ask` SSE endpoint on one CloudFront distribution (private S3 +
 decisions. Don't fight them without a superseding ADR. Keep `infra/README.md`
 in sync.
 
+**`plan.md` is the epic** — architecture, model roster, phases, scope
+decisions. Phases 1–2 are shipped and deployed; Phases 3–6 (RAG, evals,
+feedback UI, hardening pass) are designed there but **not built** — never
+document or assume them as existing. The `retrieve` step is a stub that
+reports `skipped`/`kb_not_wired` by design.
+
 **Scoped rules:** `infra/CLAUDE.md` (Terraform), `web/CLAUDE.md` (React/SSE
 client), `backend/CLAUDE.md` (FastAPI/SSE server) — each loads automatically
 when you touch files under its directory. Read them before editing there.

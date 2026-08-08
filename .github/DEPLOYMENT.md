@@ -1,6 +1,10 @@
 # Deploying cadre
 
-Two workflows:
+This page is the **one-time repository setup** for the two workflows that gate
+shipping. (The repo has five workflows in total — `terraform.yml`, `docs.yml`
+and `openwiki-update.yml` are covered in
+[docs/ci-cd.md](../docs/ci-cd.md); `terraform.yml`'s apply job shares the same
+`production` environment gate configured below.)
 
 | Workflow | Trigger | What it does |
 |---|---|---|
@@ -77,9 +81,15 @@ access is granted by the OIDC trust policy, not by knowing the string.
 | `WEB_BUCKET` | `terraform output web_bucket` |
 | `CLOUDFRONT_DISTRIBUTION_ID` | `terraform output cloudfront_distribution_id` |
 | `SITE_URL` | `terraform output site_url` |
+| `TF_ROLE_ARN` | `terraform output terraform_role_arn` (gates `terraform.yml`'s plan job — unset means "skip cleanly, not configured yet") |
+| `AWS_ACCOUNT_ID` | the 12-digit account id (`terraform.yml` passes it as `-var`) |
+| `OIDC_PROVIDER_ARN` | the shared GitHub OIDC provider ARN (looked up, never created — ADR 0001) |
 
-There are **no repository secrets**. If you find yourself adding one, check
-first whether OIDC or an SSM parameter fits — see `infra/README.md`.
+There are exactly two repository **secrets**, neither an AWS credential:
+`BEDROCK_API_KEY` (only the dispatch-gated `e2e` job in `ci.yml`; ADR 0002)
+and `OPENCODE_ZEN_API_KEY` (only `openwiki-update.yml`'s generation model).
+Before adding another, check whether OIDC or an SSM parameter fits — see
+`infra/README.md`.
 
 ---
 

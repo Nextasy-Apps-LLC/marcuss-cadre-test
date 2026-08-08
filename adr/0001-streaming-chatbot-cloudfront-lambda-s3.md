@@ -3,6 +3,13 @@
 - **Status:** Accepted (Bedrock-auth statements superseded by [ADR 0002](0002-bedrock-mantle-api-key.md))
 - **Date:** 2026-08-07
 
+> **Historical note (2026-08-07):** the SSE event names in this record (`rail`,
+> `done {refused, refusal_reason}`) are protocol **v1**, since replaced by v2
+> (`trace` / `state` / `token` / `done` / `error` — canonical in
+> `backend/app/sse.py`). The topology decisions below are unaffected; the
+> stream-then-retract behavior the sequence diagram shows still holds, carried
+> by `done {outcome: "refused", refusal_text}`.
+
 ## Context
 
 `cadre` is a guardrailed chatbot at `cadre.marcuss.pro`: a React page plus a

@@ -18,15 +18,20 @@ CloudFront, with the page served from a private S3 bucket on the same hostname.
               │ AWS_IAM   │  └─────────────┘
               │ STREAM    │
               └─────┬─────┘
-                    │ SigV4 (execution role)
-              ┌─────▼─────┐
-              │  Bedrock  │
-              └───────────┘
+                    │ Bearer token (ADR 0002)
+              ┌─────▼──────────────┐
+              │  Bedrock (Mantle)  │
+              └────────────────────┘
 ```
 
 ## Secrets and credentials
 
-**There are none to manage.** That is a design property, not an oversight:
+**Nothing in this repo is a secret, and no credential is long-lived except the
+API keys parked in SSM.** ADR 0001 designed a zero-secret stack; ADR 0002
+knowingly retracted that for model calls when classic `bedrock-runtime` turned
+out to be `NOT_AUTHORIZED` account-wide. What remains true by design: every
+AWS-to-AWS hop is role- or OAC-based, and every real secret lives in exactly
+one SSM parameter — never in git, tfvars, or workflow files:
 
 | Thing | How it authenticates |
 |---|---|
