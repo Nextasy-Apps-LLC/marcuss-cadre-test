@@ -12,8 +12,9 @@ tags: [quickstart, cadre, entrypoint]
 verdicts, then answer tokens, then `done` — from FastAPI on an arm64 Lambda
 container, all behind one CloudFront distribution. The backend is a
 [LangGraph conversation engine](/openwiki/domain/sse-contract.md) driving
-Bedrock models over the Mantle API (SSE protocol v2); one secret, the Bedrock
-API key, lives in SSM per [ADR 0002](/openwiki/architecture/overview.md).
+Bedrock models over the Mantle API (SSE protocol v2); the secrets — the
+Bedrock API key ([ADR 0002](/openwiki/architecture/overview.md)) and the
+Langfuse keys — live in SSM.
 
 Read `adr/README.md` first — ADR 0001 records the load-bearing decisions, ADR
 0002 supersedes its Bedrock-auth statements. `infra/README.md` is the living
@@ -25,7 +26,7 @@ operational doc. Per-area rules: `backend/CLAUDE.md`, `web/CLAUDE.md`,
 | Page | What it documents |
 |---|---|
 | [Architecture overview](/openwiki/architecture/overview.md) | One distribution, two origins; the four silent streaming-breakers; the two-grant 403 trap; one secret in SSM (ADR 0002). |
-| [SSE contract and steps](/openwiki/domain/sse-contract.md) | Protocol v2: the four events, six pipeline steps, status/outcome semantics, the LangGraph backend, the fetch-SSE client, contract tests. |
+| [SSE contract and steps](/openwiki/domain/sse-contract.md) | Protocol v2: the five events, six pipeline steps, status/outcome semantics, the LangGraph backend, the fetch-SSE client, contract tests. |
 | [Terraform infrastructure](/openwiki/infrastructure/terraform.md) | Resource families, variables, the two OIDC roles, Lambda env vars, invariants. |
 | [Operations runbooks](/openwiki/operations/runbooks.md) | Bootstrap, two-phase custom domain, 403 bisection, rollback, cost. |
 | [CI/CD and deployment](/openwiki/workflows/ci-cd.md) | The five workflows, the approval-gated deploy/rollback pipeline, MkDocs. |
@@ -50,7 +51,7 @@ time rather than copying them.
 - **KB retrieval (`retrieve` step)** — `backend/app/graph/nodes.py` reports
   `skipped`/`kb_not_wired`; plan.md Phase 3 (query condensing, LanceDB search,
   citations) is not built.
-- **Langfuse tracing** — plan.md's `trace` event, public trace links, and the
-  client "View trace" chip are not implemented.
-- **`docs/ci-cd.md` workflow count** — still says "four workflows", missing
-  `openwiki-update.yml`; a source-docs fix.
+
+(Two earlier backlog items are resolved: Langfuse tracing shipped as plan
+Phase 2 — the `trace` event, public trace links, and the client "View trace"
+chip all exist — and `docs/ci-cd.md` now counts all five workflows.)
