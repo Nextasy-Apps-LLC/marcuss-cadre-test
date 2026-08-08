@@ -102,15 +102,28 @@ MODEL_BRAIN = os.environ.get("CADRE_MODEL_BRAIN", "qwen.qwen3-32b")
 # Final gate on the complete streamed answer.
 MODEL_GUARD = os.environ.get("CADRE_MODEL_GUARD", "qwen.qwen3-32b")
 
-# Step → model id mapping, served by /config so the web stepper can label each
-# chip with the model that runs it. `retrieve` has no model id yet — it reports
+# Step → display name for the model that runs it, served by /config so the
+# web stepper can label each chip. `retrieve` has no model id yet — it reports
 # `skipped`/`kb_not_wired` without calling a model, so it is absent on purpose.
+# The values below are readable shorthand; keep them in sync when MODEL_* ids
+# change.
+_MODEL_DISPLAY = {
+    MODEL_VALIDATE: "nemotron 12b",
+    MODEL_INJECTION: "qwen3-32b",
+    MODEL_TOPIC: "gemma-3-12b",
+    MODEL_BRAIN: "qwen3-32b",
+    MODEL_GUARD: "qwen3-32b",
+}
+
 STEP_MODELS: dict[str, str] = {
-    "validate_input": MODEL_VALIDATE,
-    "injection_check": MODEL_INJECTION,
-    "topic_classifier": MODEL_TOPIC,
-    "brain": MODEL_BRAIN,
-    "output_safety": MODEL_GUARD,
+    step: _MODEL_DISPLAY[model_id]
+    for step, model_id in (
+        ("validate_input", MODEL_VALIDATE),
+        ("injection_check", MODEL_INJECTION),
+        ("topic_classifier", MODEL_TOPIC),
+        ("brain", MODEL_BRAIN),
+        ("output_safety", MODEL_GUARD),
+    )
 }
 
 # Deliberately generous, not tiny. Several models in the roster reason before
