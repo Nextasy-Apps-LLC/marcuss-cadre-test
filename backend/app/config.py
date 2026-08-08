@@ -163,15 +163,37 @@ MODEL_BRAIN = os.environ.get("CADRE_MODEL_BRAIN", "qwen.qwen3-32b")
 # ungrounded-fact negatives (must fail). Benchmarked x 3 runs, temp 0
 # (`python -m evals.judge_bench --slot guard`):
 #
-#   qwen.qwen3-next-80b-a3b-instruct  48/48  p50 0.32s   <- picked
-#   nvidia.nemotron-nano-3-30b        45/48  p50 0.23s   (passes instr. leak)
+#   qwen.qwen3-next-80b-a3b-instruct  48/48  p50 0.32s
+#   nvidia.nemotron-nano-3-30b        45/48  p50 0.23s   <- picked
 #   google.gemma-3-12b-it             45/48  p50 0.25s   (passes instr. leak)
 #   qwen.qwen3-32b                    45/48  p50 0.31s   (previous default;
 #     consistently passes an answer that discusses its own instructions)
 #   mistral.ministral-3-*             fail 2-3 *correct grounded* answers —
 #     they would keep retracting the 31%/24% case studies; disqualified
+#
+# **This slot is a deliberate accuracy-for-cost trade, taken with eyes open.**
+# The 80B model is the only one that scores 48/48, and the 3-point gap is not
+# spread across the fixture set — all three runners-up fail the *same* case:
+# they let through an answer that discusses its own instructions ("passes
+# instr. leak" means the guard passes it, i.e. does not catch it).
+#
+# What the #79 cost data added to the original benchmark, priced at this
+# slot's real measured token profile (in≈4581, out=2 — the guard reads the
+# whole answer plus every retrieved passage, so its cost is ~all input):
+#
+#   nvidia.nemotron-nano-3-30b        $0.000275/turn   -57%, and the fastest
+#   google.gemma-3-12b-it             $0.000413/turn   -36%
+#   qwen.qwen3-next-80b-a3b-instruct  $0.000644/turn   the 48/48 baseline
+#   qwen.qwen3-32b                    $0.000688/turn   +7% AND 45/48
+#
+# nemotron-nano-3-30b is picked for cost and latency. The instruction-leak
+# case is the known, single, specific regression that buys it — it is not a
+# general accuracy loss, and `scrub_failure`'s deterministic half (URL
+# allowlist + PII) is unaffected because it runs first and has no outage mode.
+# If instruction leakage matters more than $0.00037/turn, revert this line;
+# the env var flips it without a code deploy.
 MODEL_GUARD = os.environ.get(
-    "CADRE_MODEL_GUARD", "qwen.qwen3-next-80b-a3b-instruct"
+    "CADRE_MODEL_GUARD", "nvidia.nemotron-nano-3-30b"
 )
 
 # ── Cost (issue #79, trace-design.md §4.7) ─────────────────────────────────
@@ -207,6 +229,7 @@ MODEL_PRICES: dict[str, tuple[float, float]] = {
     "mistral.ministral-3-8b-instruct": (0.15, 0.15),
     "zai.glm-4.7-flash": (0.07, 0.40),
     "qwen.qwen3-next-80b-a3b-instruct": (0.14, 1.20),
+    "nvidia.nemotron-nano-3-30b": (0.06, 0.24),
     "qwen.qwen3-32b": (0.15, 0.60),
     "google.gemma-3-12b-it": (0.09, 0.29),
     # Embeddings bill input only; the output side is 0 so the arithmetic in
@@ -295,7 +318,7 @@ _MODEL_DISPLAY = {
     MODEL_TOPIC: "ministral 8b",
     EMBEDDING_MODEL: "embed-3-large",
     MODEL_BRAIN: "qwen3-32b",
-    MODEL_GUARD: "qwen3-next-80b",
+    MODEL_GUARD: "nemotron 30b",
 }
 
 STEP_MODELS: dict[str, str] = {
