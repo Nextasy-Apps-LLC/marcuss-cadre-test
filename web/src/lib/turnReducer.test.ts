@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { STEPS, type DoneEvent, type StateEvent, type StepName, type TraceEvent } from "../types";
+import { STEPS, type DoneEvent, type RetrievalInfo, type StateEvent, type StepName, type TraceEvent } from "../types";
 import {
   applyAborted,
   applyDone,
@@ -22,8 +22,11 @@ function state(
   status: StateEvent["status"],
   detail?: string,
   elapsed_ms: number | null = null,
+  retrieval: RetrievalInfo | null = null,
 ): StateEvent {
-  return detail === undefined ? { step, status, elapsed_ms } : { step, status, detail, elapsed_ms };
+  return detail === undefined
+    ? { step, status, elapsed_ms, retrieval }
+    : { step, status, detail, elapsed_ms, retrieval };
 }
 
 describe("freshTurn", () => {
@@ -50,6 +53,56 @@ describe("applyState", () => {
     for (const name of STEPS) {
       if (name !== "injection_check") expect(byName[name]!.status).toBe("pending");
     }
+  });
+});
+
+describe("applyState — retrieval mirroring (KB-005)", () => {
+  const facts: RetrievalInfo = {
+    query: "skip process mapping step in AI implementation",
+    hit_count: 6,
+    top_score: 0.5319,
+  };
+
+  it("starts every step with a null retrieval", () => {
+    for (const step of freshTurn().steps) expect(step.retrieval).toBeNull();
+  });
+
+  it("mirrors the wire payload verbatim onto the retrieve step", () => {
+    let turn = freshTurn();
+    turn = applyState(turn, state("retrieve", "pass", undefined, 555, facts));
+    expect(turn.steps.find((s) => s.name === "retrieve")!.retrieval).toEqual(facts);
+  });
+
+  it("keeps retrieval null when the wire says null — running, skipped, or any other step", () => {
+    let turn = freshTurn();
+    turn = applyState(turn, state("retrieve", "running", undefined, null, null));
+    expect(turn.steps.find((s) => s.name === "retrieve")!.retrieval).toBeNull();
+
+    turn = applyState(turn, state("retrieve", "skipped", "kb_timeout", 6000, null));
+    expect(turn.steps.find((s) => s.name === "retrieve")!.retrieval).toBeNull();
+
+    turn = applyState(turn, state("brain", "pass", undefined, 842, null));
+    expect(turn.steps.find((s) => s.name === "brain")!.retrieval).toBeNull();
+  });
+
+  it("carries the zero-hit payload rather than flattening it to null", () => {
+    // 0 hits is a fact the pane must be able to show; collapsing it to "no
+    // payload" would make an empty corpus result indistinguishable from a
+    // fail-open skip.
+    let turn = freshTurn();
+    turn = applyState(
+      turn,
+      state("retrieve", "pass", "no_hits", 210, { query: null, hit_count: 0, top_score: null }),
+    );
+    const step = turn.steps.find((s) => s.name === "retrieve")!;
+    expect(step.retrieval).toEqual({ query: null, hit_count: 0, top_score: null });
+  });
+
+  it("does not disturb other steps' retrieval when updating one step", () => {
+    let turn = freshTurn();
+    turn = applyState(turn, state("retrieve", "pass", undefined, 555, facts));
+    turn = applyState(turn, state("brain", "pass", undefined, 842, null));
+    expect(turn.steps.find((s) => s.name === "retrieve")!.retrieval).toEqual(facts);
   });
 });
 
