@@ -1,0 +1,25 @@
+# Ingestion-only dependencies — `backend/ingest/`, run on a laptop or in CI,
+# NEVER inside the Lambda image. The Dockerfile copies `app/` and installs
+# `requirements.txt` only; every line here would otherwise be cold-start weight
+# for code no invoke ever executes (backend/CLAUDE.md).
+#
+# Keep this file and `requirements.txt` disjoint on purpose: `lancedb` and
+# `pyarrow` are needed at *query* time too and therefore belong in
+# `requirements.txt` (added by the retrieve-node work), not here — this file
+# only carries what exists solely to build the artifact.
+-r requirements.txt
+
+# HTML → text: main-content extraction with the C-backed lxml parser (the
+# stdlib parser mis-nests the site's markup).
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# The chunker counts tokens the way the embedding model does (cl100k_base),
+# so "800 tokens" is a measurement rather than a guess about characters.
+tiktoken>=0.7.0
+
+# The artifact writer. Also a runtime dependency once `retrieve` lands; listed
+# here so `python -m ingest.build_kb` works from a checkout that has not yet
+# installed the runtime set.
+lancedb>=0.13.0
+pyarrow>=17.0.0
