@@ -81,12 +81,13 @@ The backend is a LangGraph `StateGraph`: every step of the guarded pipeline is
 a node, every terminal (`answered` / `refused` / `escalated` / `error`) is an
 explicit state, and the SSE stream is a live projection of the graph's
 progress. `backend/app/sse.py` is the wire format's single source of truth, and
-`web/src/types.ts` mirrors it verbatim. Four event types plus a `: ping`
+`web/src/types.ts` mirrors it verbatim. Five event types plus a `: ping`
 comment heartbeat:
 
 | Event | Payload |
 |---|---|
-| `state` | `step`, `status` (`running` \| `pass` \| `fail` \| `skipped`), `detail?` |
+| `trace` | `trace_id`, `url` — the public Langfuse trace link, sent as the **first** frame of the turn; absent entirely when tracing is down (fail-open) |
+| `state` | `step`, `status` (`running` \| `pass` \| `fail` \| `skipped`), `detail?`, `elapsed_ms?` (int on `pass`/`fail`, `null` otherwise — the same numbers the trace reports) |
 | `token` | `text` |
 | `done` | `outcome` (`answered` \| `refused` \| `escalated` \| `error`), `refusal_text?` |
 | `error` | `message` |

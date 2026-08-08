@@ -224,9 +224,11 @@ protection on `main`, and the repository variables (`AWS_REGION`,
 `CLOUDFRONT_DISTRIBUTION_ID`, `SITE_URL`, `TF_ROLE_ARN`, `AWS_ACCOUNT_ID`,
 `OIDC_PROVIDER_ARN`), all of which come from `terraform output`.
 
-There is exactly one repository **secret**: `BEDROCK_API_KEY`, read only by
-the dispatch-gated `e2e` job in `ci.yml` ([ADR 0002](adr/0002-bedrock-mantle-api-key.md)
-made the Bedrock key the stack's one secret). Every value above is an
+There are exactly two repository **secrets**, neither of them an AWS
+credential: `BEDROCK_API_KEY`, read only by the dispatch-gated `e2e` job in
+`ci.yml` ([ADR 0002](adr/0002-bedrock-mantle-api-key.md) made the Bedrock key
+the stack's one *application* secret), and `OPENCODE_ZEN_API_KEY`, used only
+by `openwiki-update.yml`'s generation model. Every value above is an
 identifier, not a credential; AWS access is granted by the OIDC trust policy,
 not by knowing the string.
 
