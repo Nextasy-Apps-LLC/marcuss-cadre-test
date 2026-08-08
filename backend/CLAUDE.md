@@ -214,20 +214,55 @@ progress. Rules, each with its why:
 
 ### Tracing (`app/tracing.py`)
 
-- `app/tracing.py` is the whole surface: `start_trace(client_id)` and
-  `finalize_trace(...)`. Nothing else in the backend imports Langfuse.
+- `app/tracing.py` is the whole surface: `start_trace(client_id)`,
+  `start_turn(trace_id)`, `start_generation(...)`, `record_retrieval(...)` and
+  `finalize_trace(...)`. Nothing else in the backend imports Langfuse — the
+  transports take an opaque `generation=` handle and never see the SDK.
 - Every graph invocation emits a Langfuse trace, attached as Langfuse's
-  LangChain `CallbackHandler` on the graph run — tracing rides the callback
-  surface the orchestration already has, not bespoke logging per call site. The
-  handler is a per-request object, so it goes on the invocation's `config`
-  (`config["callbacks"]`), never on `ConversationState` (KB-008), exactly like
-  `emit` goes on `config["configurable"]`. Because the model path is plain
-  `httpx` (ADR 0002, no LangChain), the handler captures **graph-level node
-  spans**, not individual Bedrock generations. That is the accepted shape;
-  don't instrument `app/llm.py` to work around it.
-- `record_retrieval(trace_id, query, hits)` writes `retrieve`'s own span: the
-  **condensed** query (so a bad rewrite is visible instead of inferred from a
-  bad answer) plus each hit's URL and score. The chunk text is deliberately
+  LangChain `CallbackHandler` on the graph run. The handler is a per-request
+  object, so it goes on the invocation's `config` (`config["callbacks"]`),
+  never on `ConversationState` (KB-008), exactly like `emit` goes on
+  `config["configurable"]`. It captures **graph-level node spans**.
+- **Every model call is also a hand-built generation**, created in the
+  transport where the call happens (`llm.chat`, `llm.chat_stream`,
+  `embeddings.embed_query`). This *supersedes* the former "don't instrument
+  `app/llm.py`" rule, deliberately and with its reasoning preserved: that rule
+  guarded against per-call-site logging duplicating the callback surface, but
+  the **effective model id** and the **token counts** exist only inside the
+  HTTP response the transport parses, and no other layer can ever know them
+  (`trace-design.md` §4.2, issue #79). ADR 0002 still stands — this is a
+  hand-built observation, not a LangChain wrapper.
+- Generations parent themselves to an **ambient** `pipeline` span opened
+  inside the graph task (`main._run_graph`), so no trace id is threaded through
+  `models.py` and the one-line-monkeypatch property survives. Task-local
+  contextvars are what keep one visitor's spans out of another's trace — the
+  same concern as KB-008, and asserted by an interleaved-turns unit test.
+- **The trace-level fields ride a *separate* span created inside
+  `propagate_attributes` after the first flush**, never the `pipeline` span.
+  Two spans, for two reasons both found by reading real traces back:
+  `propagate_attributes` only reaches spans created inside its block (a
+  reused span silently loses `session_id` and every tag), and the trace-level
+  upsert is won by the later-*created* root write, not the later-ended one.
+- A trace MUST carry at minimum: the `client_id` as the session id, which step
+  refused if any, per-step + total `latency_ms`, the turn's own input/output on
+  the trace root, the `outcome:*` / `refused:*` / `degraded` / `kb:*` tags, and
+  per model call the effective model id, `usage_details` and `cost_details`
+  from `config.MODEL_PRICES`. Absent facts are recorded as **literals**
+  (`usage_source:"absent"`, `cost_source:"unpriced"`, `refused_step:"none"`),
+  never omitted: Langfuse drops null-valued metadata, so an omitted field is
+  indistinguishable from instrumentation that failed to run (KB-009).
+- **Verify by readback, not by logging.** `scripts/assert_trace.py` drives real
+  turns and fetches the traces back through the public API, polling to a
+  bounded ~90s deadline (KB-020). A span that silently no-ops passes every unit
+  test in the suite; this is the only thing that catches it, and the root-IO
+  clobber it was written for had shipped unseen.
+- `record_retrieval(trace_id, raw_query, condensed_query, fetched, kept)`
+  writes `retrieve`'s own span: **both** queries (the delta between the
+  visitor's words and the rewrite is the evidence a bad rewrite happened at
+  all) plus each hit's URL and score **pre-floor and post-floor**. Recording
+  only the surviving slate made a floor-suppressed retrieval byte-identical
+  to an empty corpus — the docstring claimed otherwise and was false at its
+  call site until #79. The chunk text is deliberately
   left out — it is already in the brain span's system prompt, and duplicating
   it would make a public trace expensive to load for no new fact. The same
   two facts, reduced to `{query, hit_count, top_score}`, also ride the `state`

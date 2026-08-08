@@ -174,6 +174,46 @@ MODEL_GUARD = os.environ.get(
     "CADRE_MODEL_GUARD", "qwen.qwen3-next-80b-a3b-instruct"
 )
 
+# ── Cost (issue #79, trace-design.md §4.7) ─────────────────────────────────
+#
+# USD per 1M tokens, `model_id -> (input, output)`. `app/tracing.py` turns the
+# provider's own `usage` object into a `cost_details` on each generation, so
+# Langfuse can roll a turn's cost up without being told what anything costs.
+#
+# **Why this lives in the repo and not in the Langfuse UI's model definitions.**
+# Every id above is env-overridable (`CADRE_MODEL_*`). A UI-side pricing table
+# matches on ids that can change without a deploy, so it drifts silently and
+# invisibly — the same failure class `scripts/assert_models.py` exists to
+# prevent. Here it is reviewed like everything else, and
+# `tests/test_tracing_phase1.py` fails the build if a configured id has no line,
+# so a model swap cannot quietly zero a dashboard. An id absent at runtime
+# records its usage and omits cost with `cost_source:"unpriced"` — never a
+# silent zero.
+#
+# Source: the AWS Price List API, on-demand **standard** tier, us-east-1,
+# queried per exact model id on 2026-08-08 —
+# `aws pricing get-products --service-code AmazonBedrock` reading the
+# `USE1-<model_id>-mantle-{input,output}-tokens-standard` usage types, i.e. the
+# SKUs that bill the very ids sent to the Mantle endpoint. That keying matters:
+# the public pricing page groups `nvidia.nemotron-nano-12b-v2` under a display
+# name shared with the 9b model, which is priced differently ($0.06/$0.23).
+# OpenAI embeddings from openai.com/api/pricing (input-only; no output tokens).
+#
+# Re-check these when a `CADRE_MODEL_*` default changes, in the same breath as
+# `scripts/assert_models.py`. Prices are list, on-demand, and do not model the
+# flex (-50%) or priority (+75%) tiers this service does not use.
+MODEL_PRICES: dict[str, tuple[float, float]] = {
+    "nvidia.nemotron-nano-12b-v2": (0.20, 0.60),
+    "mistral.ministral-3-8b-instruct": (0.15, 0.15),
+    "zai.glm-4.7-flash": (0.07, 0.40),
+    "qwen.qwen3-next-80b-a3b-instruct": (0.14, 1.20),
+    "qwen.qwen3-32b": (0.15, 0.60),
+    "google.gemma-3-12b-it": (0.09, 0.29),
+    # Embeddings bill input only; the output side is 0 so the arithmetic in
+    # `tracing._cost_details` needs no special case.
+    "text-embedding-3-large": (0.13, 0.0),
+}
+
 # ── The knowledge base (issue #62) ─────────────────────────────────────────
 #
 # The embedding model and its width are the one setting in this file that is
