@@ -1,5 +1,16 @@
 name: Deploy
 
+# The only workflow that mutates production. It ships the image, the page AND
+# the infrastructure for one commit, in one approval — see ADR 0003.
+#
+# Before #93 this workflow shipped code and `terraform.yml` shipped
+# infrastructure, on two separate dispatches that nothing forced to agree. They
+# stopped agreeing: #84 removed every CADRE_MODEL_* from infra/lambda.tf, no
+# apply followed, and the function kept running the roster Terraform had set
+# months earlier. `assert_model_env` caught it — and then the deploy had no way
+# to fix the environment it had just refused to run against, because applying
+# Terraform was a different workflow. Hence: one path, one gate, one commit.
+#
 # Manual only. There is no push trigger: shipping is a decision, and this
 # workflow is gated behind a code-owner approval that would be meaningless if
 # a merge could fire it automatically.
@@ -19,9 +30,9 @@ on:
         type: string
         required: true
 
-# One deploy at a time. Two concurrent runs would race on the Lambda alias and
-# the S3 sync, and the loser would silently win. Never cancel in progress —
-# a half-applied deploy is worse than a queued one.
+# One release at a time. Two concurrent runs would race on the Lambda, the S3
+# sync and the Terraform state lock, and the loser would silently win. Never
+# cancel in progress — a half-applied release is worse than a queued one.
 concurrency:
   group: deploy-production
   cancel-in-progress: false
@@ -30,14 +41,26 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  TF_VERSION: "1.13.1"
+  # Must match infra/backend.hcl. Not secret — a bucket name grants nothing
+  # without the IAM role, and the role is OIDC-gated to this repository.
+  STATE_BUCKET: nextasyapps-terraform-state-dev
+  STATE_KEY: cadre/cadre.tfstate
+
 jobs:
-  # Cheap, credential-free checks. Runs BEFORE the approval gate so a doomed
-  # request is rejected without waking a human.
+  # Everything a human needs in order to decide, and nothing that mutates
+  # production. Runs BEFORE the approval gate so a doomed request is rejected
+  # without waking anyone, and so the approver reads a real plan rather than
+  # trusting that one will be generated after they click.
   plan:
-    name: Validate request
+    name: Validate and plan
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.check.outputs.sha }}
+      image_exists: ${{ steps.image.outputs.exists }}
+      image_uri: ${{ steps.image.outputs.uri }}
+      running_sha: ${{ steps.running.outputs.sha }}
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
@@ -48,7 +71,6 @@ jobs:
         id: check
         env:
           INPUT_SHA: ${{ inputs.sha }}
-          INPUT_ACTION: ${{ inputs.action }}
         run: |
           set -euo pipefail
 
@@ -65,64 +87,61 @@ jobs:
           # Only history that reached main is deployable. Without this you can
           # ship an unreviewed branch tip by pasting its SHA, which would route
           # around the whole PR + code-owner gate.
+          #
+          # Note what this does NOT require: that the SHA be the tip of main.
+          # Rolling back to an older commit is a first-class operation, so
+          # "is an ancestor of main" is the honest condition, not "is main".
           if ! git merge-base --is-ancestor "$INPUT_SHA" origin/main; then
             echo "::error::$INPUT_SHA is not an ancestor of origin/main. Only reviewed, merged commits are deployable."
             exit 1
           fi
 
           echo "sha=$INPUT_SHA" >> "$GITHUB_OUTPUT"
-
           {
-            echo "### ${INPUT_ACTION^} requested"
-            echo
-            echo "| | |"
-            echo "|---|---|"
-            echo "| Action | \`$INPUT_ACTION\` |"
-            echo "| Commit | \`$INPUT_SHA\` |"
-            echo "| Subject | $(git log -1 --format=%s "$INPUT_SHA") |"
-            echo "| Authored | $(git log -1 --format='%an, %ad' --date=short "$INPUT_SHA") |"
-            echo "| Requested by | @${{ github.actor }} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo "subject=$(git log -1 --format=%s "$INPUT_SHA")"
+            echo "authored=$(git log -1 --format='%an, %ad' --date=short "$INPUT_SHA")"
+          } >> "$GITHUB_OUTPUT"
 
-  deploy:
-    name: ${{ inputs.action }} to production
-    needs: plan
-    runs-on: ubuntu-latest
-
-    # ── The approval gate ────────────────────────────────────────────────
-    # This line is inert on its own. The gate exists only once the
-    # `production` environment has required reviewers configured in repo
-    # settings. See .github/DEPLOYMENT.md — without that, this deploys
-    # immediately with no approval.
-    environment:
-      name: production
-      url: ${{ vars.SITE_URL }}
-
-    env:
-      SHA: ${{ needs.plan.outputs.sha }}
-
-    steps:
-      - uses: actions/checkout@v4
+      # From here on the workspace is the tree being released. The plan must be
+      # of THAT commit's infrastructure: rolling the image back to an old commit
+      # while applying today's Terraform is the same class of bug as the drift
+      # this workflow exists to prevent.
+      - name: Check out the release target
+        uses: actions/checkout@v4
         with:
-          ref: ${{ needs.plan.outputs.sha }}
+          ref: ${{ steps.check.outputs.sha }}
 
-      - name: Configure AWS credentials
-        # OIDC — no access key exists for this repository.
+      - name: Configure AWS credentials (deploy role)
+        # Least privilege, phase by phase: `cadre-deploy` is resource-scoped and
+        # ships code. The Terraform role is assumed separately below. The two are
+        # never merged — see infra/ci_terraform.tf.
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: cadre-${{ inputs.action }}-${{ github.run_id }}
+          role-session-name: cadre-plan-${{ github.run_id }}
 
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
 
-      # ── Backend image ───────────────────────────────────────────────────
+      - name: What is running right now?
+        # The approver is being asked to change production from something to
+        # something else. Naming only the target tells half the story — on a
+        # rollback it is the half that matters least.
+        id: running
+        run: |
+          set -euo pipefail
+          URI=$(aws lambda get-function \
+            --function-name "${{ vars.LAMBDA_FUNCTION_NAME }}" \
+            --query 'Code.ImageUri' --output text)
+          echo "uri=$URI" >> "$GITHUB_OUTPUT"
+          echo "sha=${URI##*:}" >> "$GITHUB_OUTPUT"
 
-      - name: Does the image already exist?
+      - name: Does the target image already exist?
         id: image
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
+          SHA: ${{ steps.check.outputs.sha }}
         run: |
           set -euo pipefail
           if aws ecr describe-images \
@@ -135,10 +154,184 @@ jobs:
           echo "uri=$REGISTRY/${{ vars.ECR_REPOSITORY }}:$SHA" >> "$GITHUB_OUTPUT"
 
       - name: Rollback target must already be built
+        # Fails here, in the ungated job, before anything has been mutated —
+        # never half-way through a release. A rollback restores a previously
+        # deployed build; it does not create one.
         if: inputs.action == 'rollback' && steps.image.outputs.exists == 'false'
+        env:
+          SHA: ${{ steps.check.outputs.sha }}
         run: |
-          echo "::error::No image tagged $SHA in ECR. A rollback restores a previously deployed build; it does not create one. Use 'deploy' if you intend to build this commit."
+          echo "::error::No image tagged $SHA in ECR. The ECR lifecycle policy in infra/lambda.tf keeps only the 10 most recent images, so an older commit's image may have been expired — that is a real limit, not a glitch, and this rollback target is simply no longer available. Roll back to a more recent commit, or re-run with action 'deploy' to rebuild $SHA from source."
           exit 1
+
+      - name: Configure AWS credentials (terraform role)
+        # Re-assume, narrower job: `cadre-terraform` is the only role that may
+        # touch infrastructure, and the deploy role's session ends here.
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.TF_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: cadre-tf-plan-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Init
+        working-directory: infra
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=$STATE_BUCKET" \
+            -backend-config="key=$STATE_KEY" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="use_lockfile=true" \
+            -backend-config="encrypt=true"
+
+      - name: Format check
+        working-directory: infra
+        run: terraform fmt -check -recursive
+
+      - name: Validate
+        working-directory: infra
+        run: terraform validate
+
+      - name: Plan
+        working-directory: infra
+        run: |
+          terraform plan -input=false -lock-timeout=5m -no-color \
+            -var "aws_account_id=${{ vars.AWS_ACCOUNT_ID }}" \
+            -var "github_oidc_provider_arn=${{ vars.OIDC_PROVIDER_ARN }}" \
+            -var "state_bucket=$STATE_BUCKET" \
+            -var "state_key=$STATE_KEY" \
+            -out=tfplan
+
+      # Note what is deliberately absent: `-var image_tag=...`. Terraform does
+      # not own the function's image — `infra/lambda.tf` ignores changes to
+      # `image_uri` and the `update-function-code` step below is its single
+      # owner. Passing the tag here would make two systems own one value, which
+      # is the bug that shape of fix would introduce, not prevent (ADR 0003).
+
+      - name: Describe the plan for the approver
+        working-directory: infra
+        run: |
+          set -euo pipefail
+          terraform show -json tfplan > plan.json
+          python3 "$GITHUB_WORKSPACE/.github/scripts/summarize_plan.py" plan.json \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the plan
+        # The apply job applies exactly this file. Re-planning after approval
+        # would apply something nobody looked at.
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.run_id }}
+          path: infra/tfplan
+          retention-days: 1
+
+      - name: Summarise the request
+        env:
+          SHA: ${{ steps.check.outputs.sha }}
+          INPUT_ACTION: ${{ inputs.action }}
+        run: |
+          {
+            echo "### ${INPUT_ACTION^} requested"
+            echo
+            if [ "$INPUT_ACTION" = "rollback" ]; then
+              echo "> **This is a ROLLBACK.** Production will be moved back to \`$SHA\`,"
+              echo "> and that commit's infrastructure will be applied along with its image."
+              echo
+            fi
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Action | \`$INPUT_ACTION\` |"
+            echo "| Target commit | \`$SHA\` |"
+            echo "| Subject | ${{ steps.check.outputs.subject }} |"
+            echo "| Authored | ${{ steps.check.outputs.authored }} |"
+            echo "| Currently running | \`${{ steps.running.outputs.sha }}\` |"
+            echo "| Image | \`${{ steps.image.outputs.uri }}\` |"
+            echo "| Image already built | ${{ steps.image.outputs.exists }} |"
+            echo "| Requested by | @${{ github.actor }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: ${{ inputs.action }} to production
+    needs: plan
+    runs-on: ubuntu-latest
+
+    # ── The approval gate ────────────────────────────────────────────────
+    # Unconditional, on every release, deploy and rollback alike. There is no
+    # `if:` on this job and no input that can skip it: an auto-proceed path
+    # (auto-approve when the plan touches only the Lambda) was considered for
+    # #93 and rejected by Marcus, because a machine that can call one plan
+    # routine will eventually call a destructive one routine. The plan summary
+    # produced above informs that decision; it never replaces it.
+    #
+    # This line is inert on its own. The gate exists only once the `production`
+    # environment has required reviewers configured in repo settings. See
+    # .github/DEPLOYMENT.md.
+    environment:
+      name: production
+      url: ${{ vars.SITE_URL }}
+
+    env:
+      SHA: ${{ needs.plan.outputs.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+
+      # ── Infrastructure, first ───────────────────────────────────────────
+      # Before the model gates on purpose. The apply is what removes a stale or
+      # hand-set CADRE_MODEL_* from the function — Terraform declares the whole
+      # environment map, so any key it does not manage is deleted. Running the
+      # drift gate first would deadlock the release: it would refuse to run
+      # against an environment that only the apply below can fix.
+
+      - name: Configure AWS credentials (terraform role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.TF_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: cadre-tf-apply-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Init
+        working-directory: infra
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=$STATE_BUCKET" \
+            -backend-config="key=$STATE_KEY" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="use_lockfile=true" \
+            -backend-config="encrypt=true"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ github.run_id }}
+          path: infra
+
+      - name: Apply the reviewed plan
+        # Applying the saved plan file, not re-planning. If state changed
+        # between approval and apply, Terraform refuses rather than silently
+        # applying something nobody looked at.
+        working-directory: infra
+        run: terraform apply -input=false -lock-timeout=5m -no-color tfplan
+
+      # ── Backend image ───────────────────────────────────────────────────
+
+      - name: Configure AWS credentials (deploy role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: cadre-${{ inputs.action }}-${{ github.run_id }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
 
       - name: Assert every configured Bedrock model is available
         # Before the build, not after: every model step fails open, so a wrong
@@ -171,21 +364,17 @@ jobs:
         # The other half of the same question, and the one that was actually
         # wrong (issue #84): `assert_models` proves the account *can* invoke the
         # configured ids; this proves the ids the code was benchmarked with are
-        # the ids that will execute. They disagreed for weeks — Terraform set
-        # CADRE_MODEL_* on the function, environment beats code default, and so
-        # a commit re-benchmarked in #70 deployed cleanly and then ran the
-        # previous roster. Nothing failed: every model step fails open, so the
-        # wrong models render as a working chat (KB-009).
+        # the ids that will execute.
         #
-        # Reads the function's live environment, so it sees a hand-set
-        # break-glass override too — which is the point. An override is a
-        # temporary incident measure; a deploy on top of one silently makes it
-        # permanent, so this blocks until someone decides. There is no skip
-        # flag: the way past it is to remove the variable.
+        # Since #93 the apply above should already have guaranteed this, which
+        # makes this gate redundant — deliberately. It is nearly free, it has
+        # caught a real production failure once, and it is the only thing that
+        # catches a CADRE_MODEL_* applied by hand in the window between the plan
+        # and now. A redundant gate with a proven catch is worth keeping.
         #
-        # Runs on rollbacks for the same reason `assert_models` does — a
-        # rollback restores code, not environment, and an override breaks the
-        # old image exactly as thoroughly as the new one.
+        # There is no skip flag: the way past it is to remove the variable.
+        # Runs on rollbacks, because an override breaks the old image exactly as
+        # thoroughly as the new one.
         working-directory: backend
         run: |
           set -euo pipefail
@@ -200,30 +389,34 @@ jobs:
               --env-json - --source "${{ vars.LAMBDA_FUNCTION_NAME }}"
 
       - uses: docker/setup-qemu-action@v3
-        if: inputs.action == 'deploy' && steps.image.outputs.exists == 'false'
+        if: inputs.action == 'deploy' && needs.plan.outputs.image_exists == 'false'
       - uses: docker/setup-buildx-action@v3
-        if: inputs.action == 'deploy' && steps.image.outputs.exists == 'false'
+        if: inputs.action == 'deploy' && needs.plan.outputs.image_exists == 'false'
 
       - name: Build and push image
         # Skipped when the tag exists: the ECR repository is IMMUTABLE, so a
-        # second push of the same tag fails. Re-deploying a SHA is idempotent.
-        if: inputs.action == 'deploy' && steps.image.outputs.exists == 'false'
+        # second push of the same tag fails. Re-deploying a SHA is idempotent,
+        # which is also what makes "apply infrastructure without shipping new
+        # code" just a Deploy at the currently-running SHA.
+        if: inputs.action == 'deploy' && needs.plan.outputs.image_exists == 'false'
         uses: docker/build-push-action@v6
         with:
           context: backend
           platforms: linux/arm64
           push: true
           provenance: false
-          tags: ${{ steps.image.outputs.uri }}
+          tags: ${{ needs.plan.outputs.image_uri }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Point the Lambda at the image
+        # The single owner of `image_uri`. `infra/lambda.tf` ignores changes to
+        # it precisely so this step, and nothing else, decides which image runs.
         run: |
           set -euo pipefail
           aws lambda update-function-code \
             --function-name "${{ vars.LAMBDA_FUNCTION_NAME }}" \
-            --image-uri "${{ steps.image.outputs.uri }}" \
+            --image-uri "${{ needs.plan.outputs.image_uri }}" \
             --output text --query 'LastModified'
 
           # Without this the smoke test can hit the old code and pass.
@@ -313,11 +506,9 @@ jobs:
         # check that would have caught issue #84 the day it happened instead of
         # weeks later by hand.
         #
-        # It is the outcome half of the pre-build gate above: that one proves
-        # the intent, this one proves the result, and only this one can catch a
-        # deploy that landed on the wrong function or never rolled at all. Not
-        # conditional and never continue-on-error — a smoke test that is
-        # allowed to fail is a comment.
+        # It runs from this SHA's checkout, so on a rollback it asserts against
+        # the rolled-back commit's expectations, which is the only comparison
+        # that means anything there.
         #
         # Scope, honestly (KB-007): it proves which models are wired to which
         # step. It does not prove a turn streams; the browser check still owes
@@ -338,8 +529,10 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| Commit | \`$SHA\` |"
-            echo "| Image | \`${{ steps.image.outputs.uri }}\` |"
-            echo "| Image rebuilt | ${{ steps.image.outputs.exists == 'false' && inputs.action == 'deploy' }} |"
+            echo "| Previously running | \`${{ needs.plan.outputs.running_sha }}\` |"
+            echo "| Image | \`${{ needs.plan.outputs.image_uri }}\` |"
+            echo "| Image rebuilt | ${{ needs.plan.outputs.image_exists == 'false' && inputs.action == 'deploy' }} |"
+            echo "| Infrastructure | applied from the plan reviewed before approval |"
             echo "| Site | ${{ vars.SITE_URL }} |"
             echo "| Approved run by | @${{ github.actor }} |"
           } >> "$GITHUB_STEP_SUMMARY"

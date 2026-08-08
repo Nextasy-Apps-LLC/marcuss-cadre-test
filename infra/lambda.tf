@@ -162,9 +162,19 @@ resource "aws_lambda_function" "this" {
   ]
 
   lifecycle {
-    # The deploy workflow pushes a new image and updates the function directly,
-    # so `image_uri` drifts between applies by design. Without this, every
-    # terraform apply would roll the function back to `var.image_tag`.
+    # ⚠️ Load-bearing. `image_uri` has exactly one owner: the "Point the Lambda
+    # at the image" step in `.github/workflows/deploy.yml`, which calls
+    # `aws lambda update-function-code` with the released commit's tag. This
+    # `ignore_changes` is what keeps Terraform from being a second owner.
+    #
+    # Delete it and every apply rewrites the function's image to
+    # `var.image_tag`, which defaults to "bootstrap" — measured, not theorised:
+    # a plan with this line removed produces
+    #   ~ image_uri = ".../cadre:<the running sha>" -> ".../cadre:bootstrap"
+    # against live state, i.e. it silently rolls production back to the
+    # bootstrap image. `Deploy` therefore never passes `-var image_tag`, and
+    # `.github/tests/test_release_workflow.py` pins this line so the guard
+    # cannot be removed by a tidy-looking edit. See ADR 0003.
     ignore_changes = [image_uri]
   }
 }

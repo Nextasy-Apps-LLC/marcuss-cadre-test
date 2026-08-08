@@ -3,6 +3,16 @@
 *.tfstate
 *.tfstate.*
 crash.log
+
+# Saved plans, and the JSON `terraform show` renders from them. These are as
+# sensitive as state, not less: `lambda.tf` reads the Bedrock, OpenAI and
+# Langfuse SSM parameters with `with_decryption`, so their real values sit in
+# any plan of this stack in clear text. `Deploy` passes its plan between jobs as
+# a short-retention artifact; nothing may ever commit one.
+tfplan
+tfplan.*
+plan.json
+plan.*.json
 # NOTE: .terraform.lock.hcl is deliberately NOT ignored. Committing it pins
 # provider versions and hashes so CI and every machine resolve identically.
 
