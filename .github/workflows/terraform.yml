@@ -1,18 +1,24 @@
 name: Terraform
 
+# PLAN ONLY. This workflow cannot change anything — it has no apply job, no
+# `production` environment, and no way to reach one (ADR 0003, issue #93).
+#
+# Shipping goes through `Deploy`, which plans before its approval gate and
+# applies that exact plan after it, together with the matching image. Until #93
+# this workflow could also apply, which meant two workflows both looked like
+# the way to ship; nothing forced them to run against the same commit, and
+# eventually they didn't — production ran a model roster that no deployed
+# commit had ever been benchmarked against.
+#
+# Reach for this workflow to READ: to review an infra diff on a pull request,
+# or to check production for drift on demand. Reach for `Deploy` to SHIP —
+# including for an infrastructure-only change, which is simply a Deploy at the
+# currently-running SHA (the image already exists, so the build is skipped and
+# only the apply does any work).
 on:
   pull_request:
     paths: ["infra/**", ".github/workflows/terraform.yml"]
   workflow_dispatch:
-    inputs:
-      action:
-        description: "plan only, or plan and apply"
-        type: choice
-        required: true
-        default: plan
-        options:
-          - plan
-          - apply
 
 concurrency:
   group: terraform-production
@@ -119,70 +125,3 @@ jobs:
               echo "_No plan output was produced._"
             fi
           } >> "$GITHUB_STEP_SUMMARY" || true
-
-      # Kept for the apply job so it applies exactly what was reviewed, rather
-      # than re-planning against state that may have moved since.
-      - name: Upload plan
-        if: inputs.action == 'apply'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-${{ github.run_id }}
-          path: infra/tfplan
-          retention-days: 1
-
-  apply:
-    name: apply
-    needs: plan
-    if: inputs.action == 'apply'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: infra
-
-    # Same gate as deploy. Inert until the environment has required reviewers.
-    environment:
-      name: production
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.TF_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: cadre-tf-apply-${{ github.run_id }}
-
-      - name: Init
-        run: |
-          terraform init -input=false \
-            -backend-config="bucket=$STATE_BUCKET" \
-            -backend-config="key=$STATE_KEY" \
-            -backend-config="region=${{ vars.AWS_REGION }}" \
-            -backend-config="use_lockfile=true" \
-            -backend-config="encrypt=true"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: tfplan-${{ github.run_id }}
-          path: infra
-
-      - name: Apply the reviewed plan
-        # Applying the saved plan file, not re-planning. If state changed
-        # between approval and apply, Terraform refuses rather than silently
-        # applying something nobody looked at.
-        run: terraform apply -input=false -lock-timeout=5m -no-color tfplan
-
-      - name: Outputs
-        if: always()
-        run: |
-          {
-            echo "### terraform apply — ${{ job.status }}"
-            echo
-            echo '```'
-            terraform output 2>/dev/null || echo "(no outputs)"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"

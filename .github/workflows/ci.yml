@@ -90,6 +90,29 @@ jobs:
       - name: Unit tests
         run: pytest -q
 
+  release-path:
+    name: ci — release path is what it claims to be
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # CI-only, never requirements.txt: the Lambda never parses YAML and every
+      # runtime dependency is cold-start weight.
+      - run: pip install --quiet pytest pyyaml
+
+      - name: Release-path tests
+        # `Deploy` runs a couple of times a week, in production, with a human
+        # waiting — the worst possible place to discover that its approval gate
+        # became conditional or that `terraform apply` stopped consuming the
+        # reviewed plan. These assert those properties against the YAML and HCL
+        # directly, the same way test_ingest_isolation.py asserts an import
+        # direction no unit test would ever execute.
+        run: pytest .github/tests/ -q
+
   image:
     name: backend — image builds
     runs-on: ubuntu-latest

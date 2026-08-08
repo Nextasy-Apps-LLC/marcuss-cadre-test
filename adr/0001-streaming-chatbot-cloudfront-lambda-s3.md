@@ -1,6 +1,6 @@
 # ADR 0001 — Streaming chatbot on one CloudFront distribution, IAM-only Lambda, zero secrets
 
-- **Status:** Accepted (Bedrock-auth statements superseded by [ADR 0002](0002-bedrock-mantle-api-key.md))
+- **Status:** Accepted (Bedrock-auth statements superseded by [ADR 0002](0002-bedrock-mantle-api-key.md); deployment/apply statements in decisions 7–8 superseded by [ADR 0003](0003-one-gated-release-path.md))
 - **Date:** 2026-08-07
 
 > **Historical note (2026-08-07):** the SSE event names in this record (`rail`,
@@ -183,16 +183,31 @@ defaults to `true` since PR #6 (`f0b174b`); `false` is only for rebuilds.
 
 ### 7. Terraform in CI
 
+> **Superseded in part by [ADR 0003](0003-one-gated-release-path.md).**
+> `terraform.yml` no longer applies anything — its `apply` job is gone and it is
+> plan-only. The apply moved into `Deploy`, which plans before its approval gate
+> and applies that exact plan after it, so one run ships a commit's code and its
+> infrastructure together. The plan-artifact rule and the bootstrap note below
+> still stand; "`apply` runs only via `workflow_dispatch` on this workflow" does
+> not.
+
 `.github/workflows/terraform.yml`: `plan` runs on `pull_request` (`infra/**`)
 and dispatch, skipping cleanly when `vars.TF_ROLE_ARN` is unset instead of
-failing red. `apply` runs only via `workflow_dispatch` + `needs: plan`, inside
-`environment: production`, and applies the exact `tfplan-${{ github.run_id }}`
+failing red. ~~`apply` runs only via `workflow_dispatch` + `needs: plan`, inside
+`environment: production`, and~~ applies the exact `tfplan-${{ github.run_id }}`
 artifact — never re-plans, so moved state refuses rather than applying something
 unreviewed. Backend uses `use_lockfile=true` (native S3 locking, Terraform
 ≥ 1.10), no DynamoDB table. **Bootstrap:** `cadre-terraform` is created *by*
 this Terraform, so the first apply runs locally on human admin credentials.
 
 ### 8. Immutable ECR tags, deploy-by-SHA, rollback that refuses to build
+
+> **Extended by [ADR 0003](0003-one-gated-release-path.md).** Everything below
+> still holds — and `ignore_changes = [image_uri]` emphatically so; 0003
+> measured what its removal does and pinned it with a test. What changed is that
+> `Deploy` now also plans and applies that commit's Terraform, and that rollback
+> additionally applies the target SHA's infrastructure and re-runs the model
+> gates against it.
 
 `image_tag_mutability = "IMMUTABLE"`; `.github/workflows/deploy.yml` is
 `workflow_dispatch`-only (shipping is a decision, not a merge side effect),

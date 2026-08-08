@@ -183,10 +183,10 @@ happened on 2026-08-07 (issue #37): a local apply reverted a live
 warning, mid-apply. `aws_cloudfront_distribution.this` now carries a
 `lifecycle.precondition` that fails the apply if `enable_custom_domain` is
 `false` while the certificate is already `ISSUED`, so this now errors instead
-of silently applying — but the fix once it happens is still always the CI
-`Terraform` workflow (`workflow_dispatch`, `action: apply`), which never
-passes an `enable_custom_domain` override and so always uses this variable's
-`true` default. Never resync with a local apply.
+of silently applying — but the fix once it happens is still always CI: the
+`Deploy` workflow (see [Releasing](#releasing) below), which never passes an
+`enable_custom_domain` override and so always uses this variable's `true`
+default. Never resync with a local apply.
 
 **5. Point the hostname at the distribution**
 
@@ -206,6 +206,63 @@ curl -sI https://cadre.marcuss.pro | head -5
 
 `curl` ignores `alt-svc`, so it passes even when HTTP/3 is breaking the stream
 for real visitors. Open the page and watch tokens arrive.
+
+## Releasing
+
+One workflow changes production: **`Deploy`**. It ships a commit's image, its
+page *and* its infrastructure in a single approval-gated run, so code and
+Terraform cannot drift apart across a release. See
+[ADR 0003](../adr/0003-one-gated-release-path.md) for why, including the two
+plausible-sounding fixes that were rejected.
+
+```bash
+gh workflow run deploy.yml -f action=deploy -f sha=<full 40-char SHA>
+```
+
+What happens, in order:
+
+1. **`plan` job (no gate).** Validates the SHA — it must exist and be an
+   ancestor of `origin/main`, though *not* necessarily its tip — checks out that
+   commit, reads what is currently running, verifies the image in ECR, and runs
+   `terraform plan` against **that commit's** `infra/`. The plan, a
+   resource-by-resource summary, the target SHA and the currently-running SHA
+   all land in the run summary.
+2. **You approve** the `production` environment. Always — there is no
+   auto-proceed, on any path. Read the plan summary first: anything beyond
+   `aws_lambda_function.this` is flagged for exactly that reason.
+3. **`release` job.** Applies the *exact* plan you just read (never a re-plan),
+   then runs the model gates, builds and pushes the image if needed, points the
+   Lambda at it, ships the page, invalidates CloudFront and smokes `/healthz`,
+   `/` and `/config`.
+
+**Infrastructure-only change** — same command, with the SHA that is already
+running. The image exists, so the build is skipped and only the apply does
+anything. This replaces the old "resync via the Terraform workflow" step.
+
+**The `Terraform` workflow is plan-only** and cannot change anything. Use it to
+review an infra diff on a pull request or to check production for drift on
+demand. Use `Deploy` to ship.
+
+### Rolling back
+
+```bash
+gh workflow run deploy.yml -f action=rollback -f sha=<older 40-char SHA>
+```
+
+A rollback restores a commit whole: it applies **that SHA's** infrastructure
+alongside its image, because rolling code back while applying today's Terraform
+is the same class of bug this whole design exists to prevent. It never builds —
+the image must already be in ECR — and it runs the same model gates and the same
+`/config` smoke as a forward deploy, asserting against that commit's
+expectations. It goes through the same approval gate, and the summary says
+plainly that it is a rollback, to which commit, and what is running now.
+
+**The retention caveat.** The ECR lifecycle policy in `lambda.tf` keeps only the
+**10 most recent images**. An older commit's image may therefore have been
+expired, and that rollback target is simply gone. The run fails in the `plan`
+job — before anything is mutated — naming the tag. Options: roll back to a more
+recent commit, or re-run with `action=deploy` for the same SHA to rebuild it
+from source (which is a build, so it is slower and re-runs the full pipeline).
 
 ## Things that will silently break streaming
 
