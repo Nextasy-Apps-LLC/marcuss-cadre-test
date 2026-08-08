@@ -87,6 +87,17 @@ def answer_text(events):
     return "".join(p["text"] for e, p in events if e == "token")
 
 
+def retrieval(events):
+    """The `retrieval` payload on `retrieve`'s terminal frame (#74)."""
+    terminal = [
+        p
+        for e, p in events
+        if e == "state" and p["step"] == "retrieve" and p["status"] != "running"
+    ]
+    assert terminal, "retrieve never reported a terminal status"
+    return terminal[-1]["retrieval"]
+
+
 @pytest.fixture(scope="module")
 def turn(http):
     """One real grounded turn, shared by the assertions below.
@@ -144,6 +155,24 @@ class TestGroundedAnswer:
     def test_the_turn_still_fits_the_budget(self, turn):
         assert turn["elapsed"] < TURN_BUDGET_S
 
+    def test_the_wire_reports_real_hit_stats(self, turn):
+        """#74 — the pane's hit count and top score, proved against a real
+        corpus rather than a fixture. A first message is not condensed, so
+        `query` must be absent here; anything else means the node reported a
+        rewrite that never happened."""
+        facts = retrieval(turn["events"])
+        assert facts is not None, "retrieve passed with hits but reported no retrieval facts"
+        assert set(facts) == {"query", "hit_count", "top_score"}
+        assert facts["query"] is None, f"a first message was condensed: {facts['query']!r}"
+        assert 1 <= facts["hit_count"] <= 6
+        assert 0.25 <= facts["top_score"] <= 1.0, facts["top_score"]
+
+    def test_no_chunk_text_or_urls_ride_the_state_event(self, turn):
+        """The wire carries count + score + query only; the URLs and passages
+        stay in the Langfuse span (payload size)."""
+        facts = retrieval(turn["events"])
+        assert "cadreai.com" not in repr(facts)
+
 
 @requires_kb
 class TestRetrievalOnAFollowUp:
@@ -165,6 +194,39 @@ class TestRetrievalOnAFollowUp:
         status, detail = verdict(events, "retrieve")
         assert (status, detail) == ("pass", None), f"retrieve reported {status}/{detail}"
 
+    def test_the_wire_reports_the_condensed_query(self, http):
+        """#74 — the case the pane exists for. With history, the embedded text
+        is a model's rewrite of the visitor's sentence, and it is the only
+        thing that explains a retrieval that missed. It must be on the wire,
+        it must differ from the message, and it must not be the raw one."""
+        message = "Can I skip that step?"
+        events, _ = ask(
+            http,
+            message,
+            history=[
+                {
+                    "role": "user",
+                    "text": "What is process mapping in an AI implementation?",
+                },
+                {
+                    "role": "assistant",
+                    "text": (
+                        "It is the step where the current workflow is mapped before "
+                        "anything is automated."
+                    ),
+                },
+            ],
+        )
+        facts = retrieval(events)
+        assert facts is not None, "a retrieval that ran reported no facts"
+        assert facts["query"], f"condensing produced nothing to show: {facts}"
+        assert facts["query"] != message
+        assert facts["hit_count"] >= 0
+        if facts["hit_count"]:
+            assert facts["top_score"] is not None
+        else:
+            assert facts["top_score"] is None
+
 
 class TestRefusedTurnsNeverRetrieve:
     """Runs without either gate: whatever the target can or cannot do, a turn
@@ -179,6 +241,9 @@ class TestRefusedTurnsNeverRetrieve:
         # a `retrieve running` frame is the absence of the node executing.
         assert ("retrieve", "running") not in states(events)
         assert ("retrieve", "skipped") in states(events)
+        # #74: a step that never ran has nothing to report, and every step
+        # other than `retrieve` never reports retrieval facts at all.
+        assert all(p["retrieval"] is None for e, p in events if e == "state")
 
     def test_a_deterministic_refusal_skips_retrieve_without_ever_running_it(self, http):
         events, _ = ask(http, "   ")
