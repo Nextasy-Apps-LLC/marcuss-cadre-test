@@ -85,7 +85,16 @@ def manifest() -> dict[str, Any]:
 def _table_cached():
     # Imported lazily so that a checkout without the runtime deps installed —
     # or a future build that drops them — degrades to `kb_disabled` instead of
-    # failing at import and taking the whole app down with it.
+    # failing at import and taking the whole app down with it. Verified, not
+    # assumed: with `lancedb` blocked from the import system, `app.main` still
+    # imports, the app still starts and `/healthz` still answers; hoisting this
+    # to module scope turns the same situation into a container that dies at
+    # init (the KB-001 failure family).
+    #
+    # Lazy is *not* why the first turn used to be slow (issue #67) — that was
+    # nothing calling this until a visitor did. `main.lifespan` now triggers it
+    # during container init, so hoisting would buy exactly zero milliseconds
+    # while giving up the fail-open property. It stays lazy on purpose.
     import lancedb
 
     db = lancedb.connect(str(config.KB_PATH))

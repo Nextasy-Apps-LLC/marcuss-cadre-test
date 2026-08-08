@@ -12,11 +12,17 @@ instant the answer was already finished.
 
 Model calls are seams (`app/graph/models.py`) until Phase 1b, so this file is
 already the final shape of the request path.
+
+The `lifespan` hook is the other half of that principle applied to time rather
+than to visibility: anything a container must do exactly once belongs in init,
+where Lambda gives full-CPU burst and no visitor is waiting, not in whichever
+request happens to be first.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -27,7 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
 
-from app import config, sse, tracing
+from app import config, kb, sse, tracing
 from app.graph.build import build_graph
 from app.graph.emit import QueueEmitter
 from app.graph.state import Turn, initial_state
@@ -41,7 +47,72 @@ IS_PROD = os.environ.get("CADRE_ENV", "dev") == "prod"
 _DEV_ORIGINS = ["http://localhost:8088", "http://127.0.0.1:8088"]
 CORS_ORIGINS = [ALLOWED_ORIGIN] if IS_PROD else [ALLOWED_ORIGIN, *_DEV_ORIGINS]
 
-app = FastAPI(title="cadre", docs_url=None, redoc_url=None)
+def _warm_kb() -> None:
+    """Pay the KB's one-off open cost here, where nobody is waiting.
+
+    `app/kb/store.py` opens the corpus once per process behind `lru_cache`.
+    That was always right; what was wrong is *when* the once happened. The
+    deferred `import lancedb` (tens of MB of native extension), the
+    `lancedb.connect()`, the `open_table()` and the Arrow schema read were all
+    executed by whichever visitor asked the first question — measured on prod
+    as `retrieve` costing 9661 ms cold against 548 ms warm (issue #67).
+
+    Lambda's INIT phase runs at full-CPU burst and completes before the
+    function is handed any traffic, and the Lambda Web Adapter boots uvicorn —
+    and so the ASGI lifespan — inside that window. Work moved here is
+    therefore off every visitor's turn budget (KB-004) rather than merely
+    faster.
+
+    `kb.available()` is the entry point on purpose: it runs the whole
+    `ensure_ready()` gate, which is what triggers the import, the connect, the
+    open and the schema read, and it is already the never-raising path — a
+    missing, unreadable or mismatched artifact is a `False`, not an exception.
+    Blocking the loop here is deliberate: nothing else is running at init, and
+    the point is that the work is *finished* before the first request arrives.
+    """
+    started = time.monotonic()
+    try:
+        ready = kb.available()
+    except Exception as exc:  # noqa: BLE001
+        # `available()` promises not to raise; this hook does not get to rely on
+        # that promise. An init that crashes is a Lambda that fails on invoke
+        # (KB-001) — infinitely worse than the slow first turn it replaces.
+        elapsed = round((time.monotonic() - started) * 1000)
+        log.warning(
+            "KB warm-up failed after %d ms (%s) — serving anyway; retrieval will "
+            "report skipped",
+            elapsed,
+            exc,
+            exc_info=True,
+        )
+        return
+
+    elapsed = round((time.monotonic() - started) * 1000)
+    if ready:
+        log.info(
+            "KB warm-up: ready in %d ms — lancedb imported, table and manifest "
+            "open before the first request",
+            elapsed,
+        )
+    else:
+        # Not a fault: no artifact, the kill switch, or a dimension mismatch.
+        # `retrieve` will say which on the wire; this line is what stops the
+        # degradation being silent (KB-009).
+        log.warning(
+            "KB warm-up: unavailable after %d ms — retrieval will report skipped "
+            "for this container",
+            elapsed,
+        )
+
+
+@contextlib.asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Container init. Runs before uvicorn accepts anything."""
+    _warm_kb()
+    yield
+
+
+app = FastAPI(title="cadre", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,

@@ -82,6 +82,18 @@ progress. Rules, each with its why:
 - The graph is compiled **once at import**. It carries no state between turns,
   and compiling per request would spend a visitor's turn budget on graph
   construction.
+- **The `lifespan` hook is where per-container work goes.** It calls
+  `kb.available()` so the deferred `import lancedb`, the connect, the
+  `open_table()` and the schema read are paid during Lambda's INIT phase —
+  which runs at full-CPU burst and finishes before the function is handed
+  traffic — instead of inside whichever request happened to be first (issue
+  #67: `retrieve` cost 9661 ms cold against 548 ms warm). The hook must never
+  raise: an init that crashes is a Lambda that fails on invoke (KB-001), which
+  is far worse than the slow turn it replaces, so the call is wrapped even
+  though `available()` already promises not to raise. It logs its cost at INFO
+  (`KB warm-up: ready in N ms`) and a failure at WARNING — a warm-up whose
+  duration nobody can see is the same regression waiting to happen again
+  (KB-009). Anything else a container must do exactly once belongs here too.
 - `AskRequest` validates **shape only**; every content rule belongs to the
   `validate_input` node. Validation failures become SSE refusals (a
   `validate_input` fail + skips + `done{outcome:"refused"}`), never HTTP 4xx —
