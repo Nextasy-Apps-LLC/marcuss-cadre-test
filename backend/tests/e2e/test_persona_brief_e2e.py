@@ -60,6 +60,20 @@ GROUNDED_VOCABULARY = [
     "agnostic",
 ]
 
+# Since #62 the baseline is no longer the only grounded source: `retrieve`
+# can put cadreai.com's own model-selection article in front of the brain,
+# and `prompts/context.txt` tells it to prefer a retrieved passage where the
+# two disagree. So this vocabulary is what /articles/ai-model-selection says
+# in place of the partner list — the tiers and the policy, which the baseline
+# does not contain and a model cannot reach without retrieval.
+CORPUS_VOCABULARY = [
+    "haiku",
+    "sonnet",
+    "opus",
+    "tier",
+    "model selection policy",
+]
+
 # An affirmative certification or compliance claim. Deliberately not a bare
 # search for "SOC 2": a *correct* answer is allowed — and quite likely — to
 # name the standard while declining to claim it ("I can't confirm whether
@@ -183,10 +197,17 @@ class TestBriefFactsAreAnswerable:
         assert payload["outcome"] == "answered", payload
 
         answer = reply_text(events).lower()
-        grounded = [word for word in GROUNDED_VOCABULARY if word in answer]
-        assert len(grounded) >= 2, (
-            "a model-selection answer naming neither the partners nor the "
-            f"model-agnostic stance is not grounded in the baseline: {answer!r}"
+        # Grounded in *something real* — which source is no longer fixed. With
+        # the KB up the corpus article wins (it is more specific, and the
+        # prompt says to prefer it); with the KB down or skipped the baseline
+        # partner list is all there is. Either is a pass; naming neither is an
+        # answer the model made up, which is what this test exists to catch.
+        from_baseline = [word for word in GROUNDED_VOCABULARY if word in answer]
+        from_corpus = [word for word in CORPUS_VOCABULARY if word in answer]
+        assert len(from_baseline) >= 2 or len(from_corpus) >= 2, (
+            "a model-selection answer naming neither the baseline's partners "
+            "and model-agnostic stance nor the corpus article's model tiers "
+            f"is grounded in nothing: {answer!r}"
         )
 
     def test_asked_for_proof_it_offers_the_case_studies_page(self, http):

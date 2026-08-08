@@ -87,13 +87,20 @@ def answer_text(events):
     return "".join(p["text"] for e, p in events if e == "token")
 
 
+@pytest.fixture(scope="module")
+def turn(http):
+    """One real grounded turn, shared by the assertions below.
+
+    Module-scoped on purpose: these are seven questions about the *same*
+    answer, and asking a live model seven times would cost seven turns and
+    let them disagree with each other.
+    """
+    events, elapsed = ask(http, CORPUS_ONLY_QUESTION)
+    return {"events": events, "elapsed": elapsed, "answer": answer_text(events)}
+
+
 @requires_kb
 class TestGroundedAnswer:
-    @pytest.fixture(scope="class")
-    def turn(self, http):
-        events, elapsed = ask(http, CORPUS_ONLY_QUESTION)
-        return {"events": events, "elapsed": elapsed, "answer": answer_text(events)}
-
     def test_retrieve_passed_with_hits(self, turn):
         status, detail = verdict(turn["events"], "retrieve")
         assert status == "pass", f"retrieve reported {status}/{detail}"
