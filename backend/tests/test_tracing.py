@@ -451,6 +451,22 @@ class TestFinalizeTrace:
         assert observation["trace_context"]["trace_id"] == "abc123"
         assert ("set_trace_as_public", None) in fake_langfuse.calls
 
+    def test_an_unrefused_turn_records_a_refused_step_of_none_not_a_null(
+        self, fake_langfuse
+    ):
+        """Found by fetching a real trace back out of Langfuse Cloud: metadata
+        keys whose value is null are dropped on ingestion, so `None` here does
+        not record "this turn was not refused" — it records nothing, and the
+        trace can no longer tell a clean turn from one whose tracing broke.
+        That ambiguity is precisely KB-009."""
+        tracing.finalize_trace("abc123", None, {"brain": 12}, 900, "conv-abcdefgh")
+
+        observation = dict(
+            next(kw for name, kw in fake_langfuse.calls if name == "observation_start")
+        )
+        assert observation["metadata"]["refused_step"] == tracing.NOT_REFUSED
+        assert observation["metadata"]["refused_step"] is not None
+
     def test_the_graph_spans_are_flushed_before_the_trace_fields_are_written(
         self, fake_langfuse
     ):

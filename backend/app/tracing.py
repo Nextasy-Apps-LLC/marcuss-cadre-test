@@ -48,6 +48,16 @@ log = logging.getLogger("cadre.tracing")
 # callback handler — it is the one that carries session/refusal/latency.
 TURN_SPAN_NAME = "turn"
 
+# What `refused_step` says when the turn was not refused.
+#
+# Not cosmetic: Langfuse drops metadata keys whose value is null, so passing
+# `None` here does not record "no refusal" — it records nothing at all, and the
+# trace becomes unable to distinguish a clean turn from one where the tracing
+# code failed to set the field. That ambiguity is the exact shape of KB-009.
+# A literal is also the only version you can filter on in the Langfuse UI,
+# which is the whole reason the field exists.
+NOT_REFUSED = "none"
+
 # Ceiling on any single Langfuse HTTP call. Tracing is not allowed to spend a
 # meaningful slice of the 60s turn budget (KB-004) waiting on an outage; a
 # timeout here becomes a dropped trace, which is the correct trade.
@@ -178,7 +188,7 @@ def finalize_trace(
                 name=TURN_SPAN_NAME,
                 trace_context=TraceContext(trace_id=trace_id),
                 metadata={
-                    "refused_step": refused_step,
+                    "refused_step": refused_step or NOT_REFUSED,
                     "latency_ms": dict(step_latencies),
                     "total_latency_ms": total_latency_ms,
                 },
