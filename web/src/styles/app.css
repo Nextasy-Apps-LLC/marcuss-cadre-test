@@ -357,6 +357,18 @@
   white-space: nowrap;
 }
 
+.step-model {
+  grid-column: 2;
+  color: var(--fg-mute);
+  font-size: 0.65rem;
+  font-family: "JetBrains Mono", monospace;
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: -4px;
+}
+
 .step-status-text {
   color: var(--fg-mute);
   font-size: 0.72rem;

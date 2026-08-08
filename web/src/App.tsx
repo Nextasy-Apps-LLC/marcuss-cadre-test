@@ -5,10 +5,12 @@ import { PipelineStepper } from "./components/PipelineStepper";
 import { Suggestions } from "./components/Suggestions";
 import { Transcript } from "./components/Transcript";
 import { useCadreChat } from "./lib/useCadreChat";
+import type { StepName } from "./types";
 
 interface PageConfig {
   greeting: string;
   suggestions: string[];
+  step_models?: Partial<Record<StepName, string>>;
 }
 
 /**
@@ -42,7 +44,7 @@ export default function App() {
     };
   }, []);
 
-  const chat = useCadreChat(config.greeting);
+  const chat = useCadreChat(config.greeting, config.step_models);
 
   return (
     <main className="shell">
