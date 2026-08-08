@@ -503,6 +503,64 @@ class TestFinalizeTrace:
 
 
 # --------------------------------------------------------------------------
+# The retrieval span (issue #62)
+# --------------------------------------------------------------------------
+
+class TestRecordRetrieval:
+    """plan.md: `retrieve` "gets its own Langfuse span (query, top-k hits,
+    scores)". The query is the *condensed* one — the trace has to show what was
+    actually searched for, or a bad rewrite is invisible."""
+
+    def _hit(self, url: str, score: float):
+        from app.kb import Hit
+
+        return Hit(url=url, title="T", heading="H", text="body", score=score)
+
+    def test_it_writes_the_query_and_every_hit_url_and_score(self, fake_langfuse):
+        tracing.record_retrieval(
+            "abc123",
+            "Cadre AI Maturity Index pricing",
+            [
+                self._hit("https://www.cadreai.com/articles/a", 0.62),
+                self._hit("https://www.cadreai.com/articles/b", 0.41),
+            ],
+        )
+
+        started = [kw for name, kw in fake_langfuse.calls if name == "observation_start"]
+        assert len(started) == 1
+        payload = json.dumps(started[0], default=str)
+        assert "Cadre AI Maturity Index pricing" in payload
+        assert "https://www.cadreai.com/articles/a" in payload
+        assert "https://www.cadreai.com/articles/b" in payload
+        assert "0.62" in payload and "0.41" in payload
+
+    def test_zero_hits_still_writes_a_span(self, fake_langfuse):
+        """A retrieval that found nothing is the interesting case; a trace that
+        omits it makes "the KB had nothing" indistinguishable from "the KB
+        never ran"."""
+        tracing.record_retrieval("abc123", "weather in paris", [])
+        assert "observation_start" in fake_langfuse.names
+
+    def test_it_is_a_noop_without_a_trace_id(self, fake_langfuse):
+        tracing.record_retrieval(None, "q", [])
+        assert fake_langfuse.calls == []
+
+    def test_it_is_a_noop_when_tracing_is_disabled(self, tracing_down):
+        tracing.record_retrieval("abc123", "q", [])
+
+    def test_it_swallows_an_sdk_failure_and_says_so(self, fake_langfuse, caplog):
+        def _boom(**kwargs):
+            raise RuntimeError("langfuse unreachable")
+
+        fake_langfuse.start_as_current_observation = _boom
+
+        with caplog.at_level(logging.WARNING, logger="cadre.tracing"):
+            tracing.record_retrieval("abc123", "q", [])
+
+        assert caplog.records, "a dropped span must leave a log line (KB-009)"
+
+
+# --------------------------------------------------------------------------
 # The rest of protocol v2 is unchanged by the new event
 # --------------------------------------------------------------------------
 

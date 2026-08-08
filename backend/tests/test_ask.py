@@ -69,6 +69,7 @@ class TestAnsweredTurn:
             ("injection_check", "pass"),
             ("topic_classifier", "running"),
             ("topic_classifier", "pass"),
+            ("retrieve", "running"),
             ("retrieve", "skipped"),
             ("brain", "running"),
             ("brain", "pass"),
@@ -76,10 +77,13 @@ class TestAnsweredTurn:
             ("output_safety", "pass"),
         ]
 
-    def test_retrieve_reports_kb_not_wired(self):
-        # Phase 3 fills this node; until then the client must see a real
-        # skipped verdict rather than a chip spinning forever.
-        assert detail_for(ask_events("hello"), "retrieve", "skipped") == "kb_not_wired"
+    def test_retrieve_reports_a_machine_readable_reason_when_it_skips(self):
+        # The unit suite runs without the corpus (see `offline_kb` in
+        # conftest), which is also how a local checkout without the artifact
+        # behaves. `kb_not_wired` was retired with the stub in #62; what
+        # matters here is unchanged — the client sees a resolved chip with a
+        # reason, never one spinning for the rest of the turn.
+        assert detail_for(ask_events("hello"), "retrieve", "skipped") == "kb_disabled"
 
     def test_tokens_stream_inside_the_brain_step(self):
         events = ask_events("hello")

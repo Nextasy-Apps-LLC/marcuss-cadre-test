@@ -8,10 +8,12 @@ stranger, so it is deliberately reviewable on its own: the prompt text lives in
 
 Two constraints shape the wording:
 
-* **The baseline is a ceiling, not a floor.** Retrieval lands in Phase 3; until
-  then the model has no source but this file, so the prompt has to be explicit
-  that anything absent from it is unknown rather than inferable. A model that
-  guesses a price is worse than one that declines to.
+* **The baseline is a floor, not a ceiling.** Since Phase 3 the `retrieve`
+  node can add passages from cadreai.com on top of it (`system_prompt`), but
+  the baseline is what remains when retrieval is skipped, disabled or empty —
+  which is every turn where the KB is not reachable. So the prompt still has
+  to be explicit that anything absent from *both* is unknown rather than
+  inferable. A model that guesses a price is worse than one that declines to.
 * **Answers are short because the turn is capped.** CloudFront cuts the origin
   response at 60s (KB-004) and `config.BRAIN_MAX_TOKENS` caps generation to
   match. A prompt that invites an essay produces answers that get truncated
@@ -59,6 +61,26 @@ SYSTEM_PROMPT = _load(
     contact_url=CONTACT_URL,
     case_studies_url=CASE_STUDIES_URL,
 )
+
+# The citation block appended when `retrieve` found something. Loaded raw —
+# `{sources}` is filled per turn, not at import, because the sources are the
+# one part of the prompt that changes with every question.
+_CONTEXT_TEMPLATE = _load("context")
+
+
+def system_prompt(context: str | None) -> str:
+    """The brain's system prompt, with retrieved sources if there are any.
+
+    With no context this returns `SYSTEM_PROMPT` **byte-identical**, which is
+    the point: a turn where the KB was skipped, disabled or empty is provably
+    the same turn the bot answered before Phase 3 existed. Retrieval augments
+    the vetted baseline; it never replaces it, and it never silently reshapes
+    the prompt of a turn it did not contribute to.
+    """
+    if not context or not context.strip():
+        return SYSTEM_PROMPT
+    return f"{SYSTEM_PROMPT}\n\n{_CONTEXT_TEMPLATE.format(sources=context)}"
+
 
 # Scope text for the topic classifier. Separate from SYSTEM_PROMPT on purpose:
 # the classifier needs the boundary of the subject matter, not the persona's

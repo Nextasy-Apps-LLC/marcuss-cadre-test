@@ -58,7 +58,12 @@ progress. Rules, each with its why:
   before `done`. v1 left the client inferring skips from silence; it no longer
   has to guess.
 - `detail` is the machine-readable reason — the failing check (`off_topic`,
-  `rate_limited`, `kb_not_wired`, …) or `degraded` on a fail-open pass.
+  `rate_limited`, …), why a fail-open step gave up (`retrieve`'s
+  `kb_unavailable` / `kb_disabled` / `kb_dimension_mismatch` / `kb_timeout`;
+  `kb_not_wired` was retired with the stub in #62), or `degraded` on a
+  fail-open pass. New `detail` **values** are additive — the client renders
+  the string — so they need no coordinated web change; new **fields** would
+  (KB-005).
 - `: ping` comment frames go out every `config.PING_INTERVAL_S` while a step is
   slow. They stop intermediaries reaping an idle-looking connection; they do
   **not** extend CloudFront's hard 60s cap (KB-004), which is the budget for
@@ -162,8 +167,13 @@ progress. Rules, each with its why:
   (URL allowlist — cadreai.com only — plus PII patterns), runs first, and has
   no outage mode; the guard model runs second and may degrade. A guard outage
   must never be able to leak an external URL.
-- `app/persona.py` is the vetted baseline and the only source of facts until
-  retrieval lands in Phase 3. Nothing else may state a fact about Cadre AI —
+- `app/persona.py` is the vetted baseline: the only source of facts when
+  `retrieve` is skipped, disabled or empty, which is every turn where the KB
+  is not reachable. `system_prompt(context)` appends retrieved passages on top
+  of it and returns `SYSTEM_PROMPT` **byte-identical** when there is no
+  context — that byte-identity is what makes "a KB-less turn is provably the
+  turn we shipped in Phase 2" a fact rather than a hope, and it is asserted.
+  Nothing else may state a fact about Cadre AI —
   no prices, no named clients, no invented capabilities — and the prompt says
   so explicitly rather than leaving it implied. `config.py` re-exports its
   `GREETING`/`SUGGESTIONS`/`CONTACT_URL` rather than restating them, so the
@@ -197,14 +207,25 @@ progress. Rules, each with its why:
   `httpx` (ADR 0002, no LangChain), the handler captures **graph-level node
   spans**, not individual Bedrock generations. That is the accepted shape;
   don't instrument `app/llm.py` to work around it.
+- `record_retrieval(trace_id, query, hits)` writes `retrieve`'s own span: the
+  **condensed** query (so a bad rewrite is visible instead of inferred from a
+  bad answer) plus each hit's URL and score. The chunk text is deliberately
+  left out — it is already in the brain span's system prompt, and duplicating
+  it would make a public trace expensive to load for no new fact. The
+  `trace_id` is passed in rather than discovered: nodes take `(state, emit)`,
+  so the id rides the per-request emitter alongside the queue, never
+  `ConversationState` (KB-008).
 - Langfuse credentials are three SSM parameters that **already exist with real
   values**, so Terraform only `data`-references them and injects
   `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` as function
   env vars (`infra/langfuse.tf`, which explains why ADR 0001 decision 4's
-  create-with-placeholder pattern is the wrong one here). They are read **once
+  create-with-placeholder pattern is the wrong one here — `infra/openai.tf`
+  applies the same reasoning to `/cadre/openai-api-key`). They are read **once
   at module import** — never per request, because a credential round trip
   inside a turn spends part of the 60s budget (KB-004) on something that cannot
-  change between requests.
+  change between requests. The OpenAI key is the one exception to "read at
+  import": `app/embeddings.py` resolves it **per request**, the same way
+  `app/llm.py` resolves the Bedrock key, so a rotation needs no cold start.
 - A trace MUST carry at minimum: the `client_id` (as the Langfuse session id,
   so a visitor's turns group), which step refused if any, and per-step + total
   `latency_ms` — a refusal you can't attribute to a step is undebuggable, and
@@ -257,6 +278,75 @@ progress. Rules, each with its why:
 - `AWS_BEARER_TOKEN_BEDROCK` is a *runtime* environment variable — Terraform
   sets it on the function from SSM, and local runs pass it with `docker run
   -e`. It must never be baked into an image layer, committed, or echoed.
+
+## The knowledge base (`ingest/`, `app/kb/`)
+
+- **`ingest/` is build-time code and never runs in Lambda.** The image copies
+  `app/` only, so an `app → ingest` import would pass CI and fail on the first
+  cold start; `tests/test_ingest_isolation.py` reads the source and asserts the
+  direction. Its dependencies (`beautifulsoup4`, `lxml`, `tiktoken`) live in
+  `requirements-ingest.txt` — pulled into `requirements-dev.txt` so CI can run
+  the tests, kept out of `requirements.txt`, which is cold-start weight.
+- **The crawler is not a crawler.** `ingest/allowlist.py` is 55 hardcoded URLs,
+  frozen; `fetch.py` refuses anything else *before building the request* (wrong
+  host, not in the list, robots-disallowed), waits ≥ 1 s between requests on one
+  thread, and identifies itself as `cadre-kb-ingest/1.0 (+https://…)`. It never
+  follows a link and never re-walks the sitemap. The site is not ours; adding a
+  page is a reviewed diff.
+- **The artifact is committed and reviewed like code**: `app/kb/cadre_kb.lance/`
+  (LanceDB database dir, table `chunks`) plus `app/kb/manifest.json`. Refresh is
+  manual by design — `python -m ingest.build_kb` and commit the diff. A KB that
+  rebuilds itself is a KB whose contents nobody read.
+- **The embedding model and its dimension are load-bearing and must match on
+  both sides**: `text-embedding-3-large` at 3072 native, no `dimensions`
+  shortening. A mismatch does not raise at query time — it returns confident,
+  wrong neighbours — which is what the manifest exists to make detectable, and
+  why ingest raises `DimensionMismatch` rather than warning.
+- Vectors are L2-normalized at ingest, so a `metric="cosine"` search reads
+  `1 - _distance` as a similarity. There is deliberately **no ANN index**: a few
+  hundred rows is an exact flat scan in single-digit milliseconds, and an index
+  is one more thing whose parameters must agree with the width.
+- `ingest/README.md` carries the run instructions, the cost, and the numbers
+  from the last real build.
+
+### Querying it (`app/kb/store.py`, `app/embeddings.py`, `retrieve`)
+
+- `app/kb/store.py` opens the database **once per process** behind `lru_cache`
+  and never re-opens: the artifact is in the image and cannot change between
+  requests, so a per-turn open would spend a slice of the 60s budget (KB-004)
+  on nothing. `reset_cache()` exists for tests only.
+- `ensure_ready()` is the gate and runs **before the query is embedded**. It
+  compares three sides — `config.EMBEDDING_MODEL`/`EMBEDDING_DIMENSION`, the
+  manifest, and the table's `fixed_size_list` width — and raises
+  `KBDimensionMismatch` (logged at ERROR, naming both values) rather than
+  searching. `search()` re-checks the query vector's width for the same
+  reason: the call that reaches LanceDB is the one that must not be reachable
+  with the wrong shape. Absent artifact or `CADRE_KB_ENABLED=0` raises
+  `KBDisabled`, which is a state, not a fault.
+- `app/embeddings.py` is the query-side embedding client and mirrors
+  `app/llm.py` exactly: key per request inside `_headers()`, one `lru_cache`d
+  `AsyncClient` behind a plain `_client()`, bounded retry on 5xx/transport and
+  never on 4xx (KB-013), no `openai` SDK. It returns an **L2-normalized**
+  vector — the corpus is normalized, and an un-normalized query silently
+  rescales every score and moves `RETRIEVE_MIN_SCORE` somewhere nobody
+  measured. It is deliberately **not** shared with `ingest/embed.py`: sharing
+  would put a build-time module in the runtime's import graph.
+- **`retrieve` fails open on every path and names each one on the wire.** An
+  embeddings outage, a missing artifact, a mismatched manifest and a slow node
+  are four different `detail` values, not one; the whole node body is wrapped
+  in `asyncio.wait_for(config.RETRIEVE_TIMEOUT_S)`; and zero hits is a
+  **`pass`/`no_hits`**, not a skip — the KB ran, it had nothing, and calling
+  that a degradation would make an empty corpus and a broken one look the
+  same. Every give-up path logs (KB-009).
+- **Condensing only runs when `history` is non-empty.** A first message is
+  already standalone. The rule is enforced at the call site in `nodes.retrieve`
+  so the seam can be asserted un-called, with a backstop inside
+  `models.condense_query`; a rewrite that is empty, over-long or a truncated
+  monologue falls back to the visitor's own words (KB-011).
+- The unit suite never opens the corpus and never reaches api.openai.com:
+  `tests/conftest.py`'s autouse `offline_kb` fixture disables the KB and
+  replaces `embeddings._client` with something that raises. Tests that want
+  retrieval patch `kb.ensure_ready`/`kb.search` back themselves.
 
 ## Verifying
 

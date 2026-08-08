@@ -32,6 +32,7 @@ CloudFront, with the page served from a private S3 bucket on the same hostname.
 |---|---|
 | Lambda → Bedrock | Bearer token (Bedrock API key) to the Mantle endpoint — **not** SigV4. See [ADR 0002](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/adr/0002-bedrock-mantle-api-key.md): classic `bedrock-runtime` is `NOT_AUTHORIZED` account-wide. The key is an SSM SecureString (`/cadre/bedrock-api-key`) created out of band; Terraform `data`-references it into the Lambda's `AWS_BEARER_TOKEN_BEDROCK`. The execution role has no `bedrock:*` grant at all. |
 | Lambda → Langfuse | Public/secret key pair, out of band in SSM (`/cadre/langfuse-public-key`, `/cadre/langfuse-secret-key`, both SecureString) alongside the plain-String `/cadre/langfuse-base-url`. Same data-source pattern as the Bedrock key and for the same reason — all three already exist with real values, so `infra/langfuse.tf` only reads them into `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST`. Tracing fails open, so a wrong value costs the trace link, never the turn. |
+| Lambda → OpenAI embeddings | Bearer token to `api.openai.com/v1/embeddings`, one query embedding per in-scope turn (`retrieve`). SSM SecureString `/cadre/openai-api-key`, already existing with a real value, so `infra/openai.tf` only `data`-references it into `OPENAI_API_KEY`. `app/embeddings.py` resolves it **per request**, so rotation is an SSM write plus one apply and no cold start. Retrieval fails open, so a wrong value costs the citations and leaves the turn answering from the vetted baseline. |
 | GitHub Actions → AWS | OIDC, exact sub-claim pinned to `refs/heads/main`. No access key. |
 | CloudFront → Lambda URL | OAC, SigV4-signed. The URL is `AWS_IAM`, not public. |
 | CloudFront → S3 | OAC. The bucket blocks all public access. |
@@ -70,8 +71,8 @@ data "aws_ssm_parameter" "some_existing_key" {
 }
 ```
 
-This is what `/cadre/bedrock-api-key` (`lambda.tf`) and the three Langfuse
-parameters (`langfuse.tf`) both do. Two things follow from it: a decrypted read
+This is what `/cadre/bedrock-api-key` (`lambda.tf`), the three Langfuse
+parameters (`langfuse.tf`) and `/cadre/openai-api-key` (`openai.tf`) all do. Two things follow from it: a decrypted read
 puts the value in Terraform state, so the state bucket is as sensitive as the
 secret; and `data` blocks resolve at **plan** time, so every role that plans —
 not just the one that applies — needs `ssm:GetParameter` on the ARN, or the

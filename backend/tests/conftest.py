@@ -18,7 +18,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from app import ratelimit
+from app import embeddings, kb, ratelimit
 from app.graph import models
 from app.main import app
 
@@ -120,6 +120,35 @@ def seams(request, monkeypatch):
     monkeypatch.setattr(models, "classify_topic", _in_scope)
     monkeypatch.setattr(models, "guard_output", _pass)
     monkeypatch.setattr(models, "stream_reply", _reply)
+
+
+@pytest.fixture(autouse=True)
+def offline_kb(monkeypatch):
+    """No corpus and no embeddings endpoint, unless a test asks for them.
+
+    Two separate guarantees, and both are unconditional — even the
+    `real_seams` tests get them:
+
+    * **No unit test reaches api.openai.com.** `embeddings._client` is
+      replaced with something that raises, so a forgotten patch fails loudly
+      in CI instead of quietly spending money (and failing wherever there is
+      no key).
+    * **The default turn has no KB.** `retrieve` reports
+      `skipped`/`kb_disabled` and the brain answers from the baseline, which
+      is what every test written before Phase 3 was asserting about. Tests
+      that want retrieval patch `kb.ensure_ready` and `kb.search` back
+      themselves (`test_retrieve.py`'s `kb_up`); `test_kb_store.py` drives
+      `app.kb.store` directly and is unaffected by the package-level patch.
+    """
+
+    def _no_network():
+        raise AssertionError("a unit test tried to reach the embeddings endpoint")
+
+    def _disabled():
+        raise kb.KBDisabled("the unit suite runs without the committed corpus")
+
+    monkeypatch.setattr(embeddings, "_client", _no_network)
+    monkeypatch.setattr(kb, "ensure_ready", _disabled)
 
 
 @pytest.fixture(autouse=True)

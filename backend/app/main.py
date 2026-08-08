@@ -162,7 +162,7 @@ async def _stream(req: AskRequest) -> AsyncIterator[str]:
         yield sse.trace(trace_id, trace_url)
 
     queue: asyncio.Queue = asyncio.Queue()
-    emit = QueueEmitter(queue)
+    emit = QueueEmitter(queue, trace_id=trace_id)
     state = initial_state(req.message, req.history, req.conversation_id)
     task = asyncio.create_task(_run_graph(state, emit, queue, handler))
 

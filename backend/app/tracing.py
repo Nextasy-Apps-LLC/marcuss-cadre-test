@@ -48,6 +48,11 @@ log = logging.getLogger("cadre.tracing")
 # callback handler — it is the one that carries session/refusal/latency.
 TURN_SPAN_NAME = "turn"
 
+# Name of the span `record_retrieval` writes. Separate from the graph's own
+# `retrieve` node span, which the callback handler produces and which knows
+# only that the node ran and how long it took — not what it searched for.
+RETRIEVAL_SPAN_NAME = "retrieval"
+
 # What `refused_step` says when the turn was not refused.
 #
 # Not cosmetic: Langfuse drops metadata keys whose value is null, so passing
@@ -154,6 +159,48 @@ def start_trace(
     except Exception as exc:  # noqa: BLE001 - fail open, see module docstring
         log.warning("could not start a trace (turn is unaffected): %s", exc)
         return None, None, None
+
+
+def record_retrieval(trace_id: str | None, query: str, hits) -> None:
+    """Write the `retrieve` node's own span: what was searched for, and what
+    came back.
+
+    plan.md asks for "query, top-k hits, scores — all visible in the public
+    trace", and each of the three earns its place. The **query** is the
+    *condensed* one, so a bad rewrite is visible instead of being inferred from
+    a bad answer. The **URLs** are what the visitor may end up reading. The
+    **scores** are the only way to tell "the corpus had nothing" from "the
+    floor is set too high" — which look identical on the wire, where both are
+    `pass`/`no_hits`.
+
+    The chunk *text* is deliberately not written: it is already in the trace's
+    brain span as part of the system prompt, and duplicating a few thousand
+    tokens per turn would make the public trace expensive to load for no new
+    fact.
+
+    `trace_id` is passed rather than discovered: this module never looks at
+    ambient context, and the graph node holding the id is the only thing that
+    knows which turn it belongs to. No-op without one, and on any exception —
+    a dropped span is never allowed to become a dropped turn.
+    """
+    if not _ENABLED or _client is None or trace_id is None:
+        return
+
+    try:
+        scored = [
+            {"url": getattr(hit, "url", None), "score": round(float(getattr(hit, "score", 0.0)), 4)}
+            for hit in hits
+        ]
+        with _client.start_as_current_observation(
+            name=RETRIEVAL_SPAN_NAME,
+            trace_context=TraceContext(trace_id=trace_id),
+            input={"query": query},
+            output={"hits": scored},
+            metadata={"hit_count": len(scored)},
+        ):
+            pass
+    except Exception as exc:  # noqa: BLE001 - fail open, see module docstring
+        log.warning("could not record the retrieval span (turn is unaffected): %s", exc)
 
 
 def finalize_trace(

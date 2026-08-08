@@ -15,6 +15,18 @@ describe("classifyLink", () => {
     expect(classifyLink("https://cadreai.com/insights/report")).toBe("see article");
   });
 
+  it('classifies the exact "/case-studies" and "/articles" index paths (no trailing segment) as "see article"', () => {
+    // Issue #62: today only the trailing-slash prefixes match — the corpus's
+    // own index pages (no child segment) must classify the same way.
+    expect(classifyLink("https://cadreai.com/case-studies")).toBe("see article");
+    expect(classifyLink("https://cadreai.com/articles")).toBe("see article");
+  });
+
+  it('classifies "/industries/*" and "/departments/*" corpus paths as "see more" (no new label introduced)', () => {
+    expect(classifyLink("https://cadreai.com/industries/private-equity")).toBe("see more");
+    expect(classifyLink("https://cadreai.com/departments/technology")).toBe("see more");
+  });
+
   it('classifies anything else as "see more"', () => {
     expect(classifyLink("https://cadreai.com/")).toBe("see more");
     expect(classifyLink("https://cadreai.com/pricing")).toBe("see more");
@@ -113,5 +125,42 @@ describe("linkify", () => {
     const segs = linkify(text);
     const rebuilt = segs.map((s) => (s.type === "text" ? s.value : s.url)).join("");
     expect(rebuilt).toBe(text);
+  });
+
+  describe("KB-017 regression: markdown-style [url](url) never renders as garbage", () => {
+    it("excludes '(', '[', ']' from the URL match so a markdown-formatted link parses as a real, clean URL", () => {
+      // Before the KB-017 fix, the regex excluded `)` but not `(`, `[`, `]`,
+      // so it greedily swallowed the `](https://...` tail into one
+      // unparseable "URL" that fell through to raw, un-linkified text.
+      const text = "Contact us: [https://cadreai.com/contact](https://cadreai.com/contact)";
+      const segs = linkify(text);
+
+      const linkSegs = segs.filter((s) => s.type === "link");
+      expect(linkSegs.length).toBeGreaterThan(0);
+      for (const seg of linkSegs) {
+        if (seg.type !== "link") continue;
+        // Every emitted link must be the real, unmangled URL — never the
+        // regex swallowing markdown syntax into the "URL".
+        expect(seg.url).toBe("https://cadreai.com/contact");
+        expect(seg.url).not.toContain("](");
+        expect(seg.url).not.toContain("[");
+        expect(seg.url).not.toContain("]");
+      }
+
+      // No raw URL text ever reaches the visible surface — every character
+      // of both URL occurrences must have been consumed into a link segment,
+      // not left dangling as garbage text.
+      for (const seg of segs) {
+        if (seg.type === "text") {
+          expect(seg.value).not.toMatch(/https?:\/\//);
+        }
+      }
+    });
+
+    it("still linkifies a plain bare URL immediately followed by ')' or ']' without swallowing the bracket", () => {
+      const segs = linkify("(see https://cadreai.com/strategy] for more)");
+      const link = segs.find((s) => s.type === "link");
+      expect(link).toEqual({ type: "link", url: "https://cadreai.com/strategy", label: "see more" });
+    });
   });
 });
