@@ -42,7 +42,7 @@ All chat models via `langchain-aws` (`ChatBedrockConverse`); availability in us-
 | query condensing | **Claude Haiku 4.5** | rewrite follow-ups into standalone retrieval queries |
 | brain | **Claude Opus 5** (streaming) | answer quality on nuanced consulting questions |
 | output safety | **Claude Haiku 4.5** guard + deterministic PII/URL scrub | final gate on the streamed answer |
-| embeddings | **OpenAI `text-embedding-3-small`** | KB requirement; strong quality/cost for a small corpus |
+| embeddings | **OpenAI `text-embedding-3-large`** (3072 native) | KB requirement; on a corpus this small the cost difference is noise and retrieval quality is the only axis that matters (decision recorded in #62, superseding `-3-small`) |
 
 ## SSE protocol v2 — real-time through every phase
 
@@ -69,7 +69,7 @@ Stream-then-retract is explicit: tokens stream during `brain`; a later `output_s
 
 Inside `retrieve`:
 1. **Query condensing** (multi-turn): with non-empty history, Haiku 4.5 rewrites the message into a standalone query ("how much does *that* cost?" → "Cadre AI Maturity Index pricing").
-2. Embed the query with OpenAI `text-embedding-3-small`.
+2. Embed the query with OpenAI `text-embedding-3-large` — the same model at the same 3072 dimensions the artifact was built with. A mismatch does not raise, it returns wrong neighbours, so `retrieve` checks the query vector against `app/kb/manifest.json` before it searches.
 3. Vector search top-k≈6 with a similarity floor; hits (chunk text + source title/URL) are injected into the brain prompt with an instruction to cite sources inline as a simple small "see more" link at the end that when clicked takes you the original http, it should not show the long url.
 4. **Fail-open**: an embeddings/DB outage degrades to persona-baseline answers; the `state` event reports `retrieve: skipped`, never a user-facing error.
 
@@ -81,7 +81,9 @@ The corpus is ~50 pages / a few hundred chunks. The right-sized store is **Lance
 
 ### Ingestion pipeline
 
-`backend/ingest/` runs locally (never in Lambda): crawl allowlisted `www.cadreai.com` pages — home, about, the 4 service pages, industries (×8), departments (×8), contact, case-studies, events — plus all ~27 `/articles/*`; extract main content (beautifulsoup4), chunk ~800 tokens with heading/URL metadata, embed with OpenAI, write the LanceDB dataset. Refresh = re-run the script; automated re-ingestion is an explicit non-goal.
+`backend/ingest/` runs locally (never in Lambda): fetch a **frozen 55-URL allowlist** of `www.cadreai.com` pages — home, about, contact, case-studies, events, the 4 service pages, industries (×9 — the sitemap has nine, not eight) and departments (×8), plus all 27 `/articles/*` — one request per second, honest User-Agent, `robots.txt` enforced, never following a link. Extract main content (beautifulsoup4 + lxml), drop the blocks every page shares (this site's footer is `<div>`s, so the tag list alone leaves the menu in the corpus), chunk ~800 tokens with ~100 overlap and heading/URL metadata, embed with `text-embedding-3-large`, write the LanceDB dataset and a manifest recording model, dimension and counts. Refresh = re-run the script and commit the artifact; automated re-ingestion is an explicit non-goal.
+
+As built (2026-08-08): 55 pages → 131 chunks (median 755 tokens), a 1.80 MB committed artifact, 85K embedding tokens ≈ $0.011 per full rebuild. Details in `backend/ingest/README.md`.
 
 ## Frontend — real-time state UI
 
