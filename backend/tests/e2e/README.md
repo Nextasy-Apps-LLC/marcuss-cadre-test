@@ -45,9 +45,22 @@ The **target** needs `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and
 `LANGFUSE_HOST` in its environment (Terraform injects them in Lambda from the
 three SSM parameters — see `infra/langfuse.tf`; locally they go on `docker run
 -e`). The suite itself needs none of them: it reads the `trace` event off the
-wire and then fetches the advertised URL as an anonymous visitor, which is the
-whole point — a trace nobody can open is not a debugging link. Langfuse ingests
-asynchronously, so that fetch retries for up to a minute before failing.
+wire and then reads that trace back out of Langfuse with **no credentials at
+all**, which is the whole point — a trace nobody can open is not a debugging
+link.
+
+That read-back goes to `api/trpc/traces.byId` (the endpoint Langfuse's own SPA
+calls), **not** to the trace page the `trace` event advertises. The page is a
+Next.js shell that answers `200` with a byte-identical document for a public
+trace, for a trace that exists but was never marked public, and for a trace id
+that was never created — so asserting on it cannot fail, which is how a first
+version of this suite went green against traces it had not proved existed. The
+API answers `200 "public": true`, `401 "…this trace is not public"` and
+`404 "Trace not found"` respectively, and `TestThePublicVisibilityProbeCanFail`
+keeps that distinction honest by requiring a never-created id to come back
+`404`. Langfuse ingests asynchronously (measured 30–60s from `done` to the
+trace being readable), so the read-back retries for up to three minutes before
+failing — a slow trace and a missing trace must not look alike here.
 
 ## Local: the real image in docker
 
