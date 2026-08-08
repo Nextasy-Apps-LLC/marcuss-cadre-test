@@ -123,46 +123,34 @@ data "aws_iam_policy_document" "ci_terraform" {
     resources = ["*"]
   }
 
-  # The Bedrock API key (ADR 0002). `data "aws_ssm_parameter"` is resolved at
-  # *plan* time, not apply, so without this every plan fails with AccessDenied
-  # before it can render a diff — including the plan-on-PR that is supposed to
-  # review the change.
+  # Every secret this stack reads lives under the `/cadre/` SSM prefix, and each
+  # one is read by a `data "aws_ssm_parameter"` block — which resolves at *plan*
+  # time, not apply. That timing is the whole reason this statement exists:
+  # without it a plan dies with AccessDenied before rendering a single line of
+  # diff, including the plan-on-PR that is supposed to review the change.
   #
-  # Scoped to the one parameter: this role provisions the stack, it has no
-  # business reading the account's other secrets. The value it reads lands in
-  # Terraform state, which is why the state bucket is as sensitive as the key
-  # itself (see the note in lambda.tf).
+  # Scoped to the prefix, not to individual parameter ARNs, and deliberately so.
+  # Per-parameter grants created a bootstrap deadlock that bit three times
+  # (Bedrock key, Langfuse keys, OpenAI key): adding a secret needs a new grant,
+  # the grant lives in this very policy, and the policy is applied by the role
+  # the grant is for — so CI could not plan, could not apply, and could not
+  # unblock itself. Only a human with admin credentials could break the loop,
+  # once per secret. The prefix ends that: a new `/cadre/*` parameter needs no
+  # policy change at all.
+  #
+  # The blast radius barely moves. This role was already granted every
+  # `/cadre/*` parameter individually, and the account's other namespaces
+  # (`/nextasy/*`, `/ask-marcus-chatbot/*`) stay out of reach. The original
+  # intent — this role provisions the stack and has no business reading other
+  # people's secrets — is preserved by the prefix, not weakened by it.
+  #
+  # Values read here land in Terraform state, which is why the state bucket is
+  # as sensitive as the keys themselves (see the note in lambda.tf).
   statement {
-    sid       = "BedrockApiKeyRead"
+    sid       = "CadreSecretsRead"
     effect    = "Allow"
     actions   = ["ssm:GetParameter"]
-    resources = ["arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.bedrock_api_key_parameter}"]
-  }
-
-  # The OpenAI embeddings key (infra/openai.tf). Same plan-time `data` read as
-  # the two below, same scoping: one parameter, because this role provisions
-  # the stack and has no business reading the account's other secrets.
-  statement {
-    sid       = "OpenAIApiKeyRead"
-    effect    = "Allow"
-    actions   = ["ssm:GetParameter"]
-    resources = ["arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.openai_api_key_parameter}"]
-  }
-
-  # The three Langfuse parameters (infra/langfuse.tf), for exactly the reason
-  # above and worth restating because it is the one that bites: these are `data`
-  # blocks, so they resolve at PLAN time. Without this statement every plan —
-  # the plan-on-PR that is supposed to review the change included — dies with
-  # AccessDenied before it renders a single line of diff.
-  statement {
-    sid     = "LangfuseKeysRead"
-    effect  = "Allow"
-    actions = ["ssm:GetParameter"]
-    resources = [
-      "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.langfuse_secret_key_parameter}",
-      "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.langfuse_public_key_parameter}",
-      "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.langfuse_base_url_parameter}",
-    ]
+    resources = ["arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter/cadre/*"]
   }
 }
 
