@@ -43,8 +43,7 @@ from typing import Sequence
 import lancedb
 import pyarrow as pa
 
-from ingest import embed as embedder
-from ingest import fetch as fetcher
+from ingest import boilerplate, embed as embedder, fetch as fetcher
 from ingest.allowlist import ALLOWLIST, HOST
 from ingest.chunk import Chunk, chunk_page
 from ingest.embed import EMBEDDING_DIMENSION, EMBEDDING_MODEL, DimensionMismatch
@@ -230,6 +229,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     urls = ALLOWLIST[: args.limit] if args.limit else ALLOWLIST
     log.info("crawling %d allowlisted pages on %s", len(urls), HOST)
     pages = crawl(urls)
+    pages = boilerplate.strip_shared(pages)
     chunks = chunk_all(pages)
     _report(chunks, pages)
 

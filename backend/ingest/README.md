@@ -6,13 +6,23 @@ CI), **never inside the Lambda** — the image copies `app/` only, and nothing
 under `app/` may import from here.
 
 ```
-allowlist.py  the 55 URLs, hardcoded and frozen
-fetch.py      polite, single-threaded fetching of exactly those URLs
-extract.py    HTML → (heading, paragraph) pairs
-chunk.py      paragraphs → ~800-token chunks with ~100-token overlap
-embed.py      chunks → 3072-dim unit vectors (OpenAI, plain HTTPS)
-build_kb.py   the CLI that wires the four together and writes the artifact
+allowlist.py    the 55 URLs, hardcoded and frozen
+fetch.py        polite, single-threaded fetching of exactly those URLs
+extract.py      HTML → (heading, paragraph) pairs
+boilerplate.py  drops the blocks every page shares — the site's own chrome
+chunk.py        paragraphs → ~800-token chunks with ~100-token overlap
+embed.py        chunks → 3072-dim unit vectors (OpenAI, plain HTTPS)
+build_kb.py     the CLI that wires them together and writes the artifact
 ```
+
+`boilerplate.py` earns its place with a measurement. The site renders its
+footer as ordinary `<div>`s, so `extract.py`'s tag list does not catch it and
+55 of 151 chunks carried the menu. Searching that artifact for "How do I
+contact Cadre AI?" returned `/departments`, `/leadership-facilitation` and
+`/industries/private-equity` among its top hits — the footer's link text is on
+every page. Dropping blocks that appear on ≥ 80% of the corpus removed 45 block
+texts (~14% of the extracted tokens, all of it menu) and the same query now
+returns `/contact` first.
 
 ## Re-running it
 

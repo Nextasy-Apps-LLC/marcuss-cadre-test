@@ -42,9 +42,11 @@ BLOCK_TAGS = frozenset(
 )
 
 _WHITESPACE = re.compile(r"\s+")
-# Icon fonts render as private-use codepoints; as text they are noise that
-# would be embedded as if it meant something.
-_PRIVATE_USE = re.compile("[\ue000-\uf8ff]")
+# Two classes of character visible to a tokenizer and to nobody else: icon
+# fonts render as private-use codepoints, and the CMS sprinkles zero-width
+# joiners between elements. Left in, each becomes a "block" of pure noise that
+# gets embedded as if it meant something.
+_INVISIBLE = re.compile("[\ue000-\uf8ff\u200b-\u200d\ufeff]")
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,7 @@ class ExtractedPage:
 
 
 def collapse(text: str) -> str:
-    return _WHITESPACE.sub(" ", _PRIVATE_USE.sub(" ", text)).strip()
+    return _WHITESPACE.sub(" ", _INVISIBLE.sub(" ", text)).strip()
 
 
 def _title(soup: BeautifulSoup) -> str:
