@@ -16,7 +16,8 @@ The headline is not the one you would guess from the model roster.
 ## Where the money goes
 
 One answered turn with the knowledge base live — trace
-`3f80ce53fa8d6fafd6dd9c4cd8b27512`, **$0.0017 total**:
+`3f80ce53fa8d6fafd6dd9c4cd8b27512`, **$0.0017 total**. This is the *baseline*
+that motivated the guard swap in §3b below; the same turn now costs $0.00135:
 
 | step | model | tokens in | tokens out | cost | share |
 |---|---|---:|---:|---:|---:|
@@ -102,14 +103,45 @@ Mantle surface exposes cache controls at all. Check before designing around it,
 the same way `stream_options.include_usage` was checked against the live
 endpoint rather than assumed.
 
+### 3b. Guard model choice — acted on, −21% per turn
+
+Ranked here originally as *not* a lever, on the grounds that the roster's input
+prices are near-identical. That reasoning was too narrow: it compared the guard
+only against `qwen3-32b` and `ministral`, and missed that
+`nvidia.nemotron-nano-3-30b` is **\$0.06/1M input** — less than half the 80B's
+\$0.14. Since the guard's cost is ~all input, that is a real saving, and the
+slot was swapped in issue #79.
+
+Measured, fetched back from Langfuse before and after:
+
+| | qwen3-next-80b | nemotron-nano-3-30b | change |
+|---|---:|---:|---:|
+| `output_safety` cost | $0.00064 | $0.00028 | **−56%** |
+| turn total | $0.00171 | $0.00135 | **−21%** |
+| guard share of turn | 38% | 21% | |
+| guard fixture score | 48/48 | 45/48 | |
+| p50 latency | 0.32s | 0.23s | |
+
+**The 3-point accuracy cost is a specific, known regression, not a general
+one.** All three runners-up in the benchmark fail the *same* case: they let
+through an answer that discusses its own instructions. Nothing else in the
+fixture set moved. The deterministic half of the gate (`scrub_failure`'s URL
+allowlist and PII patterns) is unaffected — it runs first and has no outage
+mode — so no external-URL or PII leak rides on this slot. `CADRE_MODEL_GUARD`
+reverts it without a code deploy.
+
+This is the trade to revisit first if instruction leakage ever shows up in
+production, and the reason the guard's raw output is now on every trace: it is
+newly worth watching.
+
 ### 4. Things that look like levers and are not
 
-- **Swapping the guard to a cheaper model.** The roster's *input* prices are
-  nearly identical — `qwen3-next-80b-a3b-instruct` is \$0.14/1M in,
-  `qwen3-32b` is \$0.15/1M. The 80B model is *cheaper* per input token than the
-  32B one. Since the guard's cost is ~all input, this saves nothing and costs
-  accuracy (48/48 vs 45/48 on the guard fixture set). The expense is token
-  volume, not the model.
+- **Assuming a "bigger" model is the expensive one.** It is not, and the
+  intuition misleads in both directions. `qwen3-next-80b-a3b-instruct` is
+  \$0.14/1M input against `qwen3-32b`'s \$0.15 — the 80B model is *cheaper*
+  per input token than the 32B one, so the previous default was both pricier
+  and less accurate. Compare input rates directly; parameter count tells you
+  nothing about the bill.
 - **Lowering `BRAIN_MAX_TOKENS`.** Brain output is 167 tokens, $0.0001, 6% of
   the turn. It is also the only thing the visitor actually reads.
 - **Tuning the small judges.** `validate_input`, `injection_check` and
