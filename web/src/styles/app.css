@@ -197,6 +197,16 @@
   color: var(--accent);
 }
 
+/* Footnote for the trace link above — Langfuse Cloud ingestion is async, so
+   the link can 404 if clicked right away (KB-020). Smaller/quieter than
+   .trace-link on purpose: a footnote, not a warning banner. */
+.trace-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.72rem;
+  color: var(--fg-mute);
+}
+
 /* ── suggestions ──────────────────────────────────────────────────────── */
 
 .suggestions {

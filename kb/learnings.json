@@ -526,6 +526,50 @@
       "source": "#53",
       "date": "2026-08-08",
       "status": "active"
+    },
+    {
+      "id": "KB-023",
+      "type": "learning",
+      "area": [
+        "process"
+      ],
+      "tags": [
+        "kb-filter",
+        "stale-checkout",
+        "compound-workflow",
+        "kb-drift"
+      ],
+      "title": "kb-filter reads kb/learnings.json off the session's actual working tree — a stale/detached main checkout silently hides recently-merged KB entries",
+      "detail": "Spawning kb-filter from a shared main checkout whose HEAD is stale or detached behind origin/main (e.g. left mid-investigation by a prior session) makes it miss any KB entries that only exist in newer merged commits — it returns a confident result, not a suspiciously-small one flagged as incomplete. Concretely for #57: the local main checkout topped out at KB-018, so kb-filter never saw KB-019 through KB-022 (merged via PR #54) even though origin/main already had them — and KB-020 (Langfuse ingestion is async, never hand out a bare direct link) was the single most relevant entry for the feature being specced. Fix: before trusting a kb-filter result, confirm the checkout it read from is at or ahead of origin/main (git status showing a detached HEAD, or `git rev-parse HEAD` differing from `git rev-parse origin/main`, is reason to cross-check with `git show origin/main:kb/learnings.json` directly rather than accept the agent output as complete).",
+      "source": {
+        "issue": 57,
+        "pr": null
+      },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-024",
+      "type": "learning",
+      "area": [
+        "web"
+      ],
+      "tags": [
+        "testing",
+        "vitest",
+        "jsdom",
+        "renderToStaticMarkup",
+        "react-dom-server",
+        "component-test"
+      ],
+      "title": "Assert on real rendered JSX in this repo's node-env vitest suite via react-dom/server's renderToStaticMarkup — no jsdom/RTL needed",
+      "detail": "This repo's vitest config runs environment: 'node' with include: ['src/**/*.test.ts'] on purpose (the SSE parser and pure turn-reducer logic don't need a DOM), which reads like a hard blocker the first time a feature needs an actual component-render assertion (e.g. #57's trace-link footnote and its aria-describedby wiring). It isn't one: react-dom/server's renderToStaticMarkup renders a React tree to an HTML string in plain Node — react-dom is already a runtime dependency, so this costs zero new dependencies and zero vite.config.ts changes. Write the test file as .ts (build the tree with React.createElement, not JSX) so it still matches the existing include glob, then assert against the returned HTML string with substring/regex checks. Reach for this before jsdom + React Testing Library; only escalate to a real DOM if a test needs interaction (clicks, focus, event handlers) that a static string render can't exercise.",
+      "source": {
+        "issue": 57,
+        "pr": null
+      },
+      "date": "2026-08-07",
+      "status": "active"
     }
   ]
 }
