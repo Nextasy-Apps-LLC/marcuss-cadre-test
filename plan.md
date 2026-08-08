@@ -63,7 +63,7 @@ Stream-then-retract is explicit: tokens stream during `brain`; a later `output_s
 
 Shipped in Phase 2 (PR #55). The whole surface is `backend/app/tracing.py`; the rules it must obey (per-request `CallbackHandler` on `config["callbacks"]`, double-flush ordering, flush-before-terminal because Lambda freezes on response end, fail-open) live in `backend/CLAUDE.md` — read that, not this, before touching tracing. The shape in brief:
 
-- Langfuse Cloud; the SDK's LangChain `CallbackHandler` rides every graph invocation, so each **node** lands as a span. Individual Bedrock calls are *not* captured as generations — the model path is plain `httpx` (ADR 0002), and that trade is accepted.
+- Langfuse Cloud; the SDK's LangChain `CallbackHandler` rides every graph invocation, so each **node** lands as a span. Individual Bedrock calls **are** captured as hand-built generations carrying the effective model id, token usage and cost (`trace-design.md` §4.2, issue #79) — the model path is still plain `httpx` with no LangChain in it (ADR 0002); the observations are constructed by hand in the transport, because the model id and the token counts exist nowhere else.
 - A locally generated trace id lets the backend emit the trace URL as the **first** SSE frame; the trace is marked public, so the link opens without a login.
 - The web client renders a **"View trace ↗"** chip on each traced assistant message.
 - Trade-off, accepted for a demo: public traces expose user messages. Called out under scope.

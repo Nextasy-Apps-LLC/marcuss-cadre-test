@@ -190,7 +190,7 @@ async def _malformed_payload_stream() -> AsyncIterator[str]:
     yield sse.done("refused", config.REFUSAL_TEXTS["validate_input"])
 
 
-async def _run_graph(state, emit, queue: asyncio.Queue, handler=None) -> None:
+async def _run_graph(state, emit, queue: asyncio.Queue, handler=None, turn=None) -> None:
     """Drive the graph, then post the terminal the generator should emit."""
     try:
         # Both per-request objects ride the invocation's config, never the state
@@ -198,19 +198,31 @@ async def _run_graph(state, emit, queue: asyncio.Queue, handler=None) -> None:
         # visitor's trace, and a checkpointable channel is how one visitor's
         # stream — or trace — ends up in another's. `callbacks` is LangChain's
         # own per-invocation callback list, which is what attaches the handler
-        # to the graph run and gets every node as a span for free; there is
-        # deliberately no per-call-site Langfuse logging in `nodes.py`.
+        # to the graph run and gets every node as a span for free.
         cfg: dict = {"configurable": {"emit": emit}}
         if handler is not None:
             cfg["callbacks"] = [handler]
 
-        final = await GRAPH.ainvoke(state, config=cfg)
+        # The turn span is opened *here*, inside the task, and not in `_stream`.
+        # That is the whole isolation argument: a contextvar set inside a task
+        # belongs to that task, so the generations the transport creates deep
+        # inside the graph parent themselves correctly without a single trace id
+        # being threaded through `models.py` — and two concurrent visitors can
+        # never see each other's span (the same concern as KB-008).
+        #
+        # It closes before the terminal goes on the queue, so `finalize_trace`
+        # in `_stream` cannot race the graph's own spans.
+        turn_ctx = turn.activate() if turn is not None else contextlib.nullcontext()
+        with turn_ctx:
+            final = await GRAPH.ainvoke(state, config=cfg)
+
         await queue.put(
             (
                 "done",
                 {
                     "outcome": final.get("outcome", "answered"),
                     "refusal_text": final.get("refusal_text"),
+                    "answer": final.get("answer") or "",
                 },
             )
         )
@@ -235,24 +247,37 @@ async def _stream(req: AskRequest) -> AsyncIterator[str]:
     queue: asyncio.Queue = asyncio.Queue()
     emit = QueueEmitter(queue, trace_id=trace_id)
     state = initial_state(req.message, req.history, req.conversation_id)
-    task = asyncio.create_task(_run_graph(state, emit, queue, handler))
+    turn = tracing.start_turn(trace_id, trace_url)
+    task = asyncio.create_task(_run_graph(state, emit, queue, handler, turn))
 
     # What the trace needs, harvested from the events already going out. The
     # per-step numbers are the same `elapsed_ms` the stepper renders — reused,
-    # not re-measured, so the trace and the transcript cannot disagree.
+    # not re-measured, so the trace and the transcript cannot disagree. The
+    # same applies to the tags: `degraded` and `kb:*` are read off the wire
+    # rather than recomputed, so a trace filter and a stepper chip cannot
+    # disagree about whether a rail was down.
     step_latencies: dict[str, int] = {}
     refused_step: str | None = None
+    degraded = False
+    kb_state: str | None = None
 
-    def _finalize() -> None:
+    def _finalize(outcome: str, refusal_text: str | None, answer: str) -> None:
         """Flush before the terminal frame, on every terminal path: Lambda
         freezes the instance the moment the response ends, so a batch that is
         still in Langfuse's background thread is a trace nobody ever sees."""
         tracing.finalize_trace(
-            trace_id,
+            turn,
             refused_step,
             step_latencies,
             round((time.monotonic() - started) * 1000),
             req.conversation_id,
+            outcome=outcome,
+            message=req.message,
+            history_turns=len(req.history),
+            answer=answer,
+            refusal_text=refusal_text,
+            degraded=degraded,
+            kb_state=kb_state,
         )
 
     try:
@@ -272,6 +297,19 @@ async def _stream(req: AskRequest) -> AsyncIterator[str]:
                     step_latencies[payload["step"]] = payload["elapsed_ms"]
                 if payload["status"] == "fail":
                     refused_step = payload["step"]
+                if payload["detail"] == "degraded":
+                    degraded = True
+                if payload["step"] == "retrieve":
+                    # Three distinct states, and the tag has to keep them
+                    # distinct: the KB ran and found something, ran and found
+                    # nothing, or never ran. Collapsing the last two is what
+                    # made incident 1 unfindable.
+                    if payload["status"] == "skipped":
+                        kb_state = "skipped"
+                    elif payload["detail"] == "no_hits":
+                        kb_state = "no_hits"
+                    else:
+                        kb_state = "hit"
                 yield sse.state(
                     payload["step"],
                     payload["status"],
@@ -282,12 +320,14 @@ async def _stream(req: AskRequest) -> AsyncIterator[str]:
             elif kind == "token":
                 yield sse.token(payload)
             elif kind == "done":
-                _finalize()
+                _finalize(
+                    payload["outcome"], payload["refusal_text"], payload.get("answer", "")
+                )
                 yield sse.done(payload["outcome"], payload["refusal_text"])
                 return
             elif kind == "error":
                 # Terminal on its own — no `done` follows an `error`.
-                _finalize()
+                _finalize("error", None, "")
                 yield sse.error(config.ERROR_TEXT)
                 return
 
