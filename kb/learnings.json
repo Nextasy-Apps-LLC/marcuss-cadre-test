@@ -570,6 +570,84 @@
       },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-032",
+      "type": "gotcha",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "langfuse",
+        "tracing",
+        "propagate_attributes",
+        "otel",
+        "session_id",
+        "tags",
+        "trace-io",
+        "upsert",
+        "span-ordering"
+      ],
+      "title": "Langfuse trace-LEVEL fields must be written by a span CREATED late and INSIDE propagate_attributes — one span cannot both parent your observations and carry them",
+      "detail": "Two independent traps that both present as 'the trace exists, the observations are perfect, but sessionId is null, tags are [] and public is false'. Neither raises, because tracing is fail-open. (1) `propagate_attributes(session_id=..., tags=...)` is baggage that only reaches spans CREATED INSIDE its block — re-using a span that was created earlier silently drops every attribute. (2) The trace-level upsert is won by the later-CREATED root-level write, not the later-ENDED one; keeping a span open with `end_on_exit=False` until after the flush does NOT make it win against a LangChain CallbackHandler's root span that was created after it. The consequence is structural: if you also want an ambient parent span so nested observations attach without threading trace ids, that CANNOT be the same span as the one carrying session/tags/public/trace-IO, because the ambient parent must exist before the work starts while the trace fields (tags depend on the outcome) are only knowable after it ends. Use two: an ambient 'pipeline' span opened in the task, and a separate summary span created inside `propagate_attributes` after a first `flush()`. Diagnostic: fetch the trace back via GET /api/public/traces/{id} and check `sessionId`/`tags`/`public` — the SDK reports success either way.",
+      "source": {
+        "issue": 79,
+        "pr": 80
+      },
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-033",
+      "type": "gotcha",
+      "area": [
+        "backend",
+        "process"
+      ],
+      "tags": [
+        "bedrock",
+        "mantle",
+        "pricing",
+        "cost",
+        "aws-price-list-api",
+        "model-ids",
+        "nemotron",
+        "qwen"
+      ],
+      "title": "Price Bedrock Mantle models from the AWS Price List API keyed on the exact model id, never from the public pricing page — the page groups distinct ids under one display name",
+      "detail": "The Bedrock pricing web page lists models by human display name, and several DIFFERENT model ids share one name at different prices. `nvidia.nemotron-nano-12b-v2` reads off the page as 'NVIDIA Nemotron Nano 2' ($0.06/$0.23), but that row is the 9b model; the 12b bills at $0.20/$0.60. The page also publishes no US on-demand row at all for `qwen.qwen3-32b` (only Sydney), which invites an inferred number. The authoritative, scriptable source is the Price List API, which carries SKUs named after the literal id you send: `aws pricing get-products --service-code AmazonBedrock --region us-east-1 --filters '[{\"Type\":\"TERM_MATCH\",\"Field\":\"model\",\"Value\":\"<display name>\"}]'`, then read the usagetype `USE1-<model_id>-mantle-{input,output}-tokens-standard` and multiply $/1K by 1000. Paginate — the default page truncates and the dimension you want is often on page 2. Cross-check the tiers: flex is Standard x0.5 and priority is x1.75, so a flex row confirms a standard one. Also note a WebFetch summariser gave inconsistent and partly invented numbers for this page across two calls; read raw HTML or use the API.",
+      "source": {
+        "issue": 79,
+        "pr": 80
+      },
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-034",
+      "type": "learning",
+      "area": [
+        "backend",
+        "process"
+      ],
+      "tags": [
+        "bedrock",
+        "mantle",
+        "determinism",
+        "temperature-0",
+        "streaming",
+        "verification",
+        "stream_options",
+        "control-group"
+      ],
+      "title": "The Mantle endpoint is NOT deterministic at temperature 0 — verify a request-payload change structurally, with a control run, never by diffing answer text",
+      "detail": "Two byte-identical streaming requests at temperature 0 to `qwen.qwen3-32b` returned different answers (264 vs 319 chars) — hosted batched/MoE serving does not guarantee reproducibility no matter what temperature says. So the natural way to check 'did adding this request field perturb the stream?' — run with and without, diff the text — produces a FALSE POSITIVE every time and would have blocked a correct change here. Always run the control: two runs with the payload UNCHANGED first. If those already differ, text is not evidence and you must assert on structure instead: frame count and shape, which frames carry deltas, what a client would actually render. For `stream_options: {include_usage: true}` specifically, the verified structural result is that it appends exactly one extra `data:` frame with `choices: []` and no delta, carrying `usage`, before `[DONE]` — a shape OpenAI-style consumers already skip, so nothing rendered changes. Re-verify per model: a model that ignores the flag simply sends no usage frame, which must degrade to an 'absent' literal rather than an exception.",
+      "source": {
+        "issue": 79,
+        "pr": 80
+      },
+      "date": "2026-08-08",
+      "status": "active"
     }
   ]
 }
