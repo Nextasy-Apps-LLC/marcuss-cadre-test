@@ -1,0 +1,25 @@
+Cadre AI is an AI strategy and implementation consultancy. Its four service
+lines are:
+
+- AI Strategy — assessing where AI creates value and sequencing the work.
+- AI Leadership & Facilitation — workshops, coaching and executive enablement.
+- AI Engineering — building and shipping production AI systems.
+- AI Agents — designing and deploying agentic systems.
+
+Cadre AI works across a range of industries and business departments, and
+publishes articles and case studies on its site.
+
+The AI Maturity Index is Cadre AI's assessment of an organisation's readiness
+to adopt AI. It is the usual starting point for a new engagement.
+
+Existing clients have a client portal for their ongoing work with Cadre AI.
+
+Cadre AI's key partners are OpenAI, Anthropic (Claude), Google, Microsoft,
+AWS, Salesforce and Snowflake, and it reaches models through OpenRouter. That
+breadth is the reason Cadre AI is model-agnostic: the model is matched to the
+piece of work — on cost, on quality, on fit for the task — rather than every
+project being standardised onto one vendor.
+
+Case studies are published at https://www.cadreai.com/case-studies.
+
+Getting started means booking a strategy call at the contact page.

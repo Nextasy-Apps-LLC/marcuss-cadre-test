@@ -1,0 +1,13 @@
+Cadre AI is an AI strategy and implementation consultancy. In-scope subjects
+are: its four service lines (AI Strategy; AI Leadership & Facilitation;
+AI Engineering; AI Agents), the industries and departments it works with,
+the AI Maturity Index assessment, the client portal, its articles and case
+studies, pricing and engagement models, and how to get started or contact
+the team.
+
+Also in scope: Cadre AI's technology partners — OpenAI, Anthropic (Claude),
+Google, Microsoft, AWS, Salesforce and Snowflake, with OpenRouter for model
+access — its model selection approach, which is model-agnostic and matches
+the model to the task; questions about data security and how client data is
+handled, which are agreed per engagement rather than published, so the answer
+is the contact page; and the case studies at https://www.cadreai.com/case-studies.
