@@ -73,7 +73,9 @@ def test_a_url_outside_the_allowlist_is_never_requested():
     with pytest.raises(NotAllowlisted):
         f.fetch("https://www.cadreai.com/podcasts/vectara")
 
-    assert [str(r.url) for r in requests] == [ROBOTS_URL]
+    # Refused before any request is built — at most robots.txt was ever asked
+    # for, and never the page itself.
+    assert set(str(r.url) for r in requests) <= {ROBOTS_URL}
 
 
 def test_a_url_on_another_host_is_never_requested():
@@ -82,7 +84,7 @@ def test_a_url_on_another_host_is_never_requested():
     with pytest.raises(NotAllowlisted):
         f.fetch("https://cadreai.com.evil.example/about")
 
-    assert [str(r.url) for r in requests] == [ROBOTS_URL]
+    assert set(str(r.url) for r in requests) <= {ROBOTS_URL}
 
 
 def test_a_robots_disallowed_url_is_never_requested():
@@ -91,6 +93,7 @@ def test_a_robots_disallowed_url_is_never_requested():
     with pytest.raises(RobotsDisallowed):
         f.fetch(ARTICLE)
 
+    # robots.txt itself is fetched; the page it forbids never is.
     assert [str(r.url) for r in requests] == [ROBOTS_URL]
 
 

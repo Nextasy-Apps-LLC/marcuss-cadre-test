@@ -34,7 +34,7 @@ SENTENCE = (
 
 
 def paragraph(n: int, repeats: int = 6) -> str:
-    return f"Paragraph {n}. " + SENTENCE * repeats
+    return (f"Paragraph {n}. " + SENTENCE * repeats).strip()
 
 
 def test_short_page_is_exactly_one_chunk_even_below_the_minimum():
@@ -101,6 +101,14 @@ def test_long_page_splits_near_the_target_on_paragraph_boundaries():
         assert any(paragraph(i) in c.text for c in chunks), f"paragraph {i} was split"
 
 
+def shared_boundary(previous: str, current: str) -> str:
+    """The longest suffix of `previous` that `current` starts with."""
+    for size in range(min(len(previous), len(current)), 0, -1):
+        if previous.endswith(current[:size]):
+            return current[:size]
+    return ""
+
+
 def test_consecutive_chunks_overlap_by_roughly_the_configured_amount():
     blocks = [("", paragraph(i)) for i in range(20)]
 
@@ -108,10 +116,9 @@ def test_consecutive_chunks_overlap_by_roughly_the_configured_amount():
 
     assert len(chunks) > 2
     for previous, current in zip(chunks, chunks[1:]):
-        shared = [p for p in range(20) if paragraph(p) in previous.text and paragraph(p) in current.text]
-        assert shared, "consecutive chunks share no text at all"
-        overlap_tokens = sum(count_tokens(paragraph(p)) for p in shared)
-        assert overlap_tokens <= OVERLAP_TOKENS * 2
+        overlap = shared_boundary(previous.text, current.text)
+        assert overlap, "consecutive chunks share no text at all"
+        assert OVERLAP_TOKENS // 4 <= count_tokens(overlap) <= OVERLAP_TOKENS * 2
 
 
 def test_an_over_long_paragraph_is_hard_split_never_dropped():
