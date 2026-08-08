@@ -375,6 +375,14 @@ def _added_ts_conditional_skips(lines: Iterable[str]) -> list[str]:
     return [l for l in lines if _TS_CONDITIONAL_SKIP_RE.search(l)]
 
 
+def _code_lines(lines: Iterable[str]) -> list[str]:
+    """Drop full-line comments: a `# pytest --deselect …` comment cannot narrow
+    a suite or swallow a failure, and docs-in-code must not trip the
+    line-based detectors (the scanner's own workflow documents the patterns it
+    hunts in YAML comments)."""
+    return [l for l in lines if not l.strip().startswith(("#", "//"))]
+
+
 def scan_file(fd: FileDiff, findings: list[Finding]) -> None:
     path = fd.path
     if is_self_exempt(path) or (fd.old_path and is_self_exempt(fd.old_path)):
@@ -528,7 +536,7 @@ def scan_file(fd: FileDiff, findings: list[Finding]) -> None:
 
     # 6. suite-narrowed.
     if not is_prose(path):
-        for line in fd.added:
+        for line in _code_lines(fd.added):
             if "--deselect" in line:
                 findings.append(Finding(
                     "suite-narrowed", path,
@@ -537,7 +545,7 @@ def scan_file(fd: FileDiff, findings: list[Finding]) -> None:
                 ))
                 break
     if is_workflow_file(path):
-        for line in fd.added:
+        for line in _code_lines(fd.added):
             if re.search(r"pytest\b[^\n]*\s-k\s", line):
                 findings.append(Finding(
                     "suite-narrowed", path,
@@ -587,7 +595,7 @@ def scan_file(fd: FileDiff, findings: list[Finding]) -> None:
                 ))
                 break
     if not is_prose(path):
-        for line in fd.added:
+        for line in _code_lines(fd.added):
             if _OR_TRUE_RE.search(line):
                 findings.append(Finding(
                     "masking", path,
@@ -595,7 +603,7 @@ def scan_file(fd: FileDiff, findings: list[Finding]) -> None:
                     "the failure is swallowed; let the command fail",
                 ))
                 break
-        for line in fd.added:
+        for line in _code_lines(fd.added):
             if _NO_VERIFY_RE.search(line):
                 findings.append(Finding(
                     "masking", path,

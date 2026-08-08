@@ -121,6 +121,7 @@ def test_negative_fixtures_exist_and_cover_the_false_positive_surface():
         "docs-only.diff",
         "remove-gate-strengthens.diff",
         "rename-test-file.diff",
+        "comment-mention.diff",
     }
     assert on_disk == required, (
         f"negative fixtures on disk {sorted(on_disk)} != required {sorted(required)}"

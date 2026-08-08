@@ -1,0 +1,12 @@
+diff --git a/.github/workflows/some-gate.yml b/.github/workflows/some-gate.yml
+index 1111111..2222222 100644
+--- a/.github/workflows/some-gate.yml
++++ b/.github/workflows/some-gate.yml
+@@ -1,6 +1,10 @@
+ name: Some Gate
++# This gate hunts suite narrowing (pytest --deselect / -k slices), commands
++# swallowed with `pytest -q || true`, and `git commit --no-verify` bypasses.
++# Mentioning those patterns in a comment is documentation, not a cheat.
+ on:
+   pull_request:
+     branches: [main]
