@@ -7,6 +7,7 @@ field here compiles green on both sides and breaks silently in a browser
 (KB-005) — `web/src/types.ts` mirrors this file verbatim and the two ship in
 the same phase.
 
+    event: trace  data: {trace_id, url}
     event: state  data: {step, status, detail, elapsed_ms}
     event: token  data: {text}
     event: done   data: {outcome, refusal_text}
@@ -36,6 +37,21 @@ STEPS: list[str] = [
 
 Status = Literal["running", "pass", "fail", "skipped"]
 Outcome = Literal["answered", "refused", "escalated", "error"]
+
+
+def trace(trace_id: str, url: str) -> str:
+    """The Langfuse trace for this turn.
+
+    Emitted once, immediately, as the very first event of the turn — the trace
+    id is generated locally, so the URL is known before the graph has started
+    and the client can show the link for the whole turn rather than only after
+    it settles.
+
+    Never emitted when tracing is disabled or degraded: a visitor sees one fewer
+    chip, never a broken turn (fail-open, and see `app/tracing.py`).
+    """
+    payload = {"trace_id": trace_id, "url": url}
+    return f"event: trace\ndata: {json.dumps(payload)}\n\n"
 
 
 def state(
