@@ -24,6 +24,7 @@ import json
 import logging
 
 import pytest
+from langchain_core.callbacks import BaseCallbackHandler
 
 from app import config, sse, tracing
 from app.graph import models, state as state_module
@@ -65,6 +66,9 @@ class FakeLangfuse:
     def flush(self) -> None:
         self.calls.append(("flush", None))
 
+    def get_trace_url(self, *, trace_id: str) -> str:
+        return f"https://lf.test/project/p1/traces/{trace_id}"
+
     def start_as_current_observation(self, **kwargs) -> FakeSpanContext:
         return FakeSpanContext(self.calls, kwargs)
 
@@ -91,11 +95,23 @@ def fake_langfuse(monkeypatch) -> FakeLangfuse:
     return client
 
 
+class SentinelHandler(BaseCallbackHandler):
+    """Stands in for Langfuse's `CallbackHandler`.
+
+    A bare `object()` would be simpler and wrong: LangChain's callback manager
+    reaches for `run_inline` on everything in `config["callbacks"]`, so a
+    sentinel that is not a real handler makes every traced turn terminate in
+    `error` — the graph would explode before any assertion about wiring got to
+    run. Subclassing the real base class is also the stronger assertion: it
+    proves what `/ask` hands to `ainvoke` is something LangChain will accept.
+    """
+
+
 @pytest.fixture
 def traced(monkeypatch) -> dict:
     """A turn whose tracing is up: `start_trace` hands back a sentinel handler
     and a fixed id/url, and `finalize_trace` records its arguments."""
-    record: dict = {"handler": object(), "finalized": []}
+    record: dict = {"handler": SentinelHandler(), "finalized": []}
 
     def _start(client_id: str):
         record["started_with"] = client_id
@@ -179,26 +195,41 @@ class TestFailOpen:
         assert events[-1][0] == "done"
         assert events[-1][1]["outcome"] == "answered"
 
-    def test_a_raising_start_trace_never_breaks_the_turn(self, monkeypatch):
-        def _boom(client_id):
+    def test_an_sdk_that_blows_up_at_trace_start_never_breaks_the_turn(
+        self, fake_langfuse, monkeypatch, caplog
+    ):
+        """The failure is injected at the *SDK* seam, not by replacing
+        `tracing.start_trace` itself. Monkeypatching the module's own public
+        function to raise would only prove that a mock raises; what has to hold
+        is that the real `start_trace` absorbs a broken SDK and `/ask` never
+        finds out."""
+        def _boom(**kwargs):
             raise RuntimeError("langfuse unreachable")
 
-        monkeypatch.setattr(tracing, "start_trace", _boom)
-        events = ask_events("What does Cadre AI do?")
+        monkeypatch.setattr(tracing, "CallbackHandler", _boom)
+
+        with caplog.at_level(logging.WARNING, logger="cadre.tracing"):
+            events = ask_events("What does Cadre AI do?")
 
         assert "trace" not in kinds(events)
         assert events[-1][0] == "done"
         assert events[-1][1]["outcome"] == "answered"
+        assert caplog.records, "the degrade must be visible in the log (KB-009)"
 
-    def test_a_raising_finalize_trace_never_breaks_the_turn(self, traced, monkeypatch):
-        def _boom(*args, **kwargs):
+    def test_an_sdk_that_blows_up_at_flush_never_breaks_the_turn(
+        self, fake_langfuse, caplog
+    ):
+        def _boom() -> None:
             raise RuntimeError("langfuse flush exploded")
 
-        monkeypatch.setattr(tracing, "finalize_trace", _boom)
-        events = ask_events("What does Cadre AI do?")
+        fake_langfuse.flush = _boom
+
+        with caplog.at_level(logging.WARNING, logger="cadre.tracing"):
+            events = ask_events("What does Cadre AI do?")
 
         assert events[-1][0] == "done"
         assert events[-1][1]["outcome"] == "answered"
+        assert caplog.records, "a dropped trace must be visible in the log (KB-009)"
 
     def test_start_trace_returns_nothing_at_all_when_tracing_is_disabled(
         self, tracing_down
