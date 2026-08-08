@@ -49,7 +49,7 @@ class Scripted:
         self.replies = replies
         self.calls: list[dict] = []
 
-    async def chat(self, model_id, system, messages, *, max_tokens, temperature=0.0):
+    async def chat(self, model_id, system, messages, *, max_tokens, temperature=0.0, **kwargs):
         self.calls.append(
             {
                 "model_id": model_id,
@@ -64,7 +64,7 @@ class Scripted:
             raise reply
         return reply
 
-    async def chat_stream(self, model_id, system, messages, *, max_tokens, temperature=0.0):
+    async def chat_stream(self, model_id, system, messages, *, max_tokens, temperature=0.0, **kwargs):
         self.calls.append(
             {"model_id": model_id, "system": system, "messages": messages,
              "max_tokens": max_tokens, "temperature": temperature}
@@ -337,7 +337,7 @@ class TestDeterministicScrub:
         ],
     )
     def test_pii_shaped_text_fails(self, answer):
-        assert models.scrub_failure(answer) == "pii"
+        assert models.scrub_failure(answer).startswith("pii:")
 
 
 class TestGuardOutput:

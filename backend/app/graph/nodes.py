@@ -235,13 +235,17 @@ async def _retrieve(state: ConversationState, emit, started: float) -> Conversat
     # one well-scoring chunked page (the homepage, /about) must not fill the
     # slate and push the single on-point article chunk out (issue #70). The
     # extra depth is sub-millisecond on a 131-row flat scan.
-    hits = [
-        hit
-        for hit in kb.search(vector, config.RETRIEVE_FETCH_K)
-        if hit.score >= config.RETRIEVE_MIN_SCORE
-    ]
+    #
+    # `fetched` is kept rather than filtered away in the comprehension: it is
+    # the pre-floor list, and without it a floor-suppressed retrieval and an
+    # empty corpus record the identical empty slate (PR #63 review comment 3,
+    # made three-way by #70's dedupe). It costs one name.
+    fetched = kb.search(vector, config.RETRIEVE_FETCH_K)
+    hits = [hit for hit in fetched if hit.score >= config.RETRIEVE_MIN_SCORE]
     hits = kb.dedupe_hits(hits, config.RETRIEVE_MAX_PER_URL)[: config.RETRIEVE_TOP_K]
-    tracing.record_retrieval(getattr(emit, "trace_id", None), query, hits)
+    tracing.record_retrieval(
+        getattr(emit, "trace_id", None), message, query, fetched, hits
+    )
 
     # The same two facts the trace gets, on the wire (#74) — built from the
     # final slate, so the pane describes the context the brain actually read

@@ -39,21 +39,43 @@ class FakeSpan:
     def __init__(self, calls: list) -> None:
         self._calls = calls
 
-    def set_trace_as_public(self) -> None:
+    def set_trace_as_public(self) -> "FakeSpan":
         self._calls.append(("set_trace_as_public", None))
+        return self
+
+    def set_trace_io(self, *, input=None, output=None) -> "FakeSpan":
+        self._calls.append(("set_trace_io", {"input": input, "output": output}))
+        return self
+
+    def update(self, **kwargs) -> "FakeSpan":
+        self._calls.append(("observation_update", kwargs))
+        return self
+
+    def end(self, **_kwargs) -> "FakeSpan":
+        self._calls.append(("observation_end", None))
+        return self
 
 
 class FakeSpanContext:
+    """Both a context manager and a handle.
+
+    Since issue #79 the turn span is entered in the graph task and *ended* much
+    later by `finalize_trace` (`end_on_exit=False`), so exiting the context is
+    no longer the same event as ending the observation — this double life is
+    what lets one recorder assert both.
+    """
+
     def __init__(self, calls: list, kwargs: dict) -> None:
         self._calls = calls
         self._kwargs = kwargs
+        self._span = FakeSpan(calls)
 
     def __enter__(self) -> FakeSpan:
         self._calls.append(("observation_start", self._kwargs))
-        return FakeSpan(self._calls)
+        return self._span
 
     def __exit__(self, *exc) -> bool:
-        self._calls.append(("observation_end", None))
+        self._calls.append(("observation_exit", None))
         return False
 
 
@@ -72,9 +94,21 @@ class FakeLangfuse:
     def start_as_current_observation(self, **kwargs) -> FakeSpanContext:
         return FakeSpanContext(self.calls, kwargs)
 
+    def start_observation(self, **kwargs) -> FakeSpan:
+        self.calls.append(("observation_start", kwargs))
+        return FakeSpan(self.calls)
+
     @property
     def names(self) -> list[str]:
         return [name for name, _ in self.calls]
+
+
+def opened_turn(trace_id: str = "abc123") -> tracing.Turn:
+    """A `Turn` whose span is open, the way the graph task leaves it."""
+    turn = tracing.start_turn(trace_id)
+    with turn.activate():
+        pass
+    return turn
 
 
 @pytest.fixture
@@ -117,14 +151,20 @@ def traced(monkeypatch) -> dict:
         record["started_with"] = client_id
         return record["handler"], "abc123def456", "https://lf.test/project/p1/traces/abc123def456"
 
-    def _finalize(trace_id, refused_step, step_latencies, total_latency_ms, client_id):
+    def _finalize(
+        turn, refused_step, step_latencies, total_latency_ms, client_id, **kwargs
+    ):
         record["finalized"].append(
             {
-                "trace_id": trace_id,
+                # Since #79 the first argument is the `Turn` holding the id,
+                # not the id itself — the span has to survive from the graph
+                # task to here so trace IO can be set on it explicitly.
+                "trace_id": getattr(turn, "trace_id", turn),
                 "refused_step": refused_step,
                 "step_latencies": step_latencies,
                 "total_latency_ms": total_latency_ms,
                 "client_id": client_id,
+                **kwargs,
             }
         )
 
@@ -428,7 +468,7 @@ class TestFinalizeTrace:
         self, fake_langfuse
     ):
         tracing.finalize_trace(
-            "abc123",
+            opened_turn(),
             "topic_classifier",
             {"validate_input": 3, "topic_classifier": 412},
             900,
@@ -440,16 +480,25 @@ class TestFinalizeTrace:
         )
         assert propagated["session_id"] == "conv-abcdefgh"
 
+        # The trace-level fields are now written with `update()` on the span
+        # the graph task opened, not as construction kwargs — the span has to
+        # exist for the whole turn so the generations can parent to it.
         observation = dict(
             next(kw for name, kw in fake_langfuse.calls if name == "observation_start")
         )
-        assert observation["metadata"] == {
+        updated = dict(
+            next(kw for name, kw in fake_langfuse.calls if name == "observation_update")
+        )
+        assert updated["metadata"] == {
             "refused_step": "topic_classifier",
             "latency_ms": {"validate_input": 3, "topic_classifier": 412},
             "total_latency_ms": 900,
         }
         assert observation["trace_context"]["trace_id"] == "abc123"
         assert ("set_trace_as_public", None) in fake_langfuse.calls
+        # And the turn's own IO is stated outright rather than inherited from
+        # whichever root-level observation happened to be written last (#79).
+        assert any(name == "set_trace_io" for name, _ in fake_langfuse.calls)
 
     def test_an_unrefused_turn_records_a_refused_step_of_none_not_a_null(
         self, fake_langfuse
@@ -459,13 +508,13 @@ class TestFinalizeTrace:
         not record "this turn was not refused" — it records nothing, and the
         trace can no longer tell a clean turn from one whose tracing broke.
         That ambiguity is precisely KB-009."""
-        tracing.finalize_trace("abc123", None, {"brain": 12}, 900, "conv-abcdefgh")
+        tracing.finalize_trace(opened_turn(), None, {"brain": 12}, 900, "conv-abcdefgh")
 
-        observation = dict(
-            next(kw for name, kw in fake_langfuse.calls if name == "observation_start")
-        )
-        assert observation["metadata"]["refused_step"] == tracing.NOT_REFUSED
-        assert observation["metadata"]["refused_step"] is not None
+        metadata = dict(
+            next(kw for name, kw in fake_langfuse.calls if name == "observation_update")
+        )["metadata"]
+        assert metadata["refused_step"] == tracing.NOT_REFUSED
+        assert metadata["refused_step"] is not None
 
     def test_the_graph_spans_are_flushed_before_the_trace_fields_are_written(
         self, fake_langfuse
@@ -474,30 +523,35 @@ class TestFinalizeTrace:
         span carrying `public`/`session_id` land in the same export batch, the
         LangChain span wins the trace upsert and the trace comes back
         `public: false`. Flushing first is what makes it deterministic."""
-        tracing.finalize_trace("abc123", None, {}, 900, "conv-abcdefgh")
+        turn = opened_turn()
+        fake_langfuse.calls.clear()  # drop the graph task's span-open
+        tracing.finalize_trace(turn, None, {}, 900, "conv-abcdefgh")
 
         names = fake_langfuse.names
-        assert names.index("flush") < names.index("observation_start")
+        assert names.index("flush") < names.index("observation_update")
         assert names.index("observation_end") < len(names) - 1
         assert names[-1] == "flush"
 
     def test_it_is_a_noop_without_a_trace_id(self, fake_langfuse):
-        tracing.finalize_trace(None, None, {}, 900, "conv-abcdefgh")
+        tracing.finalize_trace(tracing.start_turn(None), None, {}, 900, "conv-abcdefgh")
 
         assert fake_langfuse.calls == []
 
     def test_it_is_a_noop_when_tracing_is_disabled(self, tracing_down):
         # No client at all: the only correct behaviour is to return quietly.
-        tracing.finalize_trace("abc123", None, {}, 900, "conv-abcdefgh")
+        tracing.finalize_trace(tracing.start_turn("abc123"), None, {}, 900, "conv-abcdefgh")
 
     def test_it_swallows_an_sdk_failure_and_says_so(self, fake_langfuse, caplog):
         def _boom(**kwargs):
             raise RuntimeError("langfuse unreachable")
 
         fake_langfuse.start_as_current_observation = _boom
+        fake_langfuse.start_observation = _boom
 
         with caplog.at_level(logging.WARNING, logger="cadre.tracing"):
-            tracing.finalize_trace("abc123", None, {}, 900, "conv-abcdefgh")
+            tracing.finalize_trace(
+                tracing.start_turn("abc123"), None, {}, 900, "conv-abcdefgh"
+            )
 
         assert caplog.records, "a dropped trace must leave a log line (KB-009)"
 
@@ -517,13 +571,16 @@ class TestRecordRetrieval:
         return Hit(url=url, title="T", heading="H", text="body", score=score)
 
     def test_it_writes_the_query_and_every_hit_url_and_score(self, fake_langfuse):
+        hits = [
+            self._hit("https://www.cadreai.com/articles/a", 0.62),
+            self._hit("https://www.cadreai.com/articles/b", 0.41),
+        ]
         tracing.record_retrieval(
             "abc123",
+            "how much does that cost?",
             "Cadre AI Maturity Index pricing",
-            [
-                self._hit("https://www.cadreai.com/articles/a", 0.62),
-                self._hit("https://www.cadreai.com/articles/b", 0.41),
-            ],
+            hits,
+            hits,
         )
 
         started = [kw for name, kw in fake_langfuse.calls if name == "observation_start"]
@@ -538,24 +595,25 @@ class TestRecordRetrieval:
         """A retrieval that found nothing is the interesting case; a trace that
         omits it makes "the KB had nothing" indistinguishable from "the KB
         never ran"."""
-        tracing.record_retrieval("abc123", "weather in paris", [])
+        tracing.record_retrieval("abc123", "weather in paris", "weather in paris", [], [])
         assert "observation_start" in fake_langfuse.names
 
     def test_it_is_a_noop_without_a_trace_id(self, fake_langfuse):
-        tracing.record_retrieval(None, "q", [])
+        tracing.record_retrieval(None, "q", "q", [], [])
         assert fake_langfuse.calls == []
 
     def test_it_is_a_noop_when_tracing_is_disabled(self, tracing_down):
-        tracing.record_retrieval("abc123", "q", [])
+        tracing.record_retrieval("abc123", "q", "q", [], [])
 
     def test_it_swallows_an_sdk_failure_and_says_so(self, fake_langfuse, caplog):
         def _boom(**kwargs):
             raise RuntimeError("langfuse unreachable")
 
         fake_langfuse.start_as_current_observation = _boom
+        fake_langfuse.start_observation = _boom
 
         with caplog.at_level(logging.WARNING, logger="cadre.tracing"):
-            tracing.record_retrieval("abc123", "q", [])
+            tracing.record_retrieval("abc123", "q", "q", [], [])
 
         assert caplog.records, "a dropped span must leave a log line (KB-009)"
 

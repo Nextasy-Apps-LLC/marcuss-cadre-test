@@ -39,7 +39,7 @@ from typing import Sequence
 
 import httpx
 
-from app import config
+from app import config, tracing
 
 log = logging.getLogger("cadre.embeddings")
 
@@ -116,6 +116,24 @@ async def embed_query(text: str) -> list[float]:
         # No `dimensions`: 3072 native, on both sides. Shortening here would
         # produce a query the store cannot detect as different — only as bad.
     }
+    # An `as_type="embedding"` observation rather than a plain span, so the
+    # token count and cost land in Langfuse's model UI alongside the chat
+    # calls. This is the only observable that catches a condenser writing
+    # essays: `CONDENSE_MAX_CHARS` bounds the damage, but bounded is not
+    # observed (trace-design.md §3). Parented ambiently — no trace id threaded.
+    generation = tracing.start_generation(
+        tracing.EMBEDDING_OBSERVATION_NAME,
+        config.EMBEDDING_MODEL,
+        as_type="embedding",
+        input={"chars": len(text)},
+    )
+    try:
+        return await _embed(payload, generation)
+    finally:
+        generation.finish()
+
+
+async def _embed(payload: dict, generation) -> list[float]:
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             response = await _client().post(
@@ -123,6 +141,10 @@ async def embed_query(text: str) -> list[float]:
             )
             response.raise_for_status()
             data = response.json()
+            generation.record_response(
+                model=data.get("model") or config.EMBEDDING_MODEL,
+                usage=data.get("usage"),
+            )
             rows = data.get("data") or []
             if not rows:
                 raise EmbeddingError("the embeddings endpoint returned no vector")
@@ -135,6 +157,7 @@ async def embed_query(text: str) -> list[float]:
             return l2_normalize(vector)
         except Exception as exc:  # noqa: BLE001 - re-raised below unless retryable
             if attempt == MAX_ATTEMPTS or not _is_retryable(exc):
+                generation.note(degraded_reason=tracing.reason_for(exc))
                 raise
             log.warning(
                 "embed_query attempt %d/%d failed (%s), retrying",

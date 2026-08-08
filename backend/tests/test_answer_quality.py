@@ -238,7 +238,7 @@ class _GuardScript:
         self.calls: list[dict] = []
 
     def install(self, monkeypatch):
-        async def chat(model_id, system, messages, *, max_tokens, temperature=0.0):
+        async def chat(model_id, system, messages, *, max_tokens, temperature=0.0, **kwargs):
             self.calls.append({"model_id": model_id, "system": system, "messages": messages})
             return self.reply
 

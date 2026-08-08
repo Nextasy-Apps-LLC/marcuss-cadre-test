@@ -781,8 +781,9 @@ class TestAmbientTurnContext:
 
         turn_a, turn_b = run(both())
         assert turn_a.span is not turn_b.span
-        assert turn_a.span.kwargs["trace_context"].trace_id == "aaaa"
-        assert turn_b.span.kwargs["trace_context"].trace_id == "bbbb"
+        # `TraceContext` is a TypedDict, so this is a plain mapping.
+        assert turn_a.span.kwargs["trace_context"]["trace_id"] == "aaaa"
+        assert turn_b.span.kwargs["trace_context"]["trace_id"] == "bbbb"
 
 
 # --------------------------------------------------------------------------
