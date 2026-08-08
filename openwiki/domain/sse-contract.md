@@ -1,7 +1,7 @@
 ---
 type: API Contract
 title: SSE contract v2 — steps, states, tokens
-description: The cadre SSE v2 wire format — state, token, done, error events plus the ping heartbeat; the six pipeline steps in order; status semantics (degraded, skipped, lost, stream-then-retract); the LangGraph backend and hand-rolled fetch-SSE client; and the tests that pin the contract.
+description: The cadre SSE v2 wire format — the five events (trace, state with elapsed_ms, token, done, error) plus the ping heartbeat; the six pipeline steps in order (retrieve now grounded in the knowledge base); status semantics (degraded, skipped, lost, stream-then-retract); the LangGraph backend and hand-rolled fetch-SSE client; and the tests that pin the contract.
 tags: [sse, contract, steps, streaming, langgraph, fastapi, react]
 ---
 
@@ -21,7 +21,8 @@ slow step, and the client drops them.
 
 | Event | Payload | Meaning |
 |---|---|---|
-| `state` | `step`, `status` (`running`/`pass`/`fail`/`skipped`), `detail?` | One pipeline transition; each of the six steps emits `running` then its verdict. |
+| `trace` | `trace_id`, `url` | The Langfuse trace for the turn; at most once, the **first frame**, and only when tracing is up — absent when tracing is disabled or degraded (fail-open, KB-009). |
+| `state` | `step`, `status` (`running`/`pass`/`fail`/`skipped`), `detail?`, `elapsed_ms` | One pipeline transition; each of the six steps emits `running` then its verdict. `elapsed_ms` is a real integer only on a terminal `pass`/`fail`; `null` on `running`/`skipped` — a step that hasn't finished, or never ran, has nothing to time. |
 | `token` | `text` | A fragment of the answer, only while `brain` (or the escalation text) streams. |
 | `done` | `outcome` (`answered`/`refused`/`escalated`/`error`), `refusal_text?` | Always the terminal event of a normal stream. |
 | `error` | `message` | Terminal on its own — no `done` follows. Generic on the wire, detailed in the log. |
@@ -39,7 +40,8 @@ sequenceDiagram
   participant L as Lambda FastAPI (LangGraph)
   B->>CF: POST /ask with x-amz-content-sha256
   CF->>L: SigV4-signed origin request via OAC
-  L-->>B: state per step: running, then its verdict
+  L-->>B: trace {trace_id, url} — first frame, when tracing is up
+  L-->>B: state per step: running, then its verdict (with elapsed_ms)
   L-->>B: token chunks (8 chars each)
   L-->>B: done answered, refused, or escalated
   Note over B: done refusal_text replaces the streamed buffer —<br/>tokens are provisional (stream-then-retract)
@@ -55,7 +57,7 @@ must agree:
 | 1 | `validate_input` | Deterministic checks (empty, >2000 chars, control chars, client-id format, rate limit) then an SLM validity judge |
 | 2 | `injection_check` | Prompt-injection classifier |
 | 3 | `topic_classifier` | Three-way route: in-scope → `retrieve`; off-topic → refuse; `needs_human` → escalate |
-| 4 | `retrieve` | KB lookup — not wired yet; reports `skipped` with `kb_not_wired` (plan.md Phase 3) |
+| 4 | `retrieve` | [KB retrieval](/openwiki/domain/knowledge-base.md): condense (follow-ups only) → embed → LanceDB search; feeds `context` + citations to `brain`. Fails open as `skipped` with a machine-readable `detail` (`kb_unavailable`, `kb_disabled`, `kb_dimension_mismatch`, `kb_timeout`), or `pass` with `no_hits` |
 | 5 | `brain` | The answer; streams tokens, and is the one step with no fail-open path — a failure propagates to a terminal `error` |
 | 6 | `output_safety` | Guard on the complete streamed answer; fail → stream-then-retract refusal |
 
@@ -70,6 +72,11 @@ must agree:
   infers anything from silence.
 - **Client-only statuses** (`web/src/types.ts`): `pending` (painted up front),
   `lost` (still pending when the stream died without `done` — genuinely unknown).
+- **`elapsed_ms` is wire-shared, not re-measured** — the backend reuses the
+  same values for the Langfuse trace's per-step latencies
+  ([tracing](/openwiki/architecture/overview.md)), so the trace and the
+  stepper cannot disagree; `null` stays `null` rather than `0` so "skipped"
+  never implies a measurement was taken.
 - `done {refused}` can arrive *after* tokens: `refusal_text` overwrites the
   screen. `escalated` streams the booking text as tokens and keeps `status:
   done` with `outcome` so the UI renders it distinctly.
@@ -98,14 +105,23 @@ must agree:
 - `backend/tests/test_ask.py` — the malformed-body wire sequence, refusal
   shapes; `test_graph.py` — routing (fail → refuse, needs_human → escalate);
   `test_models.py` — verdict parsing incl. `_label`'s space/hyphen tolerance;
-  `test_llm.py` — transport, retry, no-retry-after-first-delta; plus
-  `test_ratelimit.py`, `test_persona.py`, `test_assert_models.py`.
+  `test_llm.py` — transport, retry, no-retry-after-first-delta;
+  `test_retrieve.py`/`test_kb_store.py`/`test_embeddings.py` — condense, search,
+  manifest-mismatch disable; `test_startup_warmup.py` — KB warmed before the
+  first request, never raising; `test_tracing.py` — fail-open + `refused_step
+  "none"`; plus `test_ratelimit.py`, `test_persona.py`, `test_assert_models.py`.
 - `web/src/lib/sse.test.ts` — `parseFrame`/`readSse`/`sha256Hex`;
-  `web/src/lib/turnReducer.test.ts` — step transitions;
-  `web/src/types.test.ts` — statuses, `freshSteps()`.
-- `backend/tests/e2e/` — real-target suite behind the `e2e` marker and the
-  `CADRE_E2E_BEDROCK` gate ([CI/CD](/openwiki/workflows/ci-cd.md)); asserts no
-  `Content-Length` (KB-010) and real incremental tokens.
+  `web/src/lib/turnReducer.test.ts` — step transitions, `trace` + `elapsed_ms`
+  handling; `web/src/lib/linkify.test.ts` — URL classification incl. the KB-017
+  markdown-link case; `web/src/lib/history.test.ts`; `web/src/types.test.ts` —
+  statuses, `freshSteps()`.
+- `backend/tests/e2e/` — real-target suite behind the `e2e` marker and three
+  gates ([CI/CD](/openwiki/workflows/ci-cd.md)): `CADRE_E2E_BEDROCK` (no
+  `Content-Length` per KB-010, real incremental tokens, grounded answers),
+  `CADRE_E2E_LANGFUSE` (trace on the wire is re-read credential-free and really
+  public), `CADRE_E2E_KB` (a Claude-tier question answered from a retrieved
+  article, citation page fetched to prove it exists; refused turns never
+  retrieve).
 
 Run with `pytest` (backend/) and `npm test` (web/);
 [CI](/openwiki/workflows/ci-cd.md) runs the unit suites on every push and PR.

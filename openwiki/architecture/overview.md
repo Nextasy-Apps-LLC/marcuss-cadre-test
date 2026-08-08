@@ -1,7 +1,7 @@
 ---
 type: Architecture Overview
 title: Streaming chatbot architecture
-description: How cadre streams SSE end-to-end — one CloudFront distribution with a private S3 page origin and an AWS_IAM RESPONSE_STREAM Lambda Function URL origin, the four silent streaming-breakers, the one-secret (Bedrock key in SSM) design, and the ADR 0001/0002 decisions.
+description: How cadre streams SSE end-to-end — one CloudFront distribution with a private S3 page origin and an AWS_IAM RESPONSE_STREAM Lambda Function URL origin, the four silent streaming-breakers, the secrets in SSM (Bedrock key, OpenAI embeddings key, Langfuse trio), the in-image LanceDB knowledge base, and the ADR 0001/0002 decisions.
 tags: [architecture, streaming, cloudfront, lambda, sse]
 ---
 
@@ -20,6 +20,9 @@ flowchart LR
   CF -->|"/ask /healthz /config<br/>CachingDisabled, no compress"| FU["Lambda Function URL<br/>AWS_IAM, RESPONSE_STREAM"]
   FU --> LWA["Lambda Web Adapter<br/>uvicorn on port 8080"]
   LWA -->|"httpx, bearer token<br/>(ADR 0002)"| BR["Bedrock Mantle<br/>OpenAI-compatible"]
+  LWA -->|"httpx, bearer token"| OAI["OpenAI embeddings<br/>text-embedding-3-large"]
+  LWA -->|"local LanceDB<br/>baked into the image"| KB[("Knowledge base<br/>cadre_kb.lance")]
+  LWA -.->|"async traces, fail-open"| LF["Langfuse"]
 ```
 
 ## Why there is no API Gateway
@@ -59,23 +62,30 @@ Mirrored in `infra/README.md` — keep in sync; verify in a browser, not curl.
 - API behaviors use `Managed-AllViewerExceptHostHeader` — the `Host` header
   must stay the Function URL's own hostname or the signature won't verify.
 
-## One secret, held in SSM
+## Secrets, held in SSM
 
 The repository holds no credential — it can be public — but ADR 0002
-deliberately ended the "zero secrets" claim: the model path needs one Bedrock
-API key, so the stack is no longer secret-free.
+deliberately ended the "zero secrets" claim, and Phase 2/3 grew the count: the
+model path needs a Bedrock key, retrieval needs an OpenAI embeddings key, and
+tracing needs the Langfuse trio. All five parameters are `data`-referenced
+out-of-band SSM values Terraform reads, never creates (ADR 0002's precedent,
+repeated in `infra/openai.tf` and `infra/langfuse.tf`).
 
 | Hop | How it authenticates |
 |---|---|
 | Lambda → Bedrock | Bearer token over HTTPS to the Mantle endpoint (`app/llm.py`); key read at call time from the `AWS_BEARER_TOKEN_BEDROCK` env var, which Terraform pulls from the SSM `SecureString` `/cadre/bedrock-api-key` — created out of band, never committed (ADR 0002). The old `bedrock:InvokeModel` SigV4 grant is deleted. |
-| GitHub Actions → AWS | OIDC only, two separate roles; both gained a scoped `ssm:GetParameter` for the one key parameter |
+| Lambda → OpenAI embeddings | `OPENAI_API_KEY` env var (from SSM `/cadre/openai-api-key`), resolved per request like the Bedrock key (`app/embeddings.py`); a missing key becomes `retrieve: skipped`, never a crash. |
+| Lambda → Langfuse | `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_HOST` from the three SSM params (`infra/langfuse.tf`); credentials read **once at import**, probed at container start, and everything fails open — a Langfuse outage costs the trace, never the turn (`app/tracing.py`). |
+| GitHub Actions → AWS | OIDC only, two separate roles; `cadre-terraform` reads all five params at plan time, `cadre-deploy` only the Bedrock key (`assert_models` needs it pre-build) |
 | CloudFront → Lambda URL | Lambda-typed OAC, SigV4-signed |
 | CloudFront → S3 | S3-typed OAC; the bucket blocks all public access |
 
-The key lands in Terraform state via the decrypted `data` read, so the state
-bucket is as sensitive as the key itself. `terraform.tfvars`/`backend.hcl` are
-gitignored as noise, not secrets. Rotation is an operational task: the key is
-resolved per request, so rotating the SSM value needs no cold start.
+Every decrypted `data` read lands in Terraform state, so the state bucket is as
+sensitive as the keys. `terraform.tfvars`/`backend.hcl` are gitignored as
+noise, not secrets. Rotation is an operational task: write the SSM value, then
+re-apply so the next deploy injects it — Bedrock/OpenAI keys are read per
+request (no cold start), Langfuse credentials are read at import, so they also
+need a container restart.
 
 ## ADR 0001, ADR 0002, and open tradeoffs
 
@@ -84,10 +94,18 @@ ADR 0001's nine decisions map to `infra/*.tf`,
 (`ENTRYPOINT []` so the base image can't swallow the uvicorn command); ADR 0002
 supersedes its Bedrock-auth statements. Still open:
 
-- A whole turn — four judge calls *plus* the brain's generation — must fit
-  inside 60s (CloudFront's origin-timeout cap; quota increase to raise). Token
-  budgets in `backend/app/config.py` enforce it; `: ping` heartbeats do not
-  extend the cap (KB-004).
+- A whole turn — four judge calls, the retrieval condense + embedding calls,
+  *and* the brain's generation — must fit inside 60s (CloudFront's
+  origin-timeout cap; quota increase to raise). Token and timeout budgets in
+  `backend/app/config.py` enforce it (`RETRIEVE_TIMEOUT_S` bounds the whole
+  retrieve node); `: ping` heartbeats do not extend the cap (KB-004). The KB's
+  one-off open cost is paid at container init, off every turn's budget
+  ([knowledge base](/openwiki/domain/knowledge-base.md)).
+- Retrieval and tracing fail open like the guards (KB-009): a mismatched KB or
+  a Langfuse outage answers and streams fine — visible only as a missing
+  `trace` frame or a `skipped`/`kb_*` detail. Nothing on the wire looks broken,
+  which is why the e2e gates `CADRE_E2E_KB` / `CADRE_E2E_LANGFUSE`
+  ([CI/CD](/openwiki/workflows/ci-cd.md)) exist.
 - The four streaming-breakers still fail no push-gated check. The manual e2e
   dispatch ([CI/CD](/openwiki/workflows/ci-cd.md)) asserts no `Content-Length`
   and real incremental tokens (KB-010, KB-007), but nothing on push boots or

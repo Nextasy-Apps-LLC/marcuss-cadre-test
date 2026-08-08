@@ -70,12 +70,24 @@ Re-reading the OAC config a fifth time distinguishes nothing.
 already in ECR — it can never ship code that didn't pass CI. Same
 [approval gate](/openwiki/workflows/ci-cd.md) as a deploy.
 
+## Refreshing the knowledge base
+
+The KB is built offline and ships inside the image — there is no runtime
+refresh and no freshness job (manual by design, `backend/ingest/README.md`).
+Rebuild on a laptop with `python -m ingest.build_kb` (needs the OpenAI key from
+SSM), then commit `app/kb/` as a reviewed diff
+([knowledge base](/openwiki/domain/knowledge-base.md)). A re-ingest at a
+different embedding width must match `config.EMBEDDING_MODEL`/`_DIMENSION`, or
+retrieval reports `skipped`/`kb_dimension_mismatch` instead of searching.
+
 ## Cost
 
 Idle cost is cents (ECR, PriceClass_100, one-page S3, a log group); Lambda +
-Bedrock bill per request. The levers are the model roster (`brain_model` etc.)
-and the token budgets in `backend/app/config.py` — a turn spends four judge
-calls plus the brain's generation.
+Bedrock + OpenAI bill per request. The levers are the model roster
+(`brain_model` etc.) and the budgets in `backend/app/config.py` — a turn
+spends four judge calls, one `text-embedding-3-large` query embedding on every
+in-scope turn (billable, OpenAI), a condense call on follow-ups, plus the
+brain's generation.
 
 ## Watch-outs
 
@@ -89,3 +101,10 @@ calls plus the brain's generation.
 - A model id typo ships a *working-looking* chat with amber rails, not a crash
   (KB-009) — run `python -m scripts.assert_models` before assuming a
   "degraded everywhere" symptom is a Bedrock outage.
+- Retrieval and tracing fail open too (KB-009): a KB mismatch or a Langfuse
+  outage leaves the chat working — the only signals are a `skipped`/`kb_*`
+  detail and a missing `trace` frame. The e2e gates (`CADRE_E2E_KB`,
+  `CADRE_E2E_LANGFUSE`) exist because nothing on the wire looks broken.
+- A fresh trace link 404s for 30–60s (Langfuse ingests asynchronously, KB-020;
+  the UI footnote says "up to 30 seconds") — don't call a deploy broken on a
+  404 trace.

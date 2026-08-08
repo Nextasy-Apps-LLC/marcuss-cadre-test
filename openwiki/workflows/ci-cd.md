@@ -29,9 +29,14 @@ Dockerfile pre-deploy), `terraform` (fmt `-check`, validate) — plus a
 **manual-only `e2e` job**. The e2e job never runs on push/PR: it hits a real
 target (defaults to `https://cadre.marcuss.pro`) and costs real Bedrock turns,
 so it only fires on dispatch with `run_e2e: true` (issue #27). It needs no
-OIDC — since ADR 0002 nothing in the suite is AWS-authenticated — and the
-live-model cases read the key from the `BEDROCK_API_KEY` repo secret
-(created out of band), skipping with a loud `::warning::` if it's missing.
+OIDC — since ADR 0002 nothing in the suite is AWS-authenticated. Three gates
+control it: `CADRE_E2E_BEDROCK` (live-model cases, key from the
+`BEDROCK_API_KEY` repo secret, created out of band, skipping with a loud
+`::warning::` if missing), `CADRE_E2E_LANGFUSE` (trace read back
+credential-free; the target must carry the `LANGFUSE_*` trio) and
+`CADRE_E2E_KB` (grounded answers against the
+[knowledge base](/openwiki/domain/knowledge-base.md); the target must carry
+`OPENAI_API_KEY`).
 Forcing `e2e_live_bedrock` also runs `scripts/assert_models` first. **Nothing
 on push boots the container** — the post-deploy `/healthz` smoke is the first
 real boot.
@@ -47,7 +52,7 @@ flowchart TD
   P --> G{"Approval gate on environment production"}
   G -->|approved| D["deploy job"]
   D --> E["OIDC creds, ECR login, image exists check"]
-  E --> AM["assert_models: every configured Mantle model id<br/>listed and invokable (key from SSM)"]
+  E --> AM["assert_models: every configured Mantle model id<br/>listed and invokable (key from SSM; condense<br/>probed, not blocking — it fails open to the<br/>visitor's own words)"]
   AM --> B1["build and push image if deploy and tag missing"]
   B1 --> L["lambda update-function-code, wait updated"]
   L --> S["build web, S3 sync assets then index.html"]

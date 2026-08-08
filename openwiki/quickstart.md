@@ -8,12 +8,17 @@ tags: [quickstart, cadre, entrypoint]
 # cadre — quickstart
 
 `cadre` is a guardrailed streaming chatbot at `cadre.marcuss.pro`: a React page
-(private S3) plus a `POST /ask` endpoint that streams SSE — pipeline step
-verdicts, then answer tokens, then `done` — from FastAPI on an arm64 Lambda
-container, all behind one CloudFront distribution. The backend is a
-[LangGraph conversation engine](/openwiki/domain/sse-contract.md) driving
-Bedrock models over the Mantle API (SSE protocol v2); one secret, the Bedrock
-API key, lives in SSM per [ADR 0002](/openwiki/architecture/overview.md).
+(private S3) plus a `POST /ask` endpoint that streams SSE — a trace frame, then
+pipeline step verdicts with per-step timing, then answer tokens, then `done` —
+from FastAPI on an arm64 Lambda container, all behind one CloudFront
+distribution. The backend is a [LangGraph conversation
+engine](/openwiki/domain/sse-contract.md) driving Bedrock models over the
+Mantle API (SSE protocol v2), grounding answers in a committed
+[knowledge base](/openwiki/domain/knowledge-base.md) (LanceDB + OpenAI
+embeddings), with every turn traced to
+[Langfuse](/openwiki/architecture/overview.md). The Bedrock, OpenAI and
+Langfuse secrets live out-of-band in SSM per
+[ADR 0002](/openwiki/architecture/overview.md).
 
 Read `adr/README.md` first — ADR 0001 records the load-bearing decisions, ADR
 0002 supersedes its Bedrock-auth statements. `infra/README.md` is the living
@@ -24,11 +29,12 @@ operational doc. Per-area rules: `backend/CLAUDE.md`, `web/CLAUDE.md`,
 
 | Page | What it documents |
 |---|---|
-| [Architecture overview](/openwiki/architecture/overview.md) | One distribution, two origins; the four silent streaming-breakers; the two-grant 403 trap; one secret in SSM (ADR 0002). |
-| [SSE contract and steps](/openwiki/domain/sse-contract.md) | Protocol v2: the four events, six pipeline steps, status/outcome semantics, the LangGraph backend, the fetch-SSE client, contract tests. |
-| [Terraform infrastructure](/openwiki/infrastructure/terraform.md) | Resource families, variables, the two OIDC roles, Lambda env vars, invariants. |
-| [Operations runbooks](/openwiki/operations/runbooks.md) | Bootstrap, two-phase custom domain, 403 bisection, rollback, cost. |
-| [CI/CD and deployment](/openwiki/workflows/ci-cd.md) | The five workflows, the approval-gated deploy/rollback pipeline, MkDocs. |
+| [Architecture overview](/openwiki/architecture/overview.md) | One distribution, two origins; the four silent streaming-breakers; the two-grant 403 trap; the five SSM secrets (Bedrock, OpenAI, Langfuse); the in-image KB and tracing hops. |
+| [SSE contract and steps](/openwiki/domain/sse-contract.md) | Protocol v2: the five events (`trace`, `state` with `elapsed_ms`, `token`, `done`, `error`), six pipeline steps, status/outcome semantics, the LangGraph backend, the fetch-SSE client, contract tests. |
+| [Knowledge base and retrieval](/openwiki/domain/knowledge-base.md) | The committed LanceDB corpus, the condense→embed→search retrieve step, citations, the offline ingest pipeline, and the fail-open footguns (manifest mismatch, container-init warm-up). |
+| [Terraform infrastructure](/openwiki/infrastructure/terraform.md) | Resource families (incl. the OpenAI + Langfuse SSM modules), variables, the two OIDC roles, the Lambda env vars, invariants. |
+| [Operations runbooks](/openwiki/operations/runbooks.md) | Bootstrap, two-phase custom domain, 403 bisection, rollback, KB refresh, cost. |
+| [CI/CD and deployment](/openwiki/workflows/ci-cd.md) | The five workflows, the approval-gated deploy/rollback pipeline, the three e2e gates, MkDocs. |
 
 ## Repository layout
 
@@ -47,10 +53,6 @@ time rather than copying them.
 
 ## Backlog
 
-- **KB retrieval (`retrieve` step)** — `backend/app/graph/nodes.py` reports
-  `skipped`/`kb_not_wired`; plan.md Phase 3 (query condensing, LanceDB search,
-  citations) is not built.
-- **Langfuse tracing** — plan.md's `trace` event, public trace links, and the
-  client "View trace" chip are not implemented.
-- **`docs/ci-cd.md` workflow count** — still says "four workflows", missing
-  `openwiki-update.yml`; a source-docs fix.
+- **`docs/index.md` protocol page** — the MkDocs site still describes "four
+  event types plus a `: ping`" and "exactly one secret", both stale since the
+  `trace` event and the five SSM parameters; a source-docs fix.
