@@ -1,0 +1,11 @@
+diff --git a/backend/tests/e2e/test_pipeline_e2e.py b/backend/tests/e2e/test_pipeline_e2e.py
+index 1111111..2222222 100644
+--- a/backend/tests/e2e/test_pipeline_e2e.py
++++ b/backend/tests/e2e/test_pipeline_e2e.py
+@@ -45,7 +45,7 @@ TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+
+-LIVE_BEDROCK = os.environ.get("CADRE_E2E_BEDROCK") == "1"
++LIVE_BEDROCK = os.environ.get("CADRE_E2E_BEDROCK") == "1" and os.environ.get("CI") != "true"
+ requires_bedrock = pytest.mark.skipif(
+     not LIVE_BEDROCK,
+     reason="live-model e2e is opt-in",

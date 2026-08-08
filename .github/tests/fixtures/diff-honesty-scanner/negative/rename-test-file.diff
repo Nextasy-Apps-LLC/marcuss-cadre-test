@@ -1,0 +1,4 @@
+diff --git a/backend/tests/test_state.py b/backend/tests/test_conversation_state.py
+similarity index 100%
+rename from backend/tests/test_state.py
+rename to backend/tests/test_conversation_state.py

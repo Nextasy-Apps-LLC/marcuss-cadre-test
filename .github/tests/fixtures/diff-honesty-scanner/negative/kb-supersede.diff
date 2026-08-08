@@ -1,0 +1,11 @@
+diff --git a/kb/learnings.json b/kb/learnings.json
+index 1111111..2222222 100644
+--- a/kb/learnings.json
++++ b/kb/learnings.json
+@@ -150,7 +150,7 @@
+       "id": "KB-013",
+       "title": "Bounded retry on 5xx/transport only, never on 4xx",
+       "source": "#43",
+-      "status": "active"
++      "status": "superseded"
+     },

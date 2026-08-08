@@ -1,0 +1,18 @@
+diff --git a/web/e2e/smoke.spec.ts b/web/e2e/smoke.spec.ts
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/web/e2e/smoke.spec.ts
+@@ -0,0 +1,12 @@
++import { test, expect } from '@playwright/test'
++
++// Env-gated, Playwright's conditional form: runs whenever the target is set.
++test.skip(!process.env.CADRE_E2E_BASE_URL, 'set CADRE_E2E_BASE_URL to run')
++
++test('a turn settles on the bot row, not the user row', async ({ page }) => {
++  await page.goto(process.env.CADRE_E2E_BASE_URL!)
++  await page.getByTestId('chat-input').fill('What does Cadre AI do?')
++  await page.keyboard.press('Enter')
++  // KB-018: scope the wait to the bot's own row
++  await expect(page.locator('.msg--cadre[data-status="done"]')).toBeVisible({ timeout: 60_000 })
++})

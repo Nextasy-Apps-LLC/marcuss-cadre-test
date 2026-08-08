@@ -1,0 +1,19 @@
+diff --git a/kb/learnings.json b/kb/learnings.json
+index 1111111..2222222 100644
+--- a/kb/learnings.json
++++ b/kb/learnings.json
+@@ -140,16 +140,6 @@
+     },
+-    {
+-      "id": "KB-013",
+-      "type": "gotcha",
+-      "area": ["backend"],
+-      "tags": ["httpx", "retry"],
+-      "title": "Bounded retry on 5xx/transport only, never on 4xx",
+-      "detail": "Retrying a 4xx re-spends the turn budget on a request that cannot succeed.",
+-      "source": "#43",
+-      "date": "2026-08-07",
+-      "status": "active"
+-    },
+     {
+       "id": "KB-014",

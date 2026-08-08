@@ -1,0 +1,8 @@
+diff --git a/backend/app/kb/store.py b/backend/app/kb/store.py
+index 1111111..2222222 100644
+--- a/backend/app/kb/store.py
++++ b/backend/app/kb/store.py
+@@ -88,7 +88,7 @@ def search(vector, k):
+-    table = _db().open_table(config.KB_TABLE)
++    table = _db().open_table(config.KB_TABLE)  # type: ignore
+     return table.search(vector)

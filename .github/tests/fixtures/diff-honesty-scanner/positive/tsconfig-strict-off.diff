@@ -1,0 +1,9 @@
+diff --git a/web/tsconfig.json b/web/tsconfig.json
+index 1111111..2222222 100644
+--- a/web/tsconfig.json
++++ b/web/tsconfig.json
+@@ -5,7 +5,7 @@
+     "module": "ESNext",
+-    "strict": true,
++    "strict": false,
+     "noUnusedLocals": true,

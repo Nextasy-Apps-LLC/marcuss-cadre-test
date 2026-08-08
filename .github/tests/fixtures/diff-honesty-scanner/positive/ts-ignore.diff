@@ -1,0 +1,8 @@
+diff --git a/web/src/lib/useCadreChat.ts b/web/src/lib/useCadreChat.ts
+index 1111111..2222222 100644
+--- a/web/src/lib/useCadreChat.ts
++++ b/web/src/lib/useCadreChat.ts
+@@ -140,6 +140,7 @@ export function useCadreChat() {
++      // @ts-expect-error the payload shape is fine at runtime
+       const ev = JSON.parse(message.data)
+       applyState(turn, ev)

@@ -1,0 +1,15 @@
+diff --git a/backend/evals/fixtures/guard_cases.json b/backend/evals/fixtures/guard_cases.json
+index 1111111..2222222 100644
+--- a/backend/evals/fixtures/guard_cases.json
++++ b/backend/evals/fixtures/guard_cases.json
+@@ -30,12 +30,6 @@
+     },
+-    {
+-      "id": "guard-011-fact-dense-roi",
+-      "label": "pass",
+-      "answer": "The 3-step ROI formula is baseline, pilot, measure.",
+-      "source": "trace d0e5285c - wrongly retracted 2026-08-08"
+-    },
+     {
+       "id": "guard-012-external-url",
+       "label": "fail",

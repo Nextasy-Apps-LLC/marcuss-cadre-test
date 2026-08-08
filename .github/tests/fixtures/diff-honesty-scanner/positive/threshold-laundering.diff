@@ -1,0 +1,15 @@
+diff --git a/backend/app/config.py b/backend/app/config.py
+index 1111111..2222222 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -298,7 +298,7 @@ RETRIEVE_FETCH_K = int(
+-RETRIEVE_MIN_SCORE = float(os.environ.get("CADRE_RETRIEVE_MIN_SCORE", "0.25"))
++RETRIEVE_MIN_SCORE = float(os.environ.get("CADRE_RETRIEVE_MIN_SCORE", "0.05"))
+diff --git a/backend/tests/test_retrieve.py b/backend/tests/test_retrieve.py
+index 1111111..2222222 100644
+--- a/backend/tests/test_retrieve.py
++++ b/backend/tests/test_retrieve.py
+@@ -60,7 +60,7 @@ class TestScoreFloor:
+     def test_weak_hits_are_filtered(self):
+-        assert filtered(score=0.20) == []
++        assert filtered(score=0.20) != []

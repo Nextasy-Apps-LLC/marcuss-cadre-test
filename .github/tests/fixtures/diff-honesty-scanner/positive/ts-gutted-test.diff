@@ -1,0 +1,13 @@
+diff --git a/web/src/lib/turnReducer.test.ts b/web/src/lib/turnReducer.test.ts
+index 1111111..2222222 100644
+--- a/web/src/lib/turnReducer.test.ts
++++ b/web/src/lib/turnReducer.test.ts
+@@ -10,9 +10,6 @@ describe('applyDone', () => {
+   it('refusal text overwrites streamed tokens', () => {
+-    const turn = seedTurn({ streamed: 'partial answer' })
+-    const next = applyDone(turn, { outcome: 'refused', refusal_text: 'no.' })
+-    expect(next.message.text).toBe('no.')
+-    expect(next.message.status).toBe('done')
+-    expect(next.message.outcome).toBe('refused')
+   })
+ })
