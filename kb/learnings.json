@@ -215,6 +215,50 @@
       "source": { "issue": 40, "pr": 47 },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-019",
+      "type": "gotcha",
+      "area": ["backend"],
+      "tags": ["langfuse", "langchain", "callbackhandler", "dependencies", "cold-start"],
+      "title": "langfuse's LangChain CallbackHandler needs the `langchain` meta-package installed, not just langchain-core",
+      "detail": "`langfuse/langchain/CallbackHandler.py` guards its import with a bare `import langchain` — it reads `langchain.__version__` to pick its v0/v1 import path before importing everything else from langchain-core. `langchain-core` alone (already a dependency for LangGraph) is not enough: without the `langchain` meta-package itself, `from langfuse.langchain import CallbackHandler` raises `ModuleNotFoundError` at container start, and there is no tracing at all — not even a fail-open degrade, since it never gets past import. It's nearly free to add (`langchain` only pulls in langchain-core/langgraph/pydantic, all already present) — cold-start weight is langfuse's own OTEL stack (~20MB: langfuse 9.8MB, otel 4.6MB, protobuf/google 4.2MB, langchain 1.3MB), not this package. Verified versions at implementation time: langfuse 4.14.3, langchain 1.3.14. Add `langchain` to requirements.txt alongside `langfuse` any time this SDK's LangChain integration is used, even if nothing else in the app imports LangChain directly.",
+      "source": { "issue": 53, "pr": 55 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-020",
+      "type": "gotcha",
+      "area": ["backend"],
+      "tags": ["langfuse", "metadata", "null", "otel", "tracing"],
+      "title": "langfuse 4.x silently drops trace metadata keys whose value is None — use a literal sentinel, not null, for an absent field",
+      "detail": "A metadata field written as `None` (e.g. `refused_step=None` on a clean turn) is not recorded as a null value in the resulting Langfuse trace — the key is dropped entirely, indistinguishable from a metadata-write that never happened or that failed. This makes it impossible to tell a clean turn apart from one whose tracing broke, which is exactly the KB-009 failure mode (a fail-open step looking identical to a healthy one) arriving through a different door. Only caught by fetching a real trace back and inspecting it — a mock-based unit test happily stores `None` and passes either way. Fix: record a literal sentinel string (`\"none\"`) instead of `None` for any 'nothing to report' metadata field going into a Langfuse trace, and assert the literal in tests, not just that the call was made.",
+      "source": { "issue": 53, "pr": 55 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-021",
+      "type": "gotcha",
+      "area": ["backend"],
+      "tags": ["langfuse", "otel", "flush", "trace-attributes", "callbackhandler"],
+      "title": "langfuse 4.x (OTEL-based): a same-export-batch LangChain root span wins the trace upsert over your own trace-level attributes — flush before setting them, not just before the terminal event",
+      "detail": "When a LangGraph run is instrumented with Langfuse's LangChain CallbackHandler, the graph's own node spans and a separate span carrying trace-level fields (session_id, public, custom metadata) can land in the same OTEL export batch. In that case the LangChain-generated root span wins the trace upsert and the trace-level fields (notably `public` and `session_id`) are silently dropped — verified empirically against Langfuse Cloud across five probe variants: every single-batch attempt gave `public: false` regardless of which span was nominally the root, while flushing the graph's spans first (so the trace-level write lands in a later, separate batch) reliably gave `public: true` plus the session and metadata. Cost ~420-740ms, all after the graph run and before the terminal response frame. Call `client.flush()` once after the graph invocation completes and again after the terminal trace-metadata update — the first flush is not redundant, don't let a later cleanup pass delete it as dead code.",
+      "source": { "issue": 53, "pr": 55 },
+      "date": "2026-08-07",
+      "status": "active"
+    },
+    {
+      "id": "KB-022",
+      "type": "learning",
+      "area": ["process"],
+      "tags": ["compound-workflow", "issue-amendment", "mid-cycle-change", "spec-drift"],
+      "title": "An issue amended after an earlier step in the same implementation cycle already shipped against the original spec is a conflict to surface explicitly, not to silently resolve",
+      "detail": "In #53's cycle, the Infra+Backend step built, tested, and verified an implementation against the issue's original spec. Before the Web step ran, three amendments were appended to the same issue — the last one superseding most of the original design (a different SSE payload shape, a new backend endpoint, different UI behavior). The finishing step inherited both an explicit 'mirror this shipped wire contract verbatim' instruction and an issue whose current text described something else entirely. Redoing the already-shipped, already-verified step to match the amendment was out of scope for the step actually assigned; silently implementing only the original spec and closing the issue as if the amendment didn't exist would misrepresent what shipped. Neither unilateral choice is safe. The correct move: implement against the contract the prior step actually shipped (it's real and already verified), then flag the divergence prominently — at the top of the PR body, in the hand-off comment, and in the acceptance-criteria checklist marked item-by-item — so the human reviewer/merger makes the call instead of it being made silently by whichever step happened to run last. Next cycle: when amending an issue that already has committed work against it, say so explicitly in the amendment and tag whoever owns the in-progress branch, rather than leaving discovery to whoever picks up the next step.",
+      "source": { "issue": 53, "pr": 55 },
+      "date": "2026-08-07",
+      "status": "active"
     }
   ]
 }
