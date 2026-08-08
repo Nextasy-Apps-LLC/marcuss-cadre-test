@@ -570,6 +570,87 @@
       },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-026",
+      "type": "gotcha",
+      "area": [
+        "backend",
+        "infra"
+      ],
+      "tags": [
+        "cold-start",
+        "lambda",
+        "init",
+        "lifespan",
+        "lazy-import",
+        "lancedb",
+        "native-extension",
+        "fastapi",
+        "asgi",
+        "latency"
+      ],
+      "title": "A lazy import of a heavy native dependency is a cold-start tax billed to the first visitor — warm it in the ASGI lifespan, where Lambda's INIT phase is full-CPU and free",
+      "detail": "Deferring `import <heavy native dep>` into a function (or opening a resource behind an `lru_cache`) does not remove the cost, it just decides who pays it: the first request on every cold container. In this stack that made `retrieve` cost 9661 ms on prod against 548 ms warm, on a turn with a hard 60s CloudFront budget (KB-004). The fix is not a faster import — it is moving it off the request path. Lambda's INIT phase runs at full-CPU burst and completes before the function is handed any traffic, and the Lambda Web Adapter boots uvicorn (and therefore the ASGI lifespan) inside that window, so anything a container must do exactly once belongs in a FastAPI `lifespan` hook. Two rules when you add one: (1) call the module's own never-raising availability path rather than a bespoke warm-up, so one call populates every cache AND swallows its own failures; (2) wrap it in `try/except Exception` anyway and log the elapsed ms at INFO — an init that raises is a Lambda that fails on invoke (KB-001), which is far worse than the slow turn you were fixing, and a warm-up whose duration nobody can see is the same regression waiting to recur (KB-009). Keep the import itself lazy: once init triggers it, hoisting to module scope buys exactly zero milliseconds and gives up the property that an image missing the dep still boots and degrades.",
+      "source": {
+        "issue": 67,
+        "pr": 68
+      },
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-027",
+      "type": "debug",
+      "area": [
+        "backend",
+        "infra",
+        "process"
+      ],
+      "tags": [
+        "cold-start",
+        "measurement",
+        "docker",
+        "lambda",
+        "image-layers",
+        "page-cache",
+        "benchmarking",
+        "latency"
+      ],
+      "title": "Local docker cold-start numbers understate Lambda's, because Lambda lazily streams image layers — measure the shape locally, trust only prod for the magnitude",
+      "detail": "Symptom: the same unmodified code that spent 9661 ms in a step on a cold prod Lambda spends ~1400 ms on a freshly started local container with an equivalent CPU share. Cause: Lambda loads container image layers lazily over the network, so the first touch of a large native extension's shared objects includes network-backed page faults; a local host already has those blocks on local disk and in the page cache. Consequences for how you measure: (a) emulate the CPU share, not just the memory — a 1024 MB Lambda gets ~0.58 vCPU (1 vCPU arrives at 1769 MB), so run `docker run --cpus=0.58 --memory=1024m`, otherwise a fast laptop hides the problem entirely; (b) start a genuinely FRESH container for every single data point, since a reused one has all the caches you are trying to measure; (c) treat local before/after as proof of the delta's SHAPE and direction, never of the absolute prod number — it is a lower bound, so the real win is bigger, not smaller; (d) ship an INFO log line carrying the elapsed ms so the true prod number arrives in CloudWatch on the first cold start after deploy, instead of being extrapolated.",
+      "source": {
+        "issue": 67,
+        "pr": 68
+      },
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-028",
+      "type": "debug",
+      "area": [
+        "backend",
+        "process",
+        "ci"
+      ],
+      "tags": [
+        "e2e",
+        "flaky",
+        "bedrock",
+        "nondeterminism",
+        "regression-triage",
+        "baseline",
+        "testing"
+      ],
+      "title": "Before blaming your change for an e2e failure, run the same suite against an unmodified origin/main image — this repo's model-content assertions are nondeterministic",
+      "detail": "Symptom: `pytest -m e2e` against the real container goes red on a content assertion (e.g. 'answers with grounded facts and a real link', 'every advertised suggestion is answered') right after your change, and the obvious conclusion is that you broke it. Cause: those cases assert on live Bedrock output, so the failing SET MOVES between runs — observed 1 failure, then a different 2, then a different 1 — and each of them passes when run individually on both the changed and unchanged image. Fastest diagnostic path, and it is cheap: build the unmodified `origin/main` image alongside yours and run the identical suite against it. If the baseline fails the same way, it is pre-existing nondeterminism, not your regression — say so in the PR with both outputs pasted rather than re-running until green, which teaches nothing and hides the real state. Do NOT 'fix' it by relaxing the assertion in the PR that tripped over it; the flakiness deserves its own issue. Note the gates are opt-in for a reason (`CADRE_E2E_BEDROCK`, `CADRE_E2E_LANGFUSE`, `CADRE_E2E_KB`) — every model-backed step fails open, so a suite run without them can go green against a service with no brain, no tracing and no corpus.",
+      "source": {
+        "issue": 67,
+        "pr": 68
+      },
+      "date": "2026-08-08",
+      "status": "active"
     }
   ]
 }
