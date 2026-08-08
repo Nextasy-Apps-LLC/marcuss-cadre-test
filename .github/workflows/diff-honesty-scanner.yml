@@ -1,0 +1,153 @@
+name: Diff Honesty Scanner
+
+# Issue #86 — honest CI: FAIL any PR into main whose diff weakens the safety
+# net it is supposed to strengthen (Marcus: "no agent can reduce the assertions
+# or in general the strictness of a test just to make it pass"). Adapted from
+# the proven scanner in Nextasy-Apps-LLC/nextasy.
+#
+# It catches: deleted/gutted tests · unconditional skips/.only/xfail ·
+# tautological assertions · net assertion loss · e2e gate neutering (incl.
+# secrets unwiring and gate-default flips) · suite narrowing (--deselect/-k/
+# addopts) · CI masking (continue-on-error, if: always() on gate steps,
+# `|| true`, --no-verify) · lint/type suppression · threshold laundering
+# (config knob + test change in one diff) · evals fixture shrinking · KB entry
+# deletion. The detection engine is .github/scripts/diff_honesty_scanner.py,
+# proven by a positive+negative fixture suite that RUNS FIRST in this job —
+# a PR that neuters a detector fails its own self-test before anything is
+# scanned, so the scanner cannot silently rot.
+#
+# WAIVERS: a genuine false positive is waived per finding with a PR-body line
+#   honesty-waiver: <rule> <exact/repo/path> — <reason>
+# The body is read via `gh pr view` (NEVER inline ${{ }} interpolation — shell
+# injection). Waived findings become loud ::warning:: annotations reviewers
+# must judge. `scanner-modified` is never waivable.
+#
+# Runs on EVERY PR into main with NO paths-ignore, so it cannot be dodged by
+# a path filter. Check name: "Diff Honesty Scanner" (marking it required is a
+# repo-settings decision, deliberately not made here).
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read # read the PR body for `honesty-waiver:` markers
+
+concurrency:
+  group: honesty-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: Diff Honesty Scanner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pytest (self-test only — the scanner itself is stdlib)
+        run: python3 -m pip install --quiet pytest
+
+      - name: Self-test the scanner (fixture suite must pass first)
+        # If the scanner's own suite fails, the scanner is untrustworthy → the
+        # PR fails. This is what stops a PR from neutering a detector in the
+        # same diff that introduces the cheat the detector would have caught.
+        run: python3 -m pytest .github/tests/test_diff_honesty_scanner.py -q
+
+      - name: Warn when the scanner machinery itself is modified
+        # Defense-in-depth alongside the scanner's own `scanner-modified`
+        # finding: self-exempt files are invisible to content scanning BY
+        # DESIGN (they document every pattern they hunt), so a PR touching
+        # them must never be silent. Visibility is this step's job;
+        # enforcement (branch protection / CODEOWNERS) is a repo-settings
+        # decision owned by Marcus.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --quiet origin "$BASE_REF"
+          MERGE_BASE=$(git merge-base "origin/${BASE_REF}" HEAD)
+          MODIFIED=$(git diff --name-only "$MERGE_BASE"...HEAD)
+          WARNED=0
+          for EXEMPT in \
+            ".github/scripts/diff_honesty_scanner.py" \
+            ".github/tests/test_diff_honesty_scanner.py" \
+            ".github/tests/fixtures/diff-honesty-scanner/"; do
+            if echo "$MODIFIED" | grep -qF "$EXEMPT"; then
+              echo "::warning file=${EXEMPT}::Scanner machinery modified — human review required (self-exemption is about false positives, not permission)."
+              WARNED=$((WARNED + 1))
+            fi
+          done
+          if [ "$WARNED" -eq 0 ]; then
+            echo "No scanner machinery modified."
+          fi
+
+      - name: Compute the PR diff vs its merge base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          # Fail loud if the base is unreachable — never scan an empty diff
+          # as if it were clean.
+          git fetch --no-tags --quiet origin "$BASE_REF"
+          MERGE_BASE=$(git merge-base "origin/${BASE_REF}" HEAD)
+          echo "Merge base: $MERGE_BASE"
+          git diff --no-color "$MERGE_BASE"...HEAD > /tmp/pr.diff
+          git diff --name-only "$MERGE_BASE"...HEAD > /tmp/changed.txt
+          echo "Changed files:"
+          cat /tmp/changed.txt
+          if [ ! -s /tmp/pr.diff ] && [ -s /tmp/changed.txt ]; then
+            echo "::error::changed files exist but the computed diff is empty — refusing to scan nothing"
+            exit 1
+          fi
+
+      - name: Extract honesty-waiver markers from the PR body
+        # `honesty-waiver: <rule> <exact/repo/path> — <reason>` lines, one per
+        # waived finding. Read via gh — NEVER inline ${{ ... }} interpolation
+        # of the body (shell injection). Malformed lines warn; they never
+        # waive anything.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body 2>/dev/null || echo "")
+          : > /tmp/waivers.txt
+          MARKERS=$(printf '%s\n' "$BODY" | tr -d '\r' | grep -E '^[[:space:]]*honesty-waiver:' || true)
+          if [ -z "$MARKERS" ]; then
+            echo "No honesty-waiver markers in the PR body."
+            exit 0
+          fi
+          while IFS= read -r line; do
+            rest="${line#*honesty-waiver:}"
+            rule=$(echo "$rest" | awk '{print $1}')
+            path=$(echo "$rest" | awk '{print $2}')
+            reason=$(echo "$rest" | awk '{$1=""; $2=""; sub(/^[[:space:]—-]+/, ""); print}')
+            if [ -n "$rule" ] && [ -n "$path" ] && [ -n "$reason" ]; then
+              echo "$rule $path" >> /tmp/waivers.txt
+              echo "::notice title=honesty-waiver requested::[$rule] $path — $reason"
+            else
+              echo "::warning title=malformed honesty-waiver line::needs '<rule> <path> — <reason>': ${line}"
+            fi
+          done <<< "$MARKERS"
+          echo "Waivers:"
+          cat /tmp/waivers.txt
+
+      - name: Scan the PR diff for dishonest-CI patterns
+        run: |
+          set -euo pipefail
+          ARGS=(--diff-file /tmp/pr.diff --changed-paths-file /tmp/changed.txt)
+          if [ -s /tmp/waivers.txt ]; then
+            ARGS+=(--waivers /tmp/waivers.txt)
+          fi
+          echo "Scanner args: ${ARGS[*]}"
+          python3 .github/scripts/diff_honesty_scanner.py "${ARGS[@]}"
