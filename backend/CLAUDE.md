@@ -168,6 +168,16 @@ progress. Rules, each with its why:
   `GREETING`/`SUGGESTIONS`/`CONTACT_URL` rather than restating them, so the
   copy `/config` advertises and the persona that must answer for it cannot
   drift. The dependency runs one way: persona never imports config.
+- **Prompts live in `app/prompts/*.txt`, never in source code.** Every prompt
+  — judge instructions, the brain's system prompt, the topic scope — is a
+  plain text file read once at import via `_load()`. Placeholders use
+  `{name}` syntax with `str.format()`. A new prompt means a new `.txt` file
+  and a `_load("name", **kwargs)` call at module level — never an inline
+  string, never an f-string buried in a function. This keeps the prompt
+  text reviewable without reading Python and forces every wording change
+  through a file whose diff shows exactly the prompt and nothing else.
+  `app/persona.py` and `app/graph/models.py` own the `_load()` helpers and
+  are the only places that import from the prompts directory.
 - `config.BRAIN_MAX_TOKENS` bounds generation so the turn fits CloudFront's 60s
   origin cap (KB-004) *alongside four judge calls*; the persona asks for the
   same brevity, so answers end rather than get truncated. Judge latency is part
