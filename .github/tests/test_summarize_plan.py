@@ -75,6 +75,20 @@ def test_no_ops_are_not_changes():
     assert summarize_plan.changes(plan(("aws_s3_bucket.web", ["no-op"]))) == []
 
 
+def test_data_source_reads_are_not_changes():
+    """Found against the real plan: deferred `data` reads were two thirds of the
+    first summary and were all flagged as 'beyond the Lambda function' — true,
+    and pure noise. Reading a data source mutates nothing."""
+    assert (
+        summarize_plan.changes(plan(("data.aws_iam_policy_document.ci_deploy", ["read"])))
+        == []
+    )
+
+
+def test_a_read_action_on_any_address_is_not_a_change():
+    assert summarize_plan.changes(plan(("aws_ssm_parameter.thing", ["read"]))) == []
+
+
 def test_an_indexed_lambda_address_still_reads_as_the_lambda():
     _, unexpected = summarize_plan.classify(
         summarize_plan.changes(plan(('aws_lambda_function.this["a"]', ["update"])))

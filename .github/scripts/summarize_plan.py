@@ -36,15 +36,29 @@ EXPECTED_ADDRESSES = frozenset({"aws_lambda_function.this"})
 # changes and listing them would bury the ones that are.
 NO_OP = ("no-op",)
 
+# Nor is reading a data source. Terraform lists deferred `data` reads alongside
+# real changes, and they were the majority of the first summary this script
+# produced against live state — flagged as "beyond the Lambda function", which
+# is true and completely useless. An approver who learns to scroll past two
+# noise rows is an approver who will scroll past the third row that matters.
+READ = ("read",)
+
 
 def changes(plan: dict) -> list[dict]:
-    """The resource changes in a `terraform show -json` document, no-ops dropped."""
+    """The mutations in a `terraform show -json` document.
+
+    No-ops and data-source reads are dropped: neither changes infrastructure,
+    and both crowd out the lines the approver is here to read.
+    """
     out = []
     for change in plan.get("resource_changes") or []:
         actions = tuple(change.get("change", {}).get("actions") or ())
-        if not actions or actions == NO_OP:
+        address = change.get("address", "?")
+        if not actions or actions == NO_OP or actions == READ:
             continue
-        out.append({"address": change.get("address", "?"), "actions": actions})
+        if address.startswith("data."):
+            continue
+        out.append({"address": address, "actions": actions})
     return sorted(out, key=lambda c: c["address"])
 
 
