@@ -94,6 +94,24 @@ variable "bedrock_api_key_parameter" {
   default     = "/cadre/bedrock-api-key"
 }
 
+variable "langfuse_secret_key_parameter" {
+  description = "SSM SecureString holding the Langfuse secret key. Already exists with a real value — Terraform only reads it (ADR 0002 data-source precedent, not ADR 0001 decision 4's create pattern, which would overwrite it with a placeholder). See infra/langfuse.tf."
+  type        = string
+  default     = "/cadre/langfuse-secret-key"
+}
+
+variable "langfuse_public_key_parameter" {
+  description = "SSM SecureString holding the Langfuse public key. Same out-of-band data-source pattern as langfuse_secret_key_parameter."
+  type        = string
+  default     = "/cadre/langfuse-public-key"
+}
+
+variable "langfuse_base_url_parameter" {
+  description = "SSM String (not SecureString — the Langfuse Cloud region host is not sensitive) holding the Langfuse base URL. Same out-of-band data-source pattern."
+  type        = string
+  default     = "/cadre/langfuse-base-url"
+}
+
 variable "brain_model" {
   description = "Mantle model id for the brain. Claude ids appear in /v1/models but don't answer through this transport: the Mantle host only serves /v1/chat/completions, which 400s on a Claude id, and Claude's own /v1/messages 404s on this host entirely — an API-surface split, not an entitlement gap. Flip this the day a Claude-compatible surface is reachable here."
   type        = string

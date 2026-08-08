@@ -130,6 +130,16 @@ resource "aws_lambda_function" "this" {
       CADRE_MODEL_VALIDATE        = var.validate_model
       CADRE_MODEL_TOPIC           = var.topic_model
       CADRE_MODEL_TOPIC_FALLBACKS = join(",", var.topic_fallback_models)
+
+      # Read once at container start by `backend/app/tracing.py`, never per
+      # request — an SSM or credential round trip inside a turn would spend part
+      # of CloudFront's 60s origin cap (KB-004) on something that cannot change
+      # between requests. Tracing fails open, so a wrong value here is a turn
+      # with no trace link and a warning in the log, never a broken turn. The
+      # parameters are data-referenced, never created — see infra/langfuse.tf.
+      LANGFUSE_PUBLIC_KEY = data.aws_ssm_parameter.langfuse_public_key.value
+      LANGFUSE_SECRET_KEY = data.aws_ssm_parameter.langfuse_secret_key.value
+      LANGFUSE_HOST       = data.aws_ssm_parameter.langfuse_base_url.value
     }
   }
 
