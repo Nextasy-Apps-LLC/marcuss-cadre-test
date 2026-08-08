@@ -10,6 +10,25 @@ architecture; this file owns the *quality loop*.
 Every answer-quality fix follows the same five steps. Skipping one is how a
 "fix" ships that makes a different question worse.
 
+```mermaid
+flowchart TD
+    A["1 · Real failures\nLangfuse traces of live sessions\n+ structured question sweeps"] --> B["Replay deterministically\ntemp 0, exact transcript"]
+    B --> C["2 · Root-cause to ONE component\nvalidate / injection / classifier /\ncondense+retrieve / persona / guard"]
+    C --> D["3 · Freeze as labelled fixtures\nevals/fixtures/*.json + counter-fixtures\n(unit tests pin schema & coverage)"]
+    D --> E["4 · TDD fix\nfailing tests committed first,\nthen prompts (app/prompts/*.txt) + code"]
+    E --> F["5a · Measure tunables\njudge_bench: every candidate model,\ntemp 0, production parser,\naccuracy → then latency (60s budget)"]
+    F --> G["5b · Verify against reality\nbuild image, real credentials,\nreplay the original failing transcripts\n+ counter-probes (rails still fire)"]
+    G -->|a replay still fails| C
+    G -->|all green| H["PR with before/after + tables\nMarcus merges & deploys"]
+    H --> I["Fixtures stay as the regression net\nfor the next pass"]
+    I --> A
+```
+
+The two loop edges are the point: a fix that fails its own transcript goes
+back to root-causing (not to prompt-tweaking in place), and every pass leaves
+its fixtures behind, so the next pass is measured against everything the
+previous ones fixed.
+
 1. **Start from real failures, not hunches.** The evidence is Langfuse traces
    of real conversations (session ids and timestamps recorded in the issue)
    plus structured question sweeps over the corpus (the 98-question eval of
