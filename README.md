@@ -8,7 +8,9 @@ check, topic classifier, retrieval seam, brain, output safety — running on
 FastAPI in a Lambda container, calling Bedrock models over its OpenAI-compatible
 Mantle endpoint ([ADR 0002](adr/0002-bedrock-mantle-api-key.md)). Every pipeline
 step streams its verdict live to the browser as SSE, so the UI renders the
-guardrails as they run, not a spinner.
+guardrails as they run, not a spinner. Every turn links its public **Langfuse
+trace** ("View trace ↗") — one span per pipeline step, carrying the exact
+per-step latencies the stepper showed.
 
 ```mermaid
 flowchart LR
@@ -51,7 +53,7 @@ cd backend && CADRE_E2E_BEDROCK=1 BASE_URL=https://cadre.marcuss.pro pytest -m e
 
 | Path | What it is |
 |---|---|
-| [`plan.md`](plan.md) | The epic: architecture, model roster, phases, scope decisions |
+| [`plan.md`](plan.md) | The epic: architecture, model roster, phases (1–2 shipped, 3–6 not built), scope decisions |
 | [`adr/`](adr/README.md) | Architecture decision records — the load-bearing traps and choices |
 | [`kb/learnings.json`](kb/learnings.json) | Compounding knowledge base; every cycle reads it, appends to it |
 | [`.claude/`](.claude/) | Compound workflow: skills, agents, kanban recipe driving issue → PR |

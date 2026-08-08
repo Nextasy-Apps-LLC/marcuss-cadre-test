@@ -1,3 +1,7 @@
+Start at `CLAUDE.md` — the working rules, the compound workflow (issue → TDD
+implement → review → done), and the pointers to `plan.md`, the ADRs, and the
+scoped per-directory rule files all live there.
+
 <!-- OPENWIKI:START -->
 
 ## OpenWiki
