@@ -6,10 +6,12 @@
  * nothing at build time can catch that drift, so the names here are
  * deliberately verbatim rather than prettified.
  *
- * Wire events: `state {step, status, detail, elapsed_ms}`, `token {text}`,
- * `done {outcome, refusal_text?}` (always terminal), `error {message}`
- * (terminal), and `: ping` comment heartbeats (dropped in sse.ts, never
- * reach this boundary).
+ * Wire events: `trace {trace_id, url}` (at most once, the first frame of the
+ * turn, only when tracing is up — see `TraceEvent` below), `state {step,
+ * status, detail, elapsed_ms}`, `token {text}`, `done {outcome,
+ * refusal_text?}` (always terminal), `error {message}` (terminal), and
+ * `: ping` comment heartbeats (dropped in sse.ts, never reach this
+ * boundary).
  */
 
 /** Pipeline steps, in the order the backend runs them. */
@@ -43,6 +45,19 @@ export interface StateEvent {
 
 export interface TokenEvent {
   text: string;
+}
+
+/**
+ * The Langfuse trace for this turn (`backend/app/tracing.py` /
+ * `app/sse.py`'s `trace()`). Emitted at most once per turn, as the very
+ * first frame of the response, only when tracing is up — never emitted when
+ * credentials are missing/bad (fail-open; KB-009). `url` is opaque, the
+ * Langfuse SDK's own `get_trace_url()` output — never construct or parse it
+ * client-side, just render it.
+ */
+export interface TraceEvent {
+  trace_id: string;
+  url: string;
 }
 
 export type Outcome = "answered" | "refused" | "escalated" | "error";
@@ -153,4 +168,10 @@ export interface ChatMessage {
    * the UI apart so it can render the escalation differently.
    */
   outcome?: Outcome;
+  /**
+   * Set the instant a `trace` event for this turn's reply arrives — before
+   * the pipeline even starts, and independent of `status`/`outcome`. Absent
+   * when tracing was disabled/degraded for this turn (no wire event at all).
+   */
+  traceUrl?: string;
 }
