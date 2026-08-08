@@ -72,7 +72,54 @@ that one chunked page can never fill the slate again.
 
 ### Model selection (measured — `python -m evals.judge_bench`)
 
-<!-- BENCH_RESULTS -->
+Twelve candidates enumerated from `GET /models` on the Mantle endpoint
+(everything plausibly suited to short-verdict classification: the current
+roster, the full Nemotron family per Marcus's question, the gemma family,
+the ministral family, glm-4.7-flash, qwen3-next-80b). Wide sweep at 1 run,
+finalists re-run at 3 runs; temp 0 throughout, production parser, latency
+includes transport retries. `google.gemma-4-26b-a4b` errored on every call —
+catalogued but not entitled, the exact trap `scripts/assert_models.py`
+exists for.
+
+**Topic** (16 labelled conversations, finals ×3 runs):
+
+| model | acc | p50 s | note |
+|---|---|---|---|
+| **mistral.ministral-3-8b-instruct** | **100% (48/48)** | **0.19** | new default |
+| mistral.ministral-3-14b-instruct | 100% (48/48) | 0.22 | |
+| zai.glm-4.7-flash | 100% (48/48) | 0.33 | fallback 1 |
+| qwen.qwen3-next-80b-a3b-instruct | 98% (47/48) | 0.27 | fallback 2 |
+| google.gemma-3-12b-it (old default) | 94% (15/16) | 0.35 | still escalates the real loop transcript |
+| nvidia.nemotron-nano-3-30b | 94% (15/16) | 0.33 | |
+| nvidia.nemotron-nano-9b-v2 | 94% (15/16) | 2.58 | reasoning monologue, 1 no-verdict |
+| nvidia.nemotron-nano-12b-v2 | 81% (13/16) | 0.32 | escalates both real transcripts |
+
+"Should the topic classifier go back to a Nemotron?" — measured, no: every
+Nemotron under-scores the winners, and nano-9b costs 13× the latency.
+
+**Injection** (12 labelled messages, finals ×3 runs):
+
+| model | acc | p50 s | note |
+|---|---|---|---|
+| **mistral.ministral-3-8b-instruct** | **100% (36/36)** | **0.17** | new default |
+| mistral.ministral-3-14b-instruct | 100% (36/36) | 0.22 | |
+| nvidia.nemotron-nano-12b-v2 | 100% (36/36) | 0.23 | p95 1.13s |
+| qwen.qwen3-32b (old default) | 100% (36/36) | 0.26 | |
+| google.gemma-3-4b-it | 58% (7/12) | 0.18 | flags meta-complaints as attacks |
+
+**Guard** (16 labelled answer+context pairs, finals ×3 runs):
+
+| model | acc | p50 s | note |
+|---|---|---|---|
+| **qwen.qwen3-next-80b-a3b-instruct** | **100% (48/48)** | **0.32** | new default |
+| nvidia.nemotron-nano-3-30b | 94% (45/48) | 0.23 | passes the instruction-leak negative |
+| google.gemma-3-12b-it | 94% (45/48) | 0.25 | same miss |
+| qwen.qwen3-32b (old default) | 94% (45/48) | 0.31 | same miss |
+| mistral.ministral-3-14b-instruct | 88% (14/16) | 0.89 | retracts two *correct* grounded answers — disqualified |
+
+Latency budget check (KB-004): the three judges plus validate now cost
+~0.9s p50 combined per answered turn — comfortably inside the 60s cap, and
+faster than the roster they replace.
 
 ## Adding to this document
 

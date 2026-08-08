@@ -69,30 +69,49 @@ BEDROCK_MANTLE_BASE_URL = os.environ.get(
 MODEL_VALIDATE = os.environ.get("CADRE_MODEL_VALIDATE", "nvidia.nemotron-nano-12b-v2")
 
 # Strict prompt-injection classifier.
-MODEL_INJECTION = os.environ.get("CADRE_MODEL_INJECTION", "qwen.qwen3-32b")
+#
+# Re-benchmarked for issue #70 over the labelled fixture set (12 cases — real
+# meta-complaints that must pass, real injections that must fail — x 3 runs,
+# temp 0, production parser; `python -m evals.judge_bench --slot injection`):
+#
+#   mistral.ministral-3-8b-instruct   36/36  p50 0.17s   <- picked
+#   mistral.ministral-3-14b-instruct  36/36  p50 0.22s
+#   nvidia.nemotron-nano-12b-v2       36/36  p50 0.23s (p95 1.13s)
+#   qwen.qwen3-32b                    36/36  p50 0.26s   (previous default)
+#
+# Accuracy tied at 100%; latency decided it. gemma-3-4b flagged the
+# meta-complaints as injections (7/12) and is why "smallest" is not the rule.
+MODEL_INJECTION = os.environ.get(
+    "CADRE_MODEL_INJECTION", "mistral.ministral-3-8b-instruct"
+)
 
 # Three-way route: in_scope / off_topic / needs_human.
 #
-# `nvidia.nemotron-nano-9b-v2` led this chain until live probing retired it on
-# three counts: an intermittent 503 on this account (~2 calls in 5 in one
-# burst, at any token budget), ~4x the latency of every alternative (p50 1.96s
-# vs ~0.5s), and a reasoning monologue that has to be stripped before the
-# verdict is readable. Measured over 7 cases x 2 runs with the real parser:
+# Phase 1b pinned `google.gemma-3-12b-it` (14/14 on the then-fixture set).
+# Issue #70 re-benchmarked the slot on the enlarged set — 16 labelled
+# conversations including Marcus's real escalation-loop transcript and the
+# four first-person eval escalations — x 3 runs, temp 0, production parser
+# (`python -m evals.judge_bench --slot topic`):
 #
-#   google.gemma-3-12b-it             14/14 http  14/14 correct  p50 0.50s
-#   zai.glm-4.7-flash                 14/14       14/14          p50 0.44s
-#   mistral.ministral-3-14b-instruct  14/14       14/14          p50 0.77s
-#   nvidia.nemotron-nano-3-30b        14/14       12/14          p50 0.52s
-#   nvidia.nemotron-nano-9b-v2        14/14       12/14          p50 1.96s
-MODEL_TOPIC = os.environ.get("CADRE_MODEL_TOPIC", "google.gemma-3-12b-it")
+#   mistral.ministral-3-8b-instruct   48/48  p50 0.19s   <- picked
+#   mistral.ministral-3-14b-instruct  48/48  p50 0.22s
+#   zai.glm-4.7-flash                 48/48  p50 0.33s
+#   qwen.qwen3-next-80b-a3b-instruct  47/48  p50 0.27s
+#   google.gemma-3-12b-it             15/16  p50 0.35s (single-run sweep) —
+#     still classifies the real escalation-loop transcript needs_human even
+#     under the narrowed prompt, which is the exact production failure
+#   nvidia.nemotron-nano-3-30b        15/16, nano-12b-v2 13/16, nano-9b-v2
+#     15/16 at p50 2.58s — "back to a Nemotron" was measured and lost
+MODEL_TOPIC = os.environ.get("CADRE_MODEL_TOPIC", "mistral.ministral-3-8b-instruct")
 
 # Walked in order when the primary *errors*. Three providers, three failure
 # modes: a fallback that shares the primary's outage is not a fallback.
+# Ordered by the same benchmark: glm-4.7-flash 48/48, qwen3-next 47/48.
 MODEL_TOPIC_FALLBACKS = [
     model_id.strip()
     for model_id in os.environ.get(
         "CADRE_MODEL_TOPIC_FALLBACKS",
-        "nvidia.nemotron-nano-3-30b,mistral.ministral-3-14b-instruct",
+        "zai.glm-4.7-flash,qwen.qwen3-next-80b-a3b-instruct",
     ).split(",")
     if model_id.strip()
 ]
@@ -138,8 +157,22 @@ CONDENSE_MAX_CHARS = int(os.environ.get("CADRE_CONDENSE_MAX_CHARS", "300"))
 # The brain.
 MODEL_BRAIN = os.environ.get("CADRE_MODEL_BRAIN", "qwen.qwen3-32b")
 
-# Final gate on the complete streamed answer.
-MODEL_GUARD = os.environ.get("CADRE_MODEL_GUARD", "qwen.qwen3-32b")
+# Final gate on the complete streamed answer. Since issue #70 the guard reads
+# the turn's retrieved passages, so its fixture set is the hard one: the ten
+# correct fact-dense answers that were wrongly retracted (must pass) plus
+# ungrounded-fact negatives (must fail). Benchmarked x 3 runs, temp 0
+# (`python -m evals.judge_bench --slot guard`):
+#
+#   qwen.qwen3-next-80b-a3b-instruct  48/48  p50 0.32s   <- picked
+#   nvidia.nemotron-nano-3-30b        45/48  p50 0.23s   (passes instr. leak)
+#   google.gemma-3-12b-it             45/48  p50 0.25s   (passes instr. leak)
+#   qwen.qwen3-32b                    45/48  p50 0.31s   (previous default;
+#     consistently passes an answer that discusses its own instructions)
+#   mistral.ministral-3-*             fail 2-3 *correct grounded* answers —
+#     they would keep retracting the 31%/24% case studies; disqualified
+MODEL_GUARD = os.environ.get(
+    "CADRE_MODEL_GUARD", "qwen.qwen3-next-80b-a3b-instruct"
+)
 
 # ── The knowledge base (issue #62) ─────────────────────────────────────────
 #
@@ -218,11 +251,11 @@ RETRIEVE_TIMEOUT_S = float(os.environ.get("CADRE_RETRIEVE_TIMEOUT_S", "6.0"))
 # shorthand; keep them in sync when MODEL_* ids change.
 _MODEL_DISPLAY = {
     MODEL_VALIDATE: "nemotron 12b",
-    MODEL_INJECTION: "qwen3-32b",
-    MODEL_TOPIC: "gemma-3-12b",
+    MODEL_INJECTION: "ministral 8b",
+    MODEL_TOPIC: "ministral 8b",
     EMBEDDING_MODEL: "embed-3-large",
     MODEL_BRAIN: "qwen3-32b",
-    MODEL_GUARD: "qwen3-32b",
+    MODEL_GUARD: "qwen3-next-80b",
 }
 
 STEP_MODELS: dict[str, str] = {
