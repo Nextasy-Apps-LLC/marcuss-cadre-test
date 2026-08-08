@@ -570,6 +570,30 @@
       },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-025",
+      "type": "learning",
+      "area": [
+        "web",
+        "process"
+      ],
+      "tags": [
+        "kb-007",
+        "browser-check",
+        "vite-proxy",
+        "playwright",
+        "pre-deploy",
+        "e2e"
+      ],
+      "title": "A KB-007 browser check doesn't need a deploy — vite's existing dev-server proxy plus the real backend image gives a real browser tab against real models pre-merge",
+      "detail": "web/vite.config.ts already proxies /ask, /config, /healthz to 127.0.0.1:8080 for local dev. Running the real backend image (`docker run -p 8080:8080` with real Bedrock/OpenAI/Langfuse creds from SSM) and pointing `npm run dev` at it gives a full KB-007 browser check — tokens streaming live, a rendered citation link, a real trace-link footnote — with headless Playwright, with no CloudFront distribution, no S3 bucket, and no `terraform apply`. Used in #62 to verify the citation-rendering fix before any infra was touched, since deploy is explicitly a separate (human) step in this workflow. One caveat that comes with it: the trace-link footnote (issue #57) and the reply text share the same `.msg-body` element, so a naive text-length/growth probe scoped to `.msg--cadre .msg-body` picks up the footnote's ~66 characters the instant the `trace` event arrives, well before the first token — a flat early sample is the footnote rendering, not 'nothing has streamed yet'. Next cycle: reach for this pattern instead of skipping the KB-007 browser check with 'no deployed environment to point it at' as the reason, and don't mistake the trace footnote's early text for a stalled stream.",
+      "source": {
+        "issue": 62,
+        "pr": 63
+      },
+      "date": "2026-08-08",
+      "status": "active"
     }
   ]
 }
