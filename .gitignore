@@ -19,6 +19,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Playwright (web/e2e) — local run artifacts, never committed
+web/test-results/
+web/playwright-report/
+web/blob-report/
+
 # Python
 __pycache__/
 *.py[cod]

@@ -204,3 +204,38 @@ jobs:
           BASE_URL: ${{ inputs.e2e_base_url }}
           CADRE_E2E_BEDROCK: ${{ inputs.e2e_live_bedrock && '1' || '0' }}
         run: pytest -m e2e -v
+
+  # The browser-layer sibling of `e2e` above, same gate, same reused inputs —
+  # no new workflow_dispatch inputs. It never boots a container or holds a
+  # model key itself: it only speaks HTTP (via a real Chromium) to whatever
+  # `e2e_base_url` already is (prod by default), which already carries its
+  # own credentials (Terraform-provisioned). A live spec against that target
+  # spends real Bedrock tokens once `e2e_live_bedrock` is set, exactly like
+  # the `e2e` job above — see web/e2e/README.md.
+  e2e-web:
+    name: e2e-web — pipeline pane against a real target
+    if: github.event_name == 'workflow_dispatch' && inputs.run_e2e
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Install Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the frontend e2e suite
+        env:
+          BASE_URL: ${{ inputs.e2e_base_url }}
+          CADRE_E2E_BEDROCK: ${{ inputs.e2e_live_bedrock && '1' || '0' }}
+        run: npm run test:e2e
