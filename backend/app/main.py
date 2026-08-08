@@ -277,6 +277,7 @@ async def _stream(req: AskRequest) -> AsyncIterator[str]:
                     payload["status"],
                     payload["detail"],
                     payload["elapsed_ms"],
+                    payload["retrieval"],
                 )
             elif kind == "token":
                 yield sse.token(payload)

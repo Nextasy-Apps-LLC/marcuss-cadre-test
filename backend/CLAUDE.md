@@ -49,9 +49,12 @@ progress. Rules, each with its why:
   "brain","output_safety"]` — the client paints one chip per entry up front.
 - Five events. `trace {trace_id, url}` comes first when tracing is up and is
   simply absent when it is not (see Tracing below), then:
-  `state {step, status, detail?, elapsed_ms?}` on every transition —
+  `state {step, status, detail?, elapsed_ms, retrieval}` on every transition —
   `elapsed_ms` is an int on `pass`/`fail` (degraded passes included), `null`
-  on `running`/`skipped` — `token {text}` (only while `brain` runs or the
+  on `running`/`skipped`, and `retrieval {query, hit_count, top_score}` is
+  non-null only on `retrieve`'s terminal `pass` (`no_hits` included, where it
+  reports `hit_count: 0`) and `null` everywhere else, including every
+  fail-open `skipped` path — `token {text}` (only while `brain` runs or the
   escalation text streams),
   `done {outcome: answered|refused|escalated|error, refusal_text}`, and
   `error {message}`. `done` is always terminal; `error` is terminal on its own
@@ -226,7 +229,12 @@ progress. Rules, each with its why:
   **condensed** query (so a bad rewrite is visible instead of inferred from a
   bad answer) plus each hit's URL and score. The chunk text is deliberately
   left out — it is already in the brain span's system prompt, and duplicating
-  it would make a public trace expensive to load for no new fact. The
+  it would make a public trace expensive to load for no new fact. The same
+  two facts, reduced to `{query, hit_count, top_score}`, also ride the `state`
+  event's `retrieval` field (#74) so the pipeline pane shows them without a
+  Langfuse round trip — the wire copy stays URL-free and text-free for the
+  same payload-size reason, and both are built from the same `query`/`hits`
+  values so the pane and the span cannot disagree. The
   `trace_id` is passed in rather than discovered: nodes take `(state, emit)`,
   so the id rides the per-request emitter alongside the queue, never
   `ConversationState` (KB-008).

@@ -8,7 +8,7 @@ field here compiles green on both sides and breaks silently in a browser
 the same phase.
 
     event: trace  data: {trace_id, url}
-    event: state  data: {step, status, detail, elapsed_ms}
+    event: state  data: {step, status, detail, elapsed_ms, retrieval}
     event: token  data: {text}
     event: done   data: {outcome, refusal_text}
     event: error  data: {message}
@@ -21,7 +21,7 @@ on its own.
 from __future__ import annotations
 
 import json
-from typing import Literal
+from typing import Literal, TypedDict
 
 # The pipeline in execution order. The client paints one chip per entry up
 # front and resolves them from `state` events, so this list and
@@ -37,6 +37,43 @@ STEPS: list[str] = [
 
 Status = Literal["running", "pass", "fail", "skipped"]
 Outcome = Literal["answered", "refused", "escalated", "error"]
+
+
+class Retrieval(TypedDict):
+    """What `retrieve` actually searched for, and what came back.
+
+    The two most diagnostic facts about a retrieval, and the same two the
+    Langfuse span records. They are what separate "the answer is wrong" from
+    "the *question* was wrong": once there is history the embedded text is a
+    model's rewrite of the visitor's sentence, not the sentence itself.
+
+    `query` is the **condensed** query and only when it differs from
+    `state["message"]` — `None` on a first message (condensing never runs)
+    and on the KB-011 fallback to the visitor's own words. Echoing a sentence
+    that is already in the transcript back under the step is noise, and
+    deciding it here keeps the raw message out of the client's stepper.
+
+    `hit_count` and `top_score` describe the **final** slate — after the
+    `RETRIEVE_MIN_SCORE` floor, the per-URL dedupe and the `RETRIEVE_TOP_K`
+    cut — because that is the context the brain actually read. `top_score` is
+    `None` exactly when `hit_count` is 0.
+
+    Deliberately no chunk text and no URLs, same reason the Langfuse span
+    omits the text: the passages are already in the brain's prompt, and
+    duplicating them would make every frame expensive for no new fact.
+    """
+
+    query: str | None
+    hit_count: int
+    top_score: float | None
+
+
+def retrieval(
+    query: str | None, hit_count: int, top_score: float | None
+) -> Retrieval:
+    """Build a `Retrieval` payload. Lives here, not in the node, so the wire
+    shape has exactly one definition to mirror in `web/src/types.ts`."""
+    return {"query": query, "hit_count": hit_count, "top_score": top_score}
 
 
 def trace(trace_id: str, url: str) -> str:
@@ -55,7 +92,11 @@ def trace(trace_id: str, url: str) -> str:
 
 
 def state(
-    step: str, status: Status, detail: str | None = None, elapsed_ms: int | None = None
+    step: str,
+    status: Status,
+    detail: str | None = None,
+    elapsed_ms: int | None = None,
+    retrieval: Retrieval | None = None,
 ) -> str:
     """A pipeline transition.
 
@@ -75,8 +116,22 @@ def state(
     is `null` for `running` and `skipped` — a step that hasn't finished, or
     never ran, has nothing to time, and reporting `0` would misleadingly
     imply a measurement was taken.
+
+    `retrieval` follows exactly that precedent: always present, `null`
+    everywhere it does not apply — every step other than `retrieve`,
+    `retrieve`'s own `running` frame, and every fail-open `skipped` path,
+    where the search never completed and there is nothing to report. It is a
+    `Retrieval` only on `retrieve`'s terminal `pass` (including `no_hits`).
+    Always-present-or-null is what keeps the whole payload exact-matchable on
+    both sides of the boundary rather than a shape that varies per step.
     """
-    payload = {"step": step, "status": status, "detail": detail, "elapsed_ms": elapsed_ms}
+    payload = {
+        "step": step,
+        "status": status,
+        "detail": detail,
+        "elapsed_ms": elapsed_ms,
+        "retrieval": retrieval,
+    }
     return f"event: state\ndata: {json.dumps(payload)}\n\n"
 
 

@@ -60,8 +60,13 @@ async def _record(
     status: str,
     detail: str | None = None,
     elapsed_ms: int | None = None,
+    retrieval: sse.Retrieval | None = None,
 ) -> ConversationState:
-    await emit(step, status, detail, elapsed_ms)
+    # `retrieval` goes to the wire only. `StepResult` exists for refusal
+    # attribution and per-step latency; the retrieval facts already reach the
+    # trace through `tracing.record_retrieval`, so mirroring them onto the
+    # checkpointable state channel would be a second copy nothing reads.
+    await emit(step, status, detail, elapsed_ms, retrieval)
     result = StepResult(step=step, status=status, detail=detail)
     return {**state, "steps": [*state.get("steps", []), result]}
 
@@ -220,7 +225,8 @@ async def _retrieve(state: ConversationState, emit, started: float) -> Conversat
 
     # A first message is already standalone. Condensing it would spend a slice
     # of the 60s turn budget (KB-004) to produce what we already have.
-    query = state.get("message", "")
+    message = state.get("message", "")
+    query = message
     if state.get("history"):
         query = await models.condense_query(state)
 
@@ -237,15 +243,29 @@ async def _retrieve(state: ConversationState, emit, started: float) -> Conversat
     hits = kb.dedupe_hits(hits, config.RETRIEVE_MAX_PER_URL)[: config.RETRIEVE_TOP_K]
     tracing.record_retrieval(getattr(emit, "trace_id", None), query, hits)
 
+    # The same two facts the trace gets, on the wire (#74) — built from the
+    # final slate, so the pane describes the context the brain actually read
+    # rather than what the store returned. `max()` rather than `hits[0]` so
+    # this does not quietly depend on `dedupe_hits` preserving sort order.
+    facts = sse.retrieval(
+        query=query if query != message else None,
+        hit_count=len(hits),
+        top_score=round(max(hit.score for hit in hits), 4) if hits else None,
+    )
+
     if not hits:
         # A pass, not a degradation: the KB ran fine and had nothing to say.
         # Calling that `skipped` would make an empty corpus and a broken one
         # look the same on the wire.
         log.info("retrieve: no hits above %.2f for %r", config.RETRIEVE_MIN_SCORE, query)
-        return await _record(state, emit, RETRIEVE, "pass", "no_hits", _elapsed_ms(started))
+        return await _record(
+            state, emit, RETRIEVE, "pass", "no_hits", _elapsed_ms(started), facts
+        )
 
     state = {**state, "context": kb.render_sources(hits)}
-    return await _record(state, emit, RETRIEVE, "pass", elapsed_ms=_elapsed_ms(started))
+    return await _record(
+        state, emit, RETRIEVE, "pass", None, _elapsed_ms(started), facts
+    )
 
 
 async def retrieve(state: ConversationState, emit) -> ConversationState:
