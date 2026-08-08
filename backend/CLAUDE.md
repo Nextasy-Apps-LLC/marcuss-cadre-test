@@ -21,10 +21,10 @@ progress. Rules, each with its why:
 - `emit` is passed per request through `config["configurable"]`, never through
   the state channel — a live queue in a checkpointable channel is how one
   visitor's stream leaks into another's.
-- `models.py` holds the four model seams (`judge_injection`, `classify_topic`,
-  `guard_output`, `stream_reply`). Nodes call them **through the module** so a
-  single monkeypatch swaps them; that is what keeps routing, streaming and the
-  wire contract provable offline.
+- `models.py` holds the five model seams (`validate_llm`, `judge_injection`,
+  `classify_topic`, `guard_output`, `stream_reply`). Nodes call them **through
+  the module** so a single monkeypatch swaps them; that is what keeps routing,
+  streaming and the wire contract provable offline.
 - **Model-backed checks fail open**: a seam that raises is logged and passes
   with `detail:"degraded"`, so an outage degrades observability, never a
   visitor's turn — and the client renders degraded amber, never green. `brain`
@@ -49,7 +49,10 @@ progress. Rules, each with its why:
   "brain","output_safety"]` — the client paints one chip per entry up front.
 - Five events. `trace {trace_id, url}` comes first when tracing is up and is
   simply absent when it is not (see Tracing below), then:
-  `token {text}` (only while `brain` runs or the escalation text streams),
+  `state {step, status, detail?, elapsed_ms?}` on every transition —
+  `elapsed_ms` is an int on `pass`/`fail` (degraded passes included), `null`
+  on `running`/`skipped` — `token {text}` (only while `brain` runs or the
+  escalation text streams),
   `done {outcome: answered|refused|escalated|error, refusal_text}`, and
   `error {message}`. `done` is always terminal; `error` is terminal on its own
   and is never followed by a `done`.
