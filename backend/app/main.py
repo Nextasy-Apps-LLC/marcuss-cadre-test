@@ -82,7 +82,11 @@ async def healthz() -> JSONResponse:
 async def page_config() -> JSONResponse:
     """Greeting and chips live server-side so they cannot drift from what the
     backend actually answers."""
-    return JSONResponse({"greeting": config.GREETING, "suggestions": config.SUGGESTIONS})
+    return JSONResponse({
+        "greeting": config.GREETING,
+        "suggestions": config.SUGGESTIONS,
+        "step_models": config.STEP_MODELS,
+    })
 
 
 @app.post("/ask")

@@ -63,6 +63,11 @@ export function PipelineStepper({ steps, open, onToggle }: Props) {
                 {stepIcon(step)}
               </span>
               <span className="step-label">{step.label}</span>
+              {step.model && (
+                <span className="step-model" aria-label={`model: ${step.model}`}>
+                  {step.model}
+                </span>
+              )}
               {/* Status is also text-borne, not only icon/color: the icon
                   above is aria-hidden, so this is the only accessible name
                   for a step's state. */}

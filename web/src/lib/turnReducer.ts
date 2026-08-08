@@ -8,7 +8,7 @@
  * functions to compute what the next turn state should be.
  */
 
-import { freshSteps, type DoneEvent, type StateEvent, type TokenEvent, type MessageStatus, type Outcome, type StepState } from "../types";
+import { freshSteps, type DoneEvent, type StateEvent, type StepName, type TokenEvent, type MessageStatus, type Outcome, type StepState } from "../types";
 
 /** Shown when the wire `error` event fires or a dead connection leaves nothing else to say. */
 export const ERROR_TEXT = "Something went wrong. Try again in a moment.";
@@ -28,8 +28,8 @@ export interface TurnState {
   sawDone: boolean;
 }
 
-export function freshTurn(): TurnState {
-  return { steps: freshSteps(), replyText: "", replyStatus: "pending", sawDone: false };
+export function freshTurn(models?: Partial<Record<StepName, string>>): TurnState {
+  return { steps: freshSteps(models), replyText: "", replyStatus: "pending", sawDone: false };
 }
 
 export function applyState(turn: TurnState, event: StateEvent): TurnState {

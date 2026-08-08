@@ -13,7 +13,7 @@ import {
   OFFLINE_TEXT,
   type TurnState,
 } from "./turnReducer";
-import type { ChatMessage, DoneEvent, StateEvent, StepState, TokenEvent } from "../types";
+import type { ChatMessage, DoneEvent, StateEvent, StepName, StepState, TokenEvent } from "../types";
 
 const CONVERSATION_KEY = "cadre_conversation_id";
 
@@ -42,11 +42,11 @@ export interface CadreChat {
   reset: () => void;
 }
 
-export function useCadreChat(greeting: string): CadreChat {
+export function useCadreChat(greeting: string, stepModels?: Partial<Record<StepName, string>>): CadreChat {
   const [messages, setMessages] = useState<ChatMessage[]>([
     { id: "greeting", who: "system", text: greeting, status: "done" },
   ]);
-  const [steps, setSteps] = useState<StepState[]>(() => freshTurn().steps);
+  const [steps, setSteps] = useState<StepState[]>(() => freshTurn(stepModels).steps);
   const [busy, setBusy] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -64,8 +64,8 @@ export function useCadreChat(greeting: string): CadreChat {
   const reset = useCallback(() => {
     localStorage.removeItem(CONVERSATION_KEY);
     setMessages([{ id: "greeting", who: "system", text: greeting, status: "done" }]);
-    setSteps(freshTurn().steps);
-  }, [greeting]);
+    setSteps(freshTurn(stepModels).steps);
+  }, [greeting, stepModels]);
 
   const send = useCallback(
     async (text: string) => {
@@ -76,7 +76,7 @@ export function useCadreChat(greeting: string): CadreChat {
       const replyId = `${turnId}-reply`;
 
       setBusy(true);
-      let turn: TurnState = freshTurn();
+      let turn: TurnState = freshTurn(stepModels);
       setSteps(turn.steps);
       setMessages((prev) => [
         ...prev,

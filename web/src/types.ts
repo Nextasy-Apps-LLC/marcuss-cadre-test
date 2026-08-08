@@ -93,6 +93,8 @@ export interface StepState {
   detail: string | null;
   /** Mirrors `StateEvent.elapsed_ms` verbatim — see its doc comment. */
   elapsedMs: number | null;
+  /** Model id that runs this step, from /config. Absent for retrieve (not wired). */
+  model?: string;
 }
 
 /** Human labels for the pipeline steps, in wire order. */
@@ -127,13 +129,14 @@ export function stepIcon(step: StepState): string {
 }
 
 /** Fresh steps for the start of a turn. A shared array would leak the previous turn's verdicts into the next one. */
-export function freshSteps(): StepState[] {
+export function freshSteps(models?: Partial<Record<StepName, string>>): StepState[] {
   return STEPS.map((name) => ({
     name,
     label: STEP_LABELS[name],
     status: "pending" as StepStatus,
     detail: null,
     elapsedMs: null,
+    model: models?.[name],
   }));
 }
 
