@@ -686,20 +686,37 @@ class TestTraceRootAndTags:
         """Today the root claims the *condensed retrieval query* was the input,
         because Langfuse derives trace IO from root-level observation IO and
         the retrieval span's write lands last (design §1.1)."""
-        turn = self._finalize(lf)
+        self._finalize(lf)
+        span = lf.one(tracing.TURN_SPAN_NAME)
 
-        assert turn.span.trace_io is not None, "trace IO was never set explicitly"
-        assert turn.span.trace_io["input"]["message"] == "what does cadre ai do?"
-        assert turn.span.trace_io["output"]["outcome"] == "answered"
-        assert turn.span.trace_io["output"]["answer_chars"] == len(
+        assert span.trace_io is not None, "trace IO was never set explicitly"
+        assert span.trace_io["input"]["message"] == "what does cadre ai do?"
+        assert span.trace_io["output"]["outcome"] == "answered"
+        assert span.trace_io["output"]["answer_chars"] == len(
             "Cadre AI helps teams adopt AI."
         )
+
+    def test_the_trace_fields_ride_a_span_created_inside_propagate_attributes(self, lf):
+        """Both halves were learned by reading real traces back (#79).
+
+        `propagate_attributes` only reaches spans created *inside* its block,
+        and the trace-level upsert is won by the later-*created* root write —
+        so the fields cannot ride the `pipeline` span the graph task opened,
+        which necessarily predates both the tags and the flush.
+        """
+        self._finalize(lf)
+        names = lf.names
+        assert names.index(tracing.PIPELINE_SPAN_NAME) < names.index(
+            tracing.TURN_SPAN_NAME
+        ), "the turn span must be created after the pipeline span, not reuse it"
+        assert lf.one(tracing.TURN_SPAN_NAME) is not lf.one(tracing.PIPELINE_SPAN_NAME)
 
     def test_the_root_input_is_not_the_retrieval_query(self, lf):
         """The regression this fix exists for."""
         tracing.record_retrieval("t1", "raw", "a condensed query", [], [])
-        turn = self._finalize(lf)
-        assert "condensed" not in json.dumps(turn.span.trace_io["input"])
+        self._finalize(lf)
+        span = lf.one(tracing.TURN_SPAN_NAME)
+        assert "condensed" not in json.dumps(span.trace_io["input"])
 
     def test_an_answered_turn_is_tagged_by_outcome_and_kb_state(self, lf):
         self._finalize(lf)
@@ -741,9 +758,10 @@ class TestTraceRootAndTags:
         assert lf.flushes >= 2
 
     def test_the_turn_span_still_marks_the_trace_public(self, lf):
-        turn = self._finalize(lf)
-        assert turn.span.public is True
-        assert turn.span.ended is True
+        self._finalize(lf)
+        span = lf.one(tracing.TURN_SPAN_NAME)
+        assert span.public is True
+        assert span.ended is True
 
 
 # --------------------------------------------------------------------------

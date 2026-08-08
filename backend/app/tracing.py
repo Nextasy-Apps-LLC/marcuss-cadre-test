@@ -78,11 +78,32 @@ from app import config
 
 log = logging.getLogger("cadre.tracing")
 
-# Name of the span that carries the trace-level fields and parents everything
-# the turn does. It is opened inside the graph task and closed by
-# `finalize_trace`, which is what lets it be both the structural parent of every
-# generation and the handle that writes trace IO.
+# Name of the span `finalize_trace` writes the trace-level fields on: session,
+# tags, public, refusal, latencies and the trace's own input/output.
 TURN_SPAN_NAME = "turn"
+
+# Name of the *structural* span opened inside the graph task, which every
+# generation parents itself to.
+#
+# These are two spans on purpose, and the reason is empirical. The obvious
+# design is one span that both parents the generations and carries the
+# trace-level fields — `trace-design.md` §4.9 assumes exactly that. It does not
+# work, and readback is how we know:
+#
+#  * `propagate_attributes(session_id=…, tags=…)` applies to spans created
+#    *inside* its block. The structural span has to be created in the graph
+#    task, long before the turn's outcome (and therefore its tags) is known, so
+#    it can never be inside that block — a single span silently loses
+#    `session_id` and every tag.
+#  * The trace-level upsert is won by the *later-created* root-level write, not
+#    the later-ended one. A span opened before the graph runs loses to the
+#    LangChain root span no matter when it ends.
+#
+# Both were observed on real traces during issue #79 (session `None`, `tags: []`,
+# and the trace root still showing the state blob) and both disappear when the
+# fields are written by a span created after the first flush, which is what
+# `finalize_trace` has always done.
+PIPELINE_SPAN_NAME = "pipeline"
 
 # Name of the span `record_retrieval` writes. Separate from the graph's own
 # `retrieve` node span, which the callback handler produces and which knows
@@ -470,12 +491,12 @@ def start_generation(
 class Turn:
     """One turn's trace: the id on the wire, and the span everything hangs off.
 
-    The span is created inside `activate()` — i.e. inside the graph task — so
-    the contextvar that makes it ambient is task-local and cannot leak into a
-    concurrent visitor's turn (KB-008). It is deliberately **not** ended when
-    `activate()` exits: `finalize_trace` still has to write the trace-level
-    fields on it, and those must land after the graph's own spans (see the
-    double-flush note there).
+    The `pipeline` span is created inside `activate()` — i.e. inside the graph
+    task — so the contextvar that makes it ambient is task-local and cannot
+    leak into a concurrent visitor's turn (KB-008). It ends with the graph;
+    the trace-level fields are written by a separate, later span in
+    `finalize_trace` (see `PIPELINE_SPAN_NAME` for why one span cannot do
+    both).
     """
 
     __slots__ = ("trace_id", "url", "span")
@@ -498,10 +519,9 @@ class Turn:
         if _ENABLED and _client is not None and self.trace_id:
             try:
                 manager = _client.start_as_current_observation(
-                    name=TURN_SPAN_NAME,
+                    name=PIPELINE_SPAN_NAME,
                     as_type="span",
                     trace_context=TraceContext(trace_id=self.trace_id),
-                    end_on_exit=False,
                 )
                 self.span = manager.__enter__()
             except Exception as exc:  # noqa: BLE001 - fail open
@@ -694,16 +714,17 @@ def finalize_trace(
             session_id=client_id,
             tags=_tags(outcome, refused_step, degraded, kb_state),
         ):
-            span = turn.span
-            if span is None:
-                # The graph task never opened one (tracing came up mid-turn, or
-                # `activate()` failed and logged). Write the fields on a span of
-                # our own rather than losing them.
-                span = _client.start_observation(
-                    name=TURN_SPAN_NAME,
-                    as_type="span",
-                    trace_context=TraceContext(trace_id=turn.trace_id),
-                )
+            # Created *here*, inside the block and after the flush, never
+            # reusing the `pipeline` span the graph task opened. Both halves of
+            # that matter and both were established by reading real traces
+            # back: `propagate_attributes` only reaches spans created inside
+            # it, and the trace-level upsert is won by the later-created write.
+            # See `PIPELINE_SPAN_NAME`.
+            span = _client.start_observation(
+                name=TURN_SPAN_NAME,
+                as_type="span",
+                trace_context=TraceContext(trace_id=turn.trace_id),
+            )
             span.update(
                 metadata={
                     "refused_step": refused_step or NOT_REFUSED,
