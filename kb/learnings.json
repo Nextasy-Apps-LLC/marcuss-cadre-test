@@ -570,6 +570,56 @@
       },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-030",
+      "type": "debug",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "sse",
+        "wire-contract",
+        "emit",
+        "test-double",
+        "typeerror",
+        "positional-arguments"
+      ],
+      "title": "Adding a field to the SSE state payload breaks a hand-rolled emitter double in test_answer_quality.py, and the TypeError names a file that has nothing to do with the change",
+      "detail": "Extending the wire (#74 added `retrieval` to the `state` event) means widening `QueueEmitter.__call__` in app/graph/emit.py and `nodes._record`. The web side is protected — `tsc` fails loudly on a widened `StateEvent` — but the Python side has no such alarm: `backend/tests/test_answer_quality.py` defines a private `_Emit` class that mirrors `QueueEmitter.__call__` positionally, and the only symptom is three failures in `TestRetrieveDedupe` reading `TypeError: _Emit.__call__() takes from 3 to 5 positional arguments but 6 were given` — a retrieval-quality test file, in a change about the pipeline pane. Fastest diagnostic: `grep -rn 'async def __call__' backend/tests backend/app` before touching the emitter, and widen every hit in the same commit. There is exactly one such double today; the grep is what keeps that true.",
+      "source": {
+        "issue": 74,
+        "pr": 76
+      },
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-031",
+      "type": "learning",
+      "area": [
+        "backend",
+        "web",
+        "process"
+      ],
+      "tags": [
+        "e2e",
+        "docker",
+        "fail-open",
+        "no_hits",
+        "retrieve",
+        "browser-check",
+        "kb-007",
+        "config-env"
+      ],
+      "title": "retrieve's edge paths (no_hits, kb_unavailable) are reachable from `docker run -e` alone — drive them in the real browser check instead of only in unit tests",
+      "detail": "`retrieve`'s interesting states are the ones a happy-path turn never shows: zero hits above the floor, and each fail-open give-up. Both are one env var away on the real image, with no code change and no mock: `-e CADRE_RETRIEVE_MIN_SCORE=0.99` makes every real embedding fall below the floor and produces a genuine `pass`/`no_hits` turn against the committed corpus, and simply omitting `-e OPENAI_API_KEY` from `docker run` produces a genuine `skipped`/`kb_unavailable`. Every `RETRIEVE_*` knob in app/config.py reads from the environment for exactly this reason. So when a change touches how `retrieve` reports itself, a KB-007 browser check can cover the empty and degraded cases for real — point the vite dev proxy at a container started with the knob set, drive the page, read the rendered step — rather than leaving them asserted only against fixtures. In #74 this is what proved `0 hits` renders legibly and that the fail-open rendering was byte-for-byte unchanged; a unit test could show neither in a browser.",
+      "source": {
+        "issue": 74,
+        "pr": 76
+      },
+      "date": "2026-08-08",
+      "status": "active"
     }
   ]
 }
