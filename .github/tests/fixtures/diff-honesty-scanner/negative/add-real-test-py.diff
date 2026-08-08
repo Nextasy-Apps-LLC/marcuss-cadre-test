@@ -1,0 +1,20 @@
+diff --git a/backend/tests/test_refusal_copy.py b/backend/tests/test_refusal_copy.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/backend/tests/test_refusal_copy.py
+@@ -0,0 +1,14 @@
++"""Refusal copy stays keyed by the step that refused."""
++import pytest
++
++from app import config
++
++
++def test_every_step_has_refusal_text():
++    for step in ("validate_input", "injection_check", "topic_classifier", "output_safety"):
++        assert step in config.REFUSAL_TEXTS
++        assert config.REFUSAL_TEXTS[step].strip()
++
++
++def test_escalation_text_carries_booking_link():
++    assert config.CONTACT_URL in config.ESCALATION_TEXT

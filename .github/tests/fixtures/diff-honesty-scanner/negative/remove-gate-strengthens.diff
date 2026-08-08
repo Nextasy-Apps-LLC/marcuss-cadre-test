@@ -1,0 +1,14 @@
+diff --git a/backend/tests/e2e/test_tracing_e2e.py b/backend/tests/e2e/test_tracing_e2e.py
+index 1111111..2222222 100644
+--- a/backend/tests/e2e/test_tracing_e2e.py
++++ b/backend/tests/e2e/test_tracing_e2e.py
+@@ -20,10 +20,6 @@ TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+
+-LIVE_TRACING = os.environ.get("CADRE_E2E_TRACING") == "1"
+-requires_tracing = pytest.mark.skipif(
+-    not LIVE_TRACING,
+-    reason="tracing e2e was opt-in; it is cheap and now always runs",
+-)
+
+ class TestTraceEvent:
+     def test_trace_event_is_first_frame(self, http):

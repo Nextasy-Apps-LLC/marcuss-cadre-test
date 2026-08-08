@@ -1,0 +1,11 @@
+diff --git a/backend/tests/e2e/test_pipeline_e2e.py b/backend/tests/e2e/test_pipeline_e2e.py
+index 1111111..2222222 100644
+--- a/backend/tests/e2e/test_pipeline_e2e.py
++++ b/backend/tests/e2e/test_pipeline_e2e.py
+@@ -210,6 +210,9 @@ class TestStreamShape:
+     def test_stream_headers(self, http):
+         resp = open_stream(http, "What does Cadre AI do?")
+         assert resp.headers["content-type"].startswith("text/event-stream")
++        # KB-010: a buffered stream grows a Content-Length; its absence is the
++        # cheapest machine-checkable streaming detector.
++        assert "content-length" not in resp.headers

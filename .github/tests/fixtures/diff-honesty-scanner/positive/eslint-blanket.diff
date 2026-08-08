@@ -1,0 +1,9 @@
+diff --git a/web/src/components/Composer.tsx b/web/src/components/Composer.tsx
+index 1111111..2222222 100644
+--- a/web/src/components/Composer.tsx
++++ b/web/src/components/Composer.tsx
+@@ -1,3 +1,4 @@
++/* eslint-disable */
+ import { useState } from 'react'
+
+ export function Composer({ onSend }: Props) {

@@ -1,0 +1,25 @@
+diff --git a/backend/evals/judge_bench.py b/backend/evals/judge_bench.py
+index 1111111..2222222 100644
+--- a/backend/evals/judge_bench.py
++++ b/backend/evals/judge_bench.py
+@@ -88,7 +88,7 @@ async def run_case(model, case):
+-        except Exception as exc:
++        except Exception as exc:  # noqa: BLE001 - an outage is a data point
+             failures.append(exc)
+diff --git a/backend/tests/test_ingest_embed.py b/backend/tests/test_ingest_embed.py
+index 1111111..2222222 100644
+--- a/backend/tests/test_ingest_embed.py
++++ b/backend/tests/test_ingest_embed.py
+@@ -58,7 +58,7 @@ def test_batches_are_replayed(handler):
+-    handler.bodies = bodies
++    handler.bodies = bodies  # type: ignore[attr-defined]
+     assert handler.calls == 2
+diff --git a/web/src/lib/linkify.ts b/web/src/lib/linkify.ts
+index 1111111..2222222 100644
+--- a/web/src/lib/linkify.ts
++++ b/web/src/lib/linkify.ts
+@@ -85,6 +85,7 @@ export function linkify(text: string): Segment[] {
+     try {
++      // eslint-disable-next-line no-new -- validity check only, result unused
+       new URL(candidate)
+     } catch {

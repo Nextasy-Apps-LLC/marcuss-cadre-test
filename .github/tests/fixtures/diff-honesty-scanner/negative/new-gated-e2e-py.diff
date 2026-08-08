@@ -1,0 +1,26 @@
+diff --git a/backend/tests/e2e/test_config_e2e.py b/backend/tests/e2e/test_config_e2e.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/backend/tests/e2e/test_config_e2e.py
+@@ -0,0 +1,20 @@
++"""/config against a real target — same gate pattern as the other e2e files."""
++import os
++
++import pytest
++
++pytestmark = pytest.mark.e2e
++
++LIVE_BEDROCK = os.environ.get("CADRE_E2E_BEDROCK") == "1"
++requires_bedrock = pytest.mark.skipif(
++    not LIVE_BEDROCK,
++    reason="live-model e2e is opt-in: set CADRE_E2E_BEDROCK=1",
++)
++
++
++def test_config_serves_greeting_and_chips(http):
++    body = http.get("/config").json()
++    assert body["greeting"].strip()
++    assert len(body["suggestions"]) >= 3
++    # KB-010: no Content-Length on the SSE route is asserted in the ask tests
++    assert all(s.strip() for s in body["suggestions"])

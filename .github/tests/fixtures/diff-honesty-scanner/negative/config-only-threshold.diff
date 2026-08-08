@@ -1,0 +1,7 @@
+diff --git a/backend/app/config.py b/backend/app/config.py
+index 1111111..2222222 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -298,7 +298,7 @@ RETRIEVE_FETCH_K = int(
+-RETRIEVE_MIN_SCORE = float(os.environ.get("CADRE_RETRIEVE_MIN_SCORE", "0.25"))
++RETRIEVE_MIN_SCORE = float(os.environ.get("CADRE_RETRIEVE_MIN_SCORE", "0.30"))

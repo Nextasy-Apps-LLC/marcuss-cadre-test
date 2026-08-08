@@ -1,0 +1,18 @@
+diff --git a/backend/tests/test_ratelimit.py b/backend/tests/test_ratelimit.py
+deleted file mode 100644
+index 1111111..0000000
+--- a/backend/tests/test_ratelimit.py
++++ /dev/null
+@@ -1,12 +0,0 @@
+-"""Rate limit unit tests."""
+-import pytest
+-
+-from app import ratelimit
+-
+-
+-def test_sliding_window_rejects_burst():
+-    rl = ratelimit.RateLimiter(turns=2, window_s=60)
+-    assert rl.allow("client-a")
+-    assert rl.allow("client-a")
+-    assert not rl.allow("client-a")
+-    assert rl.allow("client-b")

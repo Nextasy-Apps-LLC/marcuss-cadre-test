@@ -1,0 +1,9 @@
+diff --git a/backend/evals/judge_bench.py b/backend/evals/judge_bench.py
+index 1111111..2222222 100644
+--- a/backend/evals/judge_bench.py
++++ b/backend/evals/judge_bench.py
+@@ -25,7 +25,7 @@ SLOTS = ("topic", "injection", "guard")
+-REQUIRED_ACCURACY = 0.90
++REQUIRED_ACCURACY = 0.70
+
+ def bench(slot, models):

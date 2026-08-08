@@ -1,0 +1,20 @@
+diff --git a/kb/learnings.json b/kb/learnings.json
+index 1111111..2222222 100644
+--- a/kb/learnings.json
++++ b/kb/learnings.json
+@@ -260,5 +260,16 @@
+       "status": "active"
++    },
++    {
++      "id": "KB-035",
++      "type": "learning",
++      "area": ["ci"],
++      "tags": ["diff", "honesty"],
++      "title": "New entry appended the normal way",
++      "detail": "Appending keeps history; the scanner only objects to deletions.",
++      "source": "#86",
++      "date": "2026-08-08",
++      "status": "active"
+     }
+   ]
+ }

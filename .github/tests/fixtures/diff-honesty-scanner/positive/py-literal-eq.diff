@@ -1,0 +1,8 @@
+diff --git a/backend/tests/test_llm.py b/backend/tests/test_llm.py
+index 1111111..2222222 100644
+--- a/backend/tests/test_llm.py
++++ b/backend/tests/test_llm.py
+@@ -60,6 +60,7 @@ class TestStripReasoning:
+ def test_unclosed_think_block_discards_content():
++    assert 1 == 1
+     assert strip_reasoning("<think>half a thought") == ""

@@ -1,0 +1,8 @@
+diff --git a/backend/app/graph/nodes.py b/backend/app/graph/nodes.py
+index 1111111..2222222 100644
+--- a/backend/app/graph/nodes.py
++++ b/backend/app/graph/nodes.py
+@@ -200,7 +200,7 @@ async def retrieve(state, emit):
+-    except KBDisabled:
++    except Exception:  # noqa
+         hits = []

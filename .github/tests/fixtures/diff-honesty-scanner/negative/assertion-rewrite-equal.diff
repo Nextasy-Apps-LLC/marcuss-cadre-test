@@ -1,0 +1,10 @@
+diff --git a/backend/tests/test_persona.py b/backend/tests/test_persona.py
+index 1111111..2222222 100644
+--- a/backend/tests/test_persona.py
++++ b/backend/tests/test_persona.py
+@@ -30,9 +30,9 @@ class TestSystemPrompt:
+     def test_no_context_is_byte_identical(self):
+-        assert system_prompt([]) == SYSTEM_PROMPT
+-        assert system_prompt(None) == SYSTEM_PROMPT
++        assert system_prompt([]) is not None and system_prompt([]) == SYSTEM_PROMPT
++        assert system_prompt(None) is not None and system_prompt(None) == SYSTEM_PROMPT

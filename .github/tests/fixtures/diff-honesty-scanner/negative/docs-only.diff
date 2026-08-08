@@ -1,0 +1,11 @@
+diff --git a/backend/tests/e2e/README.md b/backend/tests/e2e/README.md
+index 1111111..2222222 100644
+--- a/backend/tests/e2e/README.md
++++ b/backend/tests/e2e/README.md
+@@ -30,6 +30,10 @@ suite points at https://cadre.marcuss.pro after a deploy.
+
++Never bypass the hooks with `git commit --no-verify`, and never add
++`continue-on-error: true` to a gate step — the Diff Honesty Scanner
++fails a PR that tries either. `pytest -q || true` is the same offence.
++
+ ## Running locally

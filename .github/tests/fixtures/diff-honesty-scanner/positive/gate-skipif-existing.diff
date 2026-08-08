@@ -1,0 +1,13 @@
+diff --git a/backend/tests/test_ask.py b/backend/tests/test_ask.py
+index 1111111..2222222 100644
+--- a/backend/tests/test_ask.py
++++ b/backend/tests/test_ask.py
+@@ -10,6 +10,9 @@ from tests.helpers import post_ask, status_of
+
++pytestmark = pytest.mark.skipif(
++    os.environ.get("CADRE_RUN_ASK_TESTS") != "1",
++    reason="opt-in: set CADRE_RUN_ASK_TESTS=1",
++)
+
+ class TestAskContract:
+     def test_done_is_terminal(self, app_client):

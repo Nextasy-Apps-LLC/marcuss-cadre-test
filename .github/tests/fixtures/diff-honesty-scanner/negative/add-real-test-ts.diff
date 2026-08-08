@@ -1,0 +1,16 @@
+diff --git a/web/src/lib/sse.test.ts b/web/src/lib/sse.test.ts
+index 1111111..2222222 100644
+--- a/web/src/lib/sse.test.ts
++++ b/web/src/lib/sse.test.ts
+@@ -80,6 +80,14 @@ describe('parseFrame', () => {
+   })
+
++  it('drops comment-only ping frames', () => {
++    expect(parseFrame(': ping')).toBeNull()
++  })
++
++  it('keeps a data frame that arrives with a trailing comment', () => {
++    const frame = parseFrame('event: token\ndata: {"text":"hi"}\n: ping')
++    expect(frame?.event).toBe('token')
++  })
+ })

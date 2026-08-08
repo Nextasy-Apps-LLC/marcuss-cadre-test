@@ -1,0 +1,10 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 1111111..2222222 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -60,6 +60,7 @@ jobs:
+       - name: Upload build output
++        if: always()
+         uses: actions/upload-artifact@v4
+         with:
+           name: web-dist-${{ github.sha }}
