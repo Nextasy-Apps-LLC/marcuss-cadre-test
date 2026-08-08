@@ -105,9 +105,35 @@ def _warm_kb() -> None:
         )
 
 
+def _log_model_overrides() -> None:
+    """Say, once per container, when the environment has moved a model slot.
+
+    A `CADRE_MODEL_*` override is break-glass (issue #84): it replaces a model
+    that was benchmarked against the prompts in this image with one that was
+    not, and because every model step fails open the result renders as a
+    perfectly healthy chat (KB-009). The deploy gate stops that reaching
+    production; this line is what makes it visible in CloudWatch on the paths
+    the gate cannot see — a hand-set override during an incident.
+    """
+    overrides = config.model_overrides()
+    if not overrides:
+        return
+    for slot, (expected, effective) in sorted(overrides.items()):
+        log.warning(
+            "model override: %s is running %s, not the %s this image was built "
+            "and benchmarked with — remove the %s environment variable to "
+            "restore it",
+            slot,
+            effective,
+            expected,
+            config.MODEL_ENV_VARS[slot],
+        )
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Container init. Runs before uvicorn accepts anything."""
+    _log_model_overrides()
     _warm_kb()
     yield
 

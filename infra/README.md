@@ -87,6 +87,28 @@ Either way, grant the execution role `ssm:GetParameter` on that ARN and read
 the value at container start. Rotation becomes an SSM write with no code change
 and no apply.
 
+## Model ids are not Terraform inputs
+
+There are no `brain_model` / `judge_model` / `topic_model` variables, and
+`lambda.tf` sets no `CADRE_MODEL_*` (issue #84). They existed until they caused
+the failure they were supposed to make convenient: a Lambda environment
+variable beats the code default, so Terraform — not the deployed image —
+decided which model ran, and after the roster was re-benchmarked in
+`backend/app/config.py` production silently kept executing the previous one.
+Nothing broke, because every model step fails open.
+
+Each id is chosen by a measurement taken against the prompts in the *same*
+commit, so the id and the prompt ship together, in one image, through one
+review. `backend/app/config.py`'s `MODEL_DEFAULTS` is the single source of
+truth. To change a model: change that file, open a PR, deploy.
+
+`backend/scripts/assert_model_env.py` reads the function's live environment
+before every build and fails the deploy on any `CADRE_MODEL_*` — including one
+a future `terraform apply` put back. A hand-set override for an incident is
+still possible (`aws lambda update-function-configuration`); it will be removed
+by the next apply, logged at WARNING by the container on boot, and will block
+the next deploy until someone removes it deliberately.
+
 ## First apply
 
 Terraform is applied by a human with admin credentials — the CI role can

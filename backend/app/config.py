@@ -14,6 +14,7 @@ definition, imported one way — persona never imports this module back.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from app.persona import CONTACT_URL, GREETING, SUGGESTIONS
@@ -52,97 +53,230 @@ RATE_LIMIT_WINDOW_S = float(os.environ.get("CADRE_RATE_LIMIT_WINDOW_S", "60"))
 # a wrong id therefore ships as a *working* chat with amber rails rather than
 # as a crash (KB-009).
 #
-# Every id is env-overridable. Several Claude ids appear in `/v1/models` but
-# do not answer through this transport: the Mantle host only serves the
-# OpenAI-compatible `/v1/chat/completions` surface, which 400s on a Claude id,
-# and Claude's own surface (`/v1/messages`) 404s on this host entirely — it is
-# an API-surface split, not an entitlement gap. The overrides are the flip
-# switch for the day a Claude-compatible surface is reachable here.
+# **`MODEL_DEFAULTS` is the single source of truth for which model runs which
+# step, and the image is the only thing that carries it (issue #84).**
+#
+# It used to be two sources. Terraform declared the same ids as variables and
+# injected them as `CADRE_MODEL_*` on the function, environment beat code
+# default, and so from #70 until #84 production ran the *previous* roster while
+# every one of the benchmark tables below described models that were not
+# executing — invisibly, because a fail-open pipeline on the wrong model still
+# looks like a working chat (KB-009). Each id here is pinned by a measurement
+# taken against the prompts in `app/prompts/*.txt` **at this commit**; the two
+# are only meaningful together, so they ship together, in one reviewed image.
+# Terraform now sets no model variable at all: `infra/lambda.tf` says so, and
+# `scripts/assert_model_env.py` fails the deploy if one reappears.
+#
+# The `CADRE_MODEL_*` overrides survive as **break-glass**, set by hand on the
+# function during an incident, never by Terraform. They are deliberately
+# uncomfortable: the next `terraform apply` removes them, `model_overrides()`
+# makes the container say on the way up that it is not running what it shipped
+# with, and a deploy attempted while one is live fails the drift gate. That is
+# the point — an override is a temporary, visible act, not a configuration
+# style. It is also the flip switch for the day a Claude-compatible surface is
+# reachable here: several Claude ids appear in `/v1/models` but do not answer
+# through this transport, because the Mantle host serves only the
+# OpenAI-compatible `/v1/chat/completions` (which 400s on a Claude id) and
+# Claude's own `/v1/messages` 404s on this host entirely — an API-surface
+# split, not an entitlement gap.
 
 BEDROCK_MANTLE_BASE_URL = os.environ.get(
     "BEDROCK_MANTLE_BASE_URL", "https://bedrock-mantle.us-east-1.api.aws/v1"
 )
 
-# Cheap SLM sanity/validity judge, second half of `validate_input`.
-# A different provider from the topic primary on purpose: this step has no
-# fallback, so it should not share a failure mode with anything else.
-MODEL_VALIDATE = os.environ.get("CADRE_MODEL_VALIDATE", "nvidia.nemotron-nano-12b-v2")
+# The environment variable that can break-glass each slot. Anything matching
+# `CADRE_MODEL_*` that is *not* in here is a variable nothing reads — which is
+# how a model setting becomes invisible until someone tries to use it in an
+# incident — so the deploy gate rejects it rather than ignoring it.
+MODEL_ENV_VARS: dict[str, str] = {
+    "validate": "CADRE_MODEL_VALIDATE",
+    "injection": "CADRE_MODEL_INJECTION",
+    "topic": "CADRE_MODEL_TOPIC",
+    "topic_fallbacks": "CADRE_MODEL_TOPIC_FALLBACKS",
+    "condense": "CADRE_MODEL_CONDENSE",
+    "brain": "CADRE_MODEL_BRAIN",
+    "guard": "CADRE_MODEL_GUARD",
+    # Not a `CADRE_MODEL_*` name, but it selects a model all the same, and
+    # `retrieve`'s chip is labelled with it. A gate that checked the judges and
+    # not the embedder would still let the same class of drift through.
+    "embedding": "CADRE_EMBEDDING_MODEL",
+}
 
-# Strict prompt-injection classifier.
-#
-# Re-benchmarked for issue #70 over the labelled fixture set (12 cases — real
-# meta-complaints that must pass, real injections that must fail — x 3 runs,
-# temp 0, production parser; `python -m evals.judge_bench --slot injection`):
-#
-#   mistral.ministral-3-8b-instruct   36/36  p50 0.17s   <- picked
-#   mistral.ministral-3-14b-instruct  36/36  p50 0.22s
-#   nvidia.nemotron-nano-12b-v2       36/36  p50 0.23s (p95 1.13s)
-#   qwen.qwen3-32b                    36/36  p50 0.26s   (previous default)
-#
-# Accuracy tied at 100%; latency decided it. gemma-3-4b flagged the
-# meta-complaints as injections (7/12) and is why "smallest" is not the rule.
-MODEL_INJECTION = os.environ.get(
-    "CADRE_MODEL_INJECTION", "mistral.ministral-3-8b-instruct"
-)
+MODEL_DEFAULTS: dict[str, str | list[str]] = {
+    # Cheap SLM sanity/validity judge, second half of `validate_input`.
+    # A different provider from the topic primary on purpose: this step has no
+    # fallback, so it should not share a failure mode with anything else.
+    "validate": "nvidia.nemotron-nano-12b-v2",
+    #
+    # Strict prompt-injection classifier.
+    #
+    # Re-benchmarked for issue #70 over the labelled fixture set (12 cases —
+    # real meta-complaints that must pass, real injections that must fail — x 3
+    # runs, temp 0, production parser;
+    # `python -m evals.judge_bench --slot injection`):
+    #
+    #   mistral.ministral-3-8b-instruct   36/36  p50 0.17s   <- picked
+    #   mistral.ministral-3-14b-instruct  36/36  p50 0.22s
+    #   nvidia.nemotron-nano-12b-v2       36/36  p50 0.23s (p95 1.13s)
+    #   qwen.qwen3-32b                    36/36  p50 0.26s   (previous default)
+    #
+    # Accuracy tied at 100%; latency decided it. gemma-3-4b flagged the
+    # meta-complaints as injections (7/12) and is why "smallest" is not the
+    # rule. **This is one of the three slots production was not actually
+    # running until #84** — it executed the previous default, qwen3-32b.
+    "injection": "mistral.ministral-3-8b-instruct",
+    #
+    # Three-way route: in_scope / off_topic / needs_human.
+    #
+    # Phase 1b pinned `google.gemma-3-12b-it` (14/14 on the then-fixture set).
+    # Issue #70 re-benchmarked the slot on the enlarged set — 16 labelled
+    # conversations including Marcus's real escalation-loop transcript and the
+    # four first-person eval escalations — x 3 runs, temp 0, production parser
+    # (`python -m evals.judge_bench --slot topic`):
+    #
+    #   mistral.ministral-3-8b-instruct   48/48  p50 0.19s   <- picked
+    #   mistral.ministral-3-14b-instruct  48/48  p50 0.22s
+    #   zai.glm-4.7-flash                 48/48  p50 0.33s
+    #   qwen.qwen3-next-80b-a3b-instruct  47/48  p50 0.27s
+    #   google.gemma-3-12b-it             15/16  p50 0.35s (single-run sweep) —
+    #     still classifies the real escalation-loop transcript needs_human even
+    #     under the narrowed prompt, which is the exact production failure
+    #   nvidia.nemotron-nano-3-30b        15/16, nano-12b-v2 13/16, nano-9b-v2
+    #     15/16 at p50 2.58s — "back to a Nemotron" was measured and lost
+    #
+    # The gemma row is not history: it is what production was still running
+    # until #84, which is why the escalation loop the narrowed prompt was
+    # supposed to fix kept happening after #70 shipped.
+    "topic": "mistral.ministral-3-8b-instruct",
+    #
+    # Walked in order when the primary *errors*. Three providers, three failure
+    # modes: a fallback that shares the primary's outage is not a fallback.
+    # Ordered by the same benchmark: glm-4.7-flash 48/48, qwen3-next 47/48.
+    # Order is behaviour, not presentation — it is the walk order on an outage.
+    "topic_fallbacks": ["zai.glm-4.7-flash", "qwen.qwen3-next-80b-a3b-instruct"],
+    #
+    # Rewrites a follow-up into a standalone retrieval query, inside `retrieve`.
+    #
+    # plan.md names Haiku 4.5. No Haiku id answers through this transport (ADR
+    # 0002 — the Mantle host serves only /v1/chat/completions, which 400s on a
+    # Claude id), so the slot takes the fastest entitled model instead; the
+    # break-glass variable is how a Haiku id gets tried the day one answers.
+    #
+    # Probed KB-012-style before pinning: 5 real follow-up cases x 2 runs
+    # through `models.condense_query`'s own parser, and then — because a
+    # rewrite is only as good as what it retrieves — each rewrite embedded and
+    # searched against the committed corpus. All three candidates were reliable
+    # and fast; the retrieval column decided it (mean top-hit score, 5 cases):
+    #
+    #   google.gemma-3-12b-it             10/10 http  10/10 rewrote  p50 0.39s  0.602
+    #   mistral.ministral-3-14b-instruct  10/10       10/10          p50 0.34s  0.600
+    #   zai.glm-4.7-flash                 10/10       10/10          p50 0.39s  0.532
+    #   (no condensing — the raw follow-up)                                     0.250
+    #
+    # The bottom row is the reason this call exists at all: "how much does that
+    # cost?" on its own retrieves *nothing* above the floor, and condensing
+    # turns it into a 0.54 hit on /contact. gemma and ministral tie on score;
+    # gemma is picked because it anchors every rewrite to Cadre AI, which is
+    # what put the right page first in all 5 cases (ministral sent the pricing
+    # follow-up to an article instead of /contact). This slot has no fallback
+    # chain on purpose: it fails open to the visitor's own words, which is a
+    # worse query, never a broken turn.
+    "condense": "google.gemma-3-12b-it",
+    #
+    # The brain.
+    "brain": "qwen.qwen3-32b",
+    #
+    # Final gate on the complete streamed answer. Since issue #70 the guard reads
+    # the turn's retrieved passages, so its fixture set is the hard one: the ten
+    # correct fact-dense answers that were wrongly retracted (must pass) plus
+    # ungrounded-fact negatives (must fail). Benchmarked x 3 runs, temp 0
+    # (`python -m evals.judge_bench --slot guard`):
+    #
+    #   qwen.qwen3-next-80b-a3b-instruct  48/48  p50 0.32s
+    #   nvidia.nemotron-nano-3-30b        45/48  p50 0.23s   <- picked
+    #   google.gemma-3-12b-it             45/48  p50 0.25s   (passes instr. leak)
+    #   qwen.qwen3-32b                    45/48  p50 0.31s   (previous default;
+    #     consistently passes an answer that discusses its own instructions)
+    #   mistral.ministral-3-*             fail 2-3 *correct grounded* answers —
+    #     they would keep retracting the 31%/24% case studies; disqualified
+    #
+    # **This slot is a deliberate accuracy-for-cost trade, taken with eyes
+    # open.** The 80B model is the only one that scores 48/48, and the 3-point
+    # gap is not spread across the fixture set — all three runners-up fail the
+    # *same* case: they let through an answer that discusses its own
+    # instructions ("passes instr. leak" means the guard passes it).
+    #
+    # What the #79 cost data added to the original benchmark, priced at this
+    # slot's real measured token profile (in≈4581, out=2 — the guard reads the
+    # whole answer plus every retrieved passage, so its cost is ~all input):
+    #
+    #   nvidia.nemotron-nano-3-30b        $0.000275/turn   -57%, and the fastest
+    #   google.gemma-3-12b-it             $0.000413/turn   -36%
+    #   qwen.qwen3-next-80b-a3b-instruct  $0.000644/turn   the 48/48 baseline
+    #   qwen.qwen3-32b                    $0.000688/turn   +7% AND 45/48
+    #
+    # nemotron-nano-3-30b is picked for cost and latency. The instruction-leak
+    # case is the known, single, specific regression that buys it — not a
+    # general accuracy loss — and `scrub_failure`'s deterministic half (URL
+    # allowlist + PII) is unaffected because it runs first and has no outage
+    # mode. If instruction leakage matters more than $0.00037/turn, change this
+    # line and deploy; production ran qwen3-32b here until #84 regardless of
+    # what this file said, which is the whole reason the deploy gate exists.
+    "guard": "nvidia.nemotron-nano-3-30b",
+    #
+    # The query-side embedding model. Its width is load-bearing in both
+    # directions — see the KB section below, which owns that explanation and
+    # `EMBEDDING_DIMENSION`. It lives here because it is a model id like any
+    # other: `retrieve`'s chip is labelled with it, and it drifts the same way.
+    "embedding": "text-embedding-3-large",
+}
 
-# Three-way route: in_scope / off_topic / needs_human.
-#
-# Phase 1b pinned `google.gemma-3-12b-it` (14/14 on the then-fixture set).
-# Issue #70 re-benchmarked the slot on the enlarged set — 16 labelled
-# conversations including Marcus's real escalation-loop transcript and the
-# four first-person eval escalations — x 3 runs, temp 0, production parser
-# (`python -m evals.judge_bench --slot topic`):
-#
-#   mistral.ministral-3-8b-instruct   48/48  p50 0.19s   <- picked
-#   mistral.ministral-3-14b-instruct  48/48  p50 0.22s
-#   zai.glm-4.7-flash                 48/48  p50 0.33s
-#   qwen.qwen3-next-80b-a3b-instruct  47/48  p50 0.27s
-#   google.gemma-3-12b-it             15/16  p50 0.35s (single-run sweep) —
-#     still classifies the real escalation-loop transcript needs_human even
-#     under the narrowed prompt, which is the exact production failure
-#   nvidia.nemotron-nano-3-30b        15/16, nano-12b-v2 13/16, nano-9b-v2
-#     15/16 at p50 2.58s — "back to a Nemotron" was measured and lost
-MODEL_TOPIC = os.environ.get("CADRE_MODEL_TOPIC", "mistral.ministral-3-8b-instruct")
 
-# Walked in order when the primary *errors*. Three providers, three failure
-# modes: a fallback that shares the primary's outage is not a fallback.
-# Ordered by the same benchmark: glm-4.7-flash 48/48, qwen3-next 47/48.
-MODEL_TOPIC_FALLBACKS = [
-    model_id.strip()
-    for model_id in os.environ.get(
-        "CADRE_MODEL_TOPIC_FALLBACKS",
-        "zai.glm-4.7-flash,qwen.qwen3-next-80b-a3b-instruct",
-    ).split(",")
-    if model_id.strip()
-]
+def _model(slot: str, env: Mapping[str, str] | None = None) -> str | list[str]:
+    """The id(s) a slot will actually use, given an environment.
 
-# Rewrites a follow-up into a standalone retrieval query, inside `retrieve`.
-#
-# plan.md names Haiku 4.5. No Haiku id answers through this transport (ADR
-# 0002 — the Mantle host serves only /v1/chat/completions, which 400s on a
-# Claude id), so the slot defaults to the fastest entitled model instead and
-# keeps the env var so a Haiku id can be swapped in without a code deploy.
-#
-# Probed KB-012-style before pinning: 5 real follow-up cases x 2 runs through
-# `models.condense_query`'s own parser, and then — because a rewrite is only
-# as good as what it retrieves — each rewrite embedded and searched against
-# the committed corpus. All three candidates were reliable and fast; the
-# retrieval column is what decided it (mean top-hit score over the 5 cases):
-#
-#   google.gemma-3-12b-it             10/10 http  10/10 rewrote  p50 0.39s  0.602
-#   mistral.ministral-3-14b-instruct  10/10       10/10          p50 0.34s  0.600
-#   zai.glm-4.7-flash                 10/10       10/10          p50 0.39s  0.532
-#   (no condensing — the raw follow-up)                                     0.250
-#
-# The bottom row is the reason this call exists at all: "how much does that
-# cost?" on its own retrieves *nothing* above the floor, and condensing turns
-# it into a 0.54 hit on /contact. gemma and ministral tie on score; gemma is
-# picked because it anchors every rewrite to Cadre AI, which is what put the
-# right page first in all 5 cases (ministral sent the pricing follow-up to an
-# article instead of /contact). This slot has no fallback chain on purpose:
-# it fails open to the visitor's own words, which is a worse query, never a
-# broken turn.
-MODEL_CONDENSE = os.environ.get("CADRE_MODEL_CONDENSE", "google.gemma-3-12b-it")
+    A blank or whitespace-only override resolves to the default rather than to
+    an empty model id: an operator who exports `CADRE_MODEL_BRAIN=` during an
+    incident has misconfigured something, and answering that with a request to
+    a model called `""` would turn a typo into a dead turn. The deploy gate
+    reports the variable separately (`assert_model_env.ignored`) so it is
+    fixed rather than silently absorbed (KB-009).
+    """
+    environ = os.environ if env is None else env
+    default = MODEL_DEFAULTS[slot]
+    raw = (environ.get(MODEL_ENV_VARS[slot]) or "").strip()
+
+    if isinstance(default, list):
+        chain = [model_id.strip() for model_id in raw.split(",") if model_id.strip()]
+        return chain or list(default)
+    return raw or default
+
+
+def model_overrides(
+    env: Mapping[str, str] | None = None,
+) -> dict[str, tuple[str | list[str], str | list[str]]]:
+    """Slots the environment has moved off the id this build was measured with.
+
+    `{}` means the running container is executing the roster its own source
+    describes. Anything else is the #84 failure in progress, and `app/main.py`
+    says so at WARNING on the way up — a fail-open service that silently swaps
+    a benchmarked model for another looks exactly like a healthy one (KB-009).
+    """
+    moved: dict[str, tuple[str | list[str], str | list[str]]] = {}
+    for slot, default in MODEL_DEFAULTS.items():
+        effective = _model(slot, env)
+        if effective != default:
+            moved[slot] = (default, effective)
+    return moved
+
+
+MODEL_VALIDATE = _model("validate")
+MODEL_INJECTION = _model("injection")
+MODEL_TOPIC = _model("topic")
+MODEL_TOPIC_FALLBACKS = _model("topic_fallbacks")
+MODEL_CONDENSE = _model("condense")
+MODEL_BRAIN = _model("brain")
+MODEL_GUARD = _model("guard")
 
 # A standalone query is a sentence, not an essay. Small on purpose: this call
 # is spent out of the same 60s turn budget as four judges and the generation
@@ -154,48 +288,6 @@ CONDENSE_MAX_TOKENS = int(os.environ.get("CADRE_CONDENSE_MAX_TOKENS", "128"))
 # node falls back to the visitor's own words.
 CONDENSE_MAX_CHARS = int(os.environ.get("CADRE_CONDENSE_MAX_CHARS", "300"))
 
-# The brain.
-MODEL_BRAIN = os.environ.get("CADRE_MODEL_BRAIN", "qwen.qwen3-32b")
-
-# Final gate on the complete streamed answer. Since issue #70 the guard reads
-# the turn's retrieved passages, so its fixture set is the hard one: the ten
-# correct fact-dense answers that were wrongly retracted (must pass) plus
-# ungrounded-fact negatives (must fail). Benchmarked x 3 runs, temp 0
-# (`python -m evals.judge_bench --slot guard`):
-#
-#   qwen.qwen3-next-80b-a3b-instruct  48/48  p50 0.32s
-#   nvidia.nemotron-nano-3-30b        45/48  p50 0.23s   <- picked
-#   google.gemma-3-12b-it             45/48  p50 0.25s   (passes instr. leak)
-#   qwen.qwen3-32b                    45/48  p50 0.31s   (previous default;
-#     consistently passes an answer that discusses its own instructions)
-#   mistral.ministral-3-*             fail 2-3 *correct grounded* answers —
-#     they would keep retracting the 31%/24% case studies; disqualified
-#
-# **This slot is a deliberate accuracy-for-cost trade, taken with eyes open.**
-# The 80B model is the only one that scores 48/48, and the 3-point gap is not
-# spread across the fixture set — all three runners-up fail the *same* case:
-# they let through an answer that discusses its own instructions ("passes
-# instr. leak" means the guard passes it, i.e. does not catch it).
-#
-# What the #79 cost data added to the original benchmark, priced at this
-# slot's real measured token profile (in≈4581, out=2 — the guard reads the
-# whole answer plus every retrieved passage, so its cost is ~all input):
-#
-#   nvidia.nemotron-nano-3-30b        $0.000275/turn   -57%, and the fastest
-#   google.gemma-3-12b-it             $0.000413/turn   -36%
-#   qwen.qwen3-next-80b-a3b-instruct  $0.000644/turn   the 48/48 baseline
-#   qwen.qwen3-32b                    $0.000688/turn   +7% AND 45/48
-#
-# nemotron-nano-3-30b is picked for cost and latency. The instruction-leak
-# case is the known, single, specific regression that buys it — it is not a
-# general accuracy loss, and `scrub_failure`'s deterministic half (URL
-# allowlist + PII) is unaffected because it runs first and has no outage mode.
-# If instruction leakage matters more than $0.00037/turn, revert this line;
-# the env var flips it without a code deploy.
-MODEL_GUARD = os.environ.get(
-    "CADRE_MODEL_GUARD", "nvidia.nemotron-nano-3-30b"
-)
-
 # ── Cost (issue #79, trace-design.md §4.7) ─────────────────────────────────
 #
 # USD per 1M tokens, `model_id -> (input, output)`. `app/tracing.py` turns the
@@ -203,10 +295,11 @@ MODEL_GUARD = os.environ.get(
 # Langfuse can roll a turn's cost up without being told what anything costs.
 #
 # **Why this lives in the repo and not in the Langfuse UI's model definitions.**
-# Every id above is env-overridable (`CADRE_MODEL_*`). A UI-side pricing table
-# matches on ids that can change without a deploy, so it drifts silently and
-# invisibly — the same failure class `scripts/assert_models.py` exists to
-# prevent. Here it is reviewed like everything else, and
+# A UI-side pricing table matches on ids that live in another system entirely,
+# so it drifts silently and invisibly — the same failure class
+# `scripts/assert_models.py` and now `scripts/assert_model_env.py` exist to
+# prevent (issue #84 is that failure, and it ran for weeks). Here it is
+# reviewed like everything else, and
 # `tests/test_tracing_phase1.py` fails the build if a configured id has no line,
 # so a model swap cannot quietly zero a dashboard. An id absent at runtime
 # records its usage and omits cost with `cost_source:"unpriced"` — never a
@@ -243,11 +336,13 @@ MODEL_PRICES: dict[str, tuple[float, float]] = {
 # load-bearing in both directions: they must equal what `app/kb/manifest.json`
 # records, because a mismatch does not raise at query time — it returns
 # confident, wrong neighbours. `app/kb/store.py` compares the two on every
-# open and disables the KB rather than searching. Env-overridable only so the
-# mismatch path is testable and so a re-ingest at a different width can be
-# rolled forward without a code change; changing it without rebuilding the
+# open and disables the KB rather than searching. The id itself is declared in
+# `MODEL_DEFAULTS["embedding"]` with the rest of the roster (issue #84) —
+# `retrieve`'s chip is labelled with it and it drifts exactly like a judge
+# does. Overridable only so the mismatch path is testable and so a re-ingest at
+# a different width can be rolled forward; changing it without rebuilding the
 # artifact turns the KB off, which is the intended failure.
-EMBEDDING_MODEL = os.environ.get("CADRE_EMBEDDING_MODEL", "text-embedding-3-large")
+EMBEDDING_MODEL = str(_model("embedding"))
 EMBEDDING_DIMENSION = int(os.environ.get("CADRE_EMBEDDING_DIMENSION", "3072"))
 
 # Absolute, derived from this file rather than the working directory: the
@@ -307,30 +402,74 @@ RETRIEVE_MIN_SCORE = float(os.environ.get("CADRE_RETRIEVE_MIN_SCORE", "0.25"))
 # search ~3ms) with room for one bounded retry on each.
 RETRIEVE_TIMEOUT_S = float(os.environ.get("CADRE_RETRIEVE_TIMEOUT_S", "6.0"))
 
-# Step → display name for the model that runs it, served by /config so the
-# web stepper can label each chip. `retrieve` is labelled by its *embedding*
-# model: the condenser only runs on follow-ups, the embedding runs on every
-# in-scope turn, and one chip carries one name. The values below are readable
-# shorthand; keep them in sync when MODEL_* ids change.
-_MODEL_DISPLAY = {
-    MODEL_VALIDATE: "nemotron 12b",
-    MODEL_INJECTION: "ministral 8b",
-    MODEL_TOPIC: "ministral 8b",
-    EMBEDDING_MODEL: "embed-3-large",
-    MODEL_BRAIN: "qwen3-32b",
-    MODEL_GUARD: "nemotron 30b",
+# ── What `/config` tells the stepper (issue #84) ───────────────────────────
+#
+# One chip per step, labelled with the model that runs it. `retrieve` is
+# labelled by its *embedding* model: the condenser only runs on follow-ups, the
+# embedding runs on every in-scope turn, and one chip carries one name.
+#
+# **Keyed by step, not by model id.** The previous version was a
+# `{model_id: label}` dict, which has a bug that only appears in a deployment
+# nobody tested: two steps resolving to the same id collapse into one entry and
+# the last write wins. Production ran `injection`, `brain` and `guard` all on
+# `qwen.qwen3-32b`, so `/config` reported "nemotron 30b" for three steps that
+# were running qwen — the label of the model none of them was using. Keying by
+# step makes slots independent, and deriving the label from the id that will
+# execute makes it impossible for a chip to name a model the step is not using.
+MODEL_DISPLAY_NAMES: dict[str, str] = {
+    "nvidia.nemotron-nano-12b-v2": "nemotron 12b",
+    "nvidia.nemotron-nano-3-30b": "nemotron 30b",
+    "nvidia.nemotron-nano-9b-v2": "nemotron 9b",
+    "mistral.ministral-3-8b-instruct": "ministral 8b",
+    "mistral.ministral-3-14b-instruct": "ministral 14b",
+    "qwen.qwen3-32b": "qwen3-32b",
+    "qwen.qwen3-next-80b-a3b-instruct": "qwen3-next 80b",
+    "zai.glm-4.7-flash": "glm-4.7 flash",
+    "google.gemma-3-12b-it": "gemma-3-12b",
+    "text-embedding-3-large": "embed-3-large",
+}
+
+
+def display_name(model_id: str) -> str:
+    """Readable shorthand for a model id, and never an exception.
+
+    `STEP_MODELS` is built at *import*, so a `KeyError` here is not a bad label
+    — it is a container that never boots, and on Lambda an init failure only
+    surfaces on invoke (KB-001). The one time an unlisted id is plausible is a
+    break-glass `CADRE_MODEL_*` override during an incident, which is the worst
+    possible moment to discover that. So an unknown id degrades to itself minus
+    the provider prefix: less pretty, still true, still up.
+    """
+    known = MODEL_DISPLAY_NAMES.get(model_id)
+    return known if known else model_id.split(".", 1)[-1]
+
+
+# Step → the slot whose model runs it. The single place the wire's step names
+# and this module's slot names are tied together.
+STEP_SLOTS: dict[str, str] = {
+    "validate_input": "validate",
+    "injection_check": "injection",
+    "topic_classifier": "topic",
+    "retrieve": "embedding",
+    "brain": "brain",
+    "output_safety": "guard",
+}
+
+# What will actually run, per step — the honest answer even under an override.
+STEP_MODEL_IDS: dict[str, str] = {
+    step: str(_model(slot)) for step, slot in STEP_SLOTS.items()
 }
 
 STEP_MODELS: dict[str, str] = {
-    step: _MODEL_DISPLAY[model_id]
-    for step, model_id in (
-        ("validate_input", MODEL_VALIDATE),
-        ("injection_check", MODEL_INJECTION),
-        ("topic_classifier", MODEL_TOPIC),
-        ("retrieve", EMBEDDING_MODEL),
-        ("brain", MODEL_BRAIN),
-        ("output_safety", MODEL_GUARD),
-    )
+    step: display_name(model_id) for step, model_id in STEP_MODEL_IDS.items()
+}
+
+# What *this commit* expects to be running, ignoring the environment entirely.
+# `scripts/assert_step_models.py` compares a live target's `/config` against
+# this rather than against `STEP_MODELS`, because a smoke test that reads its
+# expectation out of the environment it is checking cannot fail.
+DEFAULT_STEP_MODELS: dict[str, str] = {
+    step: display_name(MODEL_DEFAULTS[slot]) for step, slot in STEP_SLOTS.items()
 }
 
 # Deliberately generous, not tiny. Several models in the roster reason before

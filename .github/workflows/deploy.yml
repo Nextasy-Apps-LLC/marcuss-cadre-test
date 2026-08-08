@@ -167,6 +167,38 @@ jobs:
 
           python -m scripts.assert_models
 
+      - name: Assert production will run the models this commit ships with
+        # The other half of the same question, and the one that was actually
+        # wrong (issue #84): `assert_models` proves the account *can* invoke the
+        # configured ids; this proves the ids the code was benchmarked with are
+        # the ids that will execute. They disagreed for weeks — Terraform set
+        # CADRE_MODEL_* on the function, environment beats code default, and so
+        # a commit re-benchmarked in #70 deployed cleanly and then ran the
+        # previous roster. Nothing failed: every model step fails open, so the
+        # wrong models render as a working chat (KB-009).
+        #
+        # Reads the function's live environment, so it sees a hand-set
+        # break-glass override too — which is the point. An override is a
+        # temporary incident measure; a deploy on top of one silently makes it
+        # permanent, so this blocks until someone decides. There is no skip
+        # flag: the way past it is to remove the variable.
+        #
+        # Runs on rollbacks for the same reason `assert_models` does — a
+        # rollback restores code, not environment, and an override breaks the
+        # old image exactly as thoroughly as the new one.
+        working-directory: backend
+        run: |
+          set -euo pipefail
+
+          # The environment is piped, never written or echoed: the same map
+          # carries AWS_BEARER_TOKEN_BEDROCK, OPENAI_API_KEY and the Langfuse
+          # keys. The script prints variable *names* and model ids only.
+          aws lambda get-function-configuration \
+            --function-name "${{ vars.LAMBDA_FUNCTION_NAME }}" \
+            --query 'Environment.Variables' --output json \
+          | python -m scripts.assert_model_env \
+              --env-json - --source "${{ vars.LAMBDA_FUNCTION_NAME }}"
+
       - uses: docker/setup-qemu-action@v3
         if: inputs.action == 'deploy' && steps.image.outputs.exists == 'false'
       - uses: docker/setup-buildx-action@v3
@@ -273,6 +305,29 @@ jobs:
           fi
 
           echo "healthz 200, page 200"
+
+      - name: Assert the live service is running the deployed models
+        # `/healthz` proves something is up; this proves it is *this commit*.
+        # It reads the running service's own `/config` from outside and
+        # compares `step_models` with what the deployed code expects — the
+        # check that would have caught issue #84 the day it happened instead of
+        # weeks later by hand.
+        #
+        # It is the outcome half of the pre-build gate above: that one proves
+        # the intent, this one proves the result, and only this one can catch a
+        # deploy that landed on the wrong function or never rolled at all. Not
+        # conditional and never continue-on-error — a smoke test that is
+        # allowed to fail is a comment.
+        #
+        # Scope, honestly (KB-007): it proves which models are wired to which
+        # step. It does not prove a turn streams; the browser check still owes
+        # us that.
+        working-directory: backend
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: |
+          set -euo pipefail
+          python -m scripts.assert_step_models --base-url "$SITE_URL"
 
       - name: Record the outcome
         if: always()
