@@ -570,6 +570,48 @@
       },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-025",
+      "type": "gotcha",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "output-guard",
+        "llm-judge",
+        "rag",
+        "grounding",
+        "context",
+        "retraction",
+        "false-positive"
+      ],
+      "title": "A guard that judges generated output against a static scope will fail every RAG-grounded specific — give the judge the same context the generator had",
+      "detail": "The output-safety judge was prompted with only the vetted baseline scope while the brain answered from baseline + retrieved passages. Result: every correct, grounded, fact-dense answer (dates, percentages, names, addresses quoted from the corpus) 'was not in scope' and got retracted after streaming — 10 of 17 refusals in a 98-question eval, on exactly the questions a serious visitor asks first. The fix is structural, not prompt-tuning: build the judge's prompt per turn with the turn's retrieved context (load the template raw at import, format per call like persona.system_prompt does), state explicitly that grounded specificity is permitted, and keep negatives in the fixture set (facts in NEITHER scope nor passages must still fail) so the rail is retuned rather than disabled. Rule of thumb: any judge of model output must see everything the generator was allowed to use, or it will punish the generator's best answers.",
+      "source": "#70 / PR #71",
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-029",
+      "type": "gotcha",
+      "area": [
+        "backend"
+      ],
+      "tags": [
+        "classifier",
+        "escalation",
+        "history",
+        "feedback-loop",
+        "fixtures",
+        "multi-turn",
+        "eval"
+      ],
+      "title": "A classifier that reads history treats the bot's own fallback replies as evidence — one escalation begets the next, and short synthetic histories hide it",
+      "detail": "The topic classifier saw the full conversation, so an escalation reply ('better answered by a person...') sitting in history became a signal to escalate the next question too: with the real multi-turn transcript gemma returned needs_human 6/6 at temp 0, while the same question over a short synthetic history was in_scope 12/12 — a self-locking loop invisible to any fixture that wasn't the real transcript. Two practices follow. (1) In any judge prompt that reads conversation history, state explicitly that the assistant's own prior fallback/refusal/escalation replies are not classification signals, and classify the latest message on its own merits. (2) Regression fixtures for multi-turn judges must be captured real transcripts (pull them from Langfuse, verbatim, including the bot's replies), because the failure only reproduces with the length and content of a real history — the synthetic version of the same question passes.",
+      "source": "#70 / PR #71",
+      "date": "2026-08-08",
+      "status": "active"
     }
   ]
 }
