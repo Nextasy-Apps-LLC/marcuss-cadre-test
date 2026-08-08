@@ -365,11 +365,32 @@ def scrub_failure(answer: str) -> str | None:
     return None
 
 
-_GUARD_SYSTEM = _load("output_safety", topic_scope=persona.TOPIC_SCOPE)
+# Loaded raw and formatted per turn: the guard must judge the answer against
+# the same retrieved passages the brain wrote from (issue #70 — judging a
+# grounded answer against the baseline scope alone is what retracted ten
+# correct fact-dense answers). The sources block sits mid-template so the
+# one-word verdict instruction stays last either way (KB-011).
+_GUARD_TEMPLATE = _load("output_safety")
+_GUARD_SOURCES_TEMPLATE = _load("output_safety_context")
+
+
+def _guard_system(context: str | None) -> str:
+    """The guard prompt, with the turn's retrieved passages if there are any.
+
+    With no context the sources section collapses to nothing and the prompt
+    is the baseline-scope gate exactly as before — a KB-less turn is judged
+    the way a KB-less turn always was.
+    """
+    sources_section = ""
+    if context and context.strip():
+        sources_section = "\n" + _GUARD_SOURCES_TEMPLATE.format(sources=context) + "\n"
+    return _GUARD_TEMPLATE.format(
+        topic_scope=persona.TOPIC_SCOPE, sources_section=sources_section
+    )
 
 
 async def guard_output(state: ConversationState) -> Verdict:
-    """Deterministic scrub first, then Haiku on the complete answer."""
+    """Deterministic scrub first, then the guard model on the complete answer."""
     answer = state.get("answer", "") or ""
 
     scrubbed = scrub_failure(answer)
@@ -380,7 +401,7 @@ async def guard_output(state: ConversationState) -> Verdict:
     try:
         label = await _judge(
             config.MODEL_GUARD,
-            _GUARD_SYSTEM,
+            _guard_system(state.get("context")),
             answer,
             {"pass": "pass", "fail": "fail"},
         )

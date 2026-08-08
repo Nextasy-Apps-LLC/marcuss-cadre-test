@@ -181,9 +181,14 @@ class TestRetrievalRuns:
         events = ask_events("What does Cadre AI do?")
         assert detail_for(events, "retrieve", "pass") == "no_hits"
 
-    def test_the_configured_top_k_is_what_gets_searched(self, kb_up):
+    def test_the_search_overfetches_beyond_top_k_for_dedupe(self, kb_up):
+        """Issue #70: the search reaches deeper than top-k so per-URL dedupe
+        has chunks from other pages to promote; the slate the brain sees is
+        still cut back to `RETRIEVE_TOP_K` (asserted in
+        test_answer_quality.py)."""
         ask_events("What does Cadre AI do?")
-        assert kb_up["searched"] == [(config.EMBEDDING_DIMENSION, config.RETRIEVE_TOP_K)]
+        assert kb_up["searched"] == [(config.EMBEDDING_DIMENSION, config.RETRIEVE_FETCH_K)]
+        assert config.RETRIEVE_FETCH_K > config.RETRIEVE_TOP_K
 
 
 # --------------------------------------------------------------------------

@@ -184,6 +184,19 @@ KB_ENABLED = os.environ.get("CADRE_KB_ENABLED", "1").strip().lower() not in (
 
 RETRIEVE_TOP_K = int(os.environ.get("CADRE_RETRIEVE_TOP_K", "6"))
 
+# One page must not fill the slate (issue #70: five /about-and-homepage chunks
+# crowded the on-point article out of the top-6). At most this many chunks per
+# URL survive dedupe; the search over-fetches (below) so the next page's chunk
+# is there to be promoted.
+RETRIEVE_MAX_PER_URL = int(os.environ.get("CADRE_RETRIEVE_MAX_PER_URL", "2"))
+
+# How deep the vector search actually reaches. Deduping the top-k alone would
+# only shorten the list; fetching 3x gives dedupe something to promote. On a
+# 131-row flat scan the extra depth is sub-millisecond.
+RETRIEVE_FETCH_K = int(
+    os.environ.get("CADRE_RETRIEVE_FETCH_K", str(RETRIEVE_TOP_K * 3))
+)
+
 # Cosine-similarity floor. Measured against the committed artifact on 7 real
 # probes: the worst true positive scored 0.495 and the best false positive
 # ("weather in Paris", "write me a quicksort") 0.095, so 0.25 sits in the gap

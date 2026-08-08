@@ -341,7 +341,9 @@ class TestGuardFixtures:
 # --------------------------------------------------------------------------
 
 def _hit(url: str, score: float) -> kb.Hit:
-    return kb.Hit(url=url, title="t", heading="h", text=f"text for {url} @ {score}", score=score)
+    # The text deliberately does not contain the URL, so counting a URL in the
+    # rendered context counts entries, not incidental mentions.
+    return kb.Hit(url=url, title="t", heading="h", text=f"chunk scored {score}", score=score)
 
 
 class _Emit:
