@@ -570,6 +570,50 @@
       },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-038",
+      "type": "gotcha",
+      "area": [
+        "infra",
+        "backend",
+        "process"
+      ],
+      "tags": "config drift, terraform variables, lambda environment, model ids, source of truth, benchmarks, deploy gate",
+      "title": "A Terraform variable that duplicates a code default silently wins — config chosen by a measurement must ship inside the artifact, not beside it",
+      "detail": "cadre's model ids existed twice: as `os.environ.get(...)` defaults in backend/app/config.py and as Terraform variables injected as CADRE_MODEL_* on the Lambda. A Lambda environment variable beats a code default, so Terraform decided which model ran. When the roster was re-benchmarked in #70 the prompts shipped and the models did not: production kept executing the previous roster for weeks while every measurement comment in the code described models that were not running. Nothing failed, because every model step fails open (KB-009), and no unit test could see it because the map is built at import from variables that only exist in the deployed function. The rule: when a value is chosen by a measurement taken against other code in the same commit (a model against its prompt, a threshold against its corpus), the value and the code it was measured with must travel in the same reviewed artifact. Keeping a second copy in Terraform 'so it can be changed without a deploy' is exactly the capability that voids the measurement. Delete the variable; keep the env override as documented break-glass; and add a gate that reads the target's live environment before the build and fails on any override, so a re-added variable breaks the deploy instead of quietly winning again (backend/scripts/assert_model_env.py). Fixing this also tightened the ADR 0001 posture rather than loosening it: nothing in the deploy path can repoint a model now, because there is no environment variable left to repoint.",
+      "source": "issue #84, PR #88",
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-039",
+      "type": "gotcha",
+      "area": [
+        "backend",
+        "web"
+      ],
+      "tags": "display names, dict keying, labels, /config, step_models, collapsed map, last write wins",
+      "title": "A display map keyed by VALUE collapses the moment two owners share that value — key it by the slot, and derive the label from the value",
+      "detail": "cadre's /config served `step_models` from a `{model_id: label}` dict built over the six pipeline steps. In production injection_check, brain and output_safety all resolved to qwen.qwen3-32b, so those three entries collapsed into one key and the last write won: /config advertised 'nemotron 30b' for three steps that were all running qwen3-32b. The labels were not missing, they were confidently wrong, and no unit test caught it because in the repo's default environment the six ids happened to be distinct. Two failure modes hide in this shape — collapse when two slots share a value, and a slot inheriting the *code's* label for a value the environment has since replaced. Fix both at once: key the map by the SLOT (step -> id that will actually run) and render the label with a `display_name(id)` lookup, so a label is always derived from the thing it describes. Make that lookup total (`.get(id, readable_fallback)`), never `[]`: a map built at module import turns a KeyError into a container that only fails on invoke (KB-001), and the one time an unlisted id shows up is a break-glass override during an incident. Test it with two slots deliberately pointed at one id — the default configuration will not reproduce it.",
+      "source": "issue #84, PR #88",
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-040",
+      "type": "learning",
+      "area": [
+        "ci",
+        "process",
+        "backend"
+      ],
+      "tags": "smoke test, post-deploy verification, expectation source, gate design, negative proof",
+      "title": "A post-deploy check must compute its expectation from the deployed commit, never from the environment it is checking — and be seen failing before it is trusted",
+      "detail": "The obvious way to write 'does the live service run what we deployed?' is to compare the target's /config against the checker's own imported config. That check cannot fail: the checker resolves the same environment variables, so it adopts the target's opinion (or its own host's stray exports) and goes green on the drift it exists to catch. cadre's assert_step_models.py compares against config.DEFAULT_STEP_MODELS — the labels derived from the commit's MODEL_DEFAULTS with env resolution deliberately bypassed — and has a unit test that sets a stray CADRE_MODEL_* on the checker and asserts the expectation does not move. Same shape as assert_models.py spending a real completion instead of trusting the /v1/models catalogue. Two more rules that made this gate real rather than decorative: put every decision in pure functions over data (an env map, a /config payload) so both failure paths are proven in the offline unit suite, and demonstrate the failure against a real running target before claiming the gate works — build the image, run one container correct and one deliberately misconfigured, and paste both exit codes. A gate nobody has watched fail is a comment.",
+      "source": "issue #84, PR #88",
+      "date": "2026-08-08",
+      "status": "active"
     }
   ]
 }
