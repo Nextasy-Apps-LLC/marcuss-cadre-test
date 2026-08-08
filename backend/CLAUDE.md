@@ -258,6 +258,36 @@ progress. Rules, each with its why:
   sets it on the function from SSM, and local runs pass it with `docker run
   -e`. It must never be baked into an image layer, committed, or echoed.
 
+## The knowledge base (`ingest/`, `app/kb/`)
+
+- **`ingest/` is build-time code and never runs in Lambda.** The image copies
+  `app/` only, so an `app → ingest` import would pass CI and fail on the first
+  cold start; `tests/test_ingest_isolation.py` reads the source and asserts the
+  direction. Its dependencies (`beautifulsoup4`, `lxml`, `tiktoken`) live in
+  `requirements-ingest.txt` — pulled into `requirements-dev.txt` so CI can run
+  the tests, kept out of `requirements.txt`, which is cold-start weight.
+- **The crawler is not a crawler.** `ingest/allowlist.py` is 55 hardcoded URLs,
+  frozen; `fetch.py` refuses anything else *before building the request* (wrong
+  host, not in the list, robots-disallowed), waits ≥ 1 s between requests on one
+  thread, and identifies itself as `cadre-kb-ingest/1.0 (+https://…)`. It never
+  follows a link and never re-walks the sitemap. The site is not ours; adding a
+  page is a reviewed diff.
+- **The artifact is committed and reviewed like code**: `app/kb/cadre_kb.lance/`
+  (LanceDB database dir, table `chunks`) plus `app/kb/manifest.json`. Refresh is
+  manual by design — `python -m ingest.build_kb` and commit the diff. A KB that
+  rebuilds itself is a KB whose contents nobody read.
+- **The embedding model and its dimension are load-bearing and must match on
+  both sides**: `text-embedding-3-large` at 3072 native, no `dimensions`
+  shortening. A mismatch does not raise at query time — it returns confident,
+  wrong neighbours — which is what the manifest exists to make detectable, and
+  why ingest raises `DimensionMismatch` rather than warning.
+- Vectors are L2-normalized at ingest, so a `metric="cosine"` search reads
+  `1 - _distance` as a similarity. There is deliberately **no ANN index**: a few
+  hundred rows is an exact flat scan in single-digit milliseconds, and an index
+  is one more thing whose parameters must agree with the width.
+- `ingest/README.md` carries the run instructions, the cost, and the numbers
+  from the last real build.
+
 ## Verifying
 
 - `pytest` from `backend/` — the unit suite drives the real ASGI app with the
