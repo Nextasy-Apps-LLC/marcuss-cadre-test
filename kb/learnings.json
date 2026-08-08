@@ -570,6 +570,78 @@
       },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-035",
+      "type": "gotcha",
+      "area": [
+        "web"
+      ],
+      "tags": [
+        "playwright",
+        "e2e",
+        "addInitScript",
+        "MutationObserver",
+        "document.body",
+        "document.documentElement",
+        "race-condition"
+      ],
+      "title": "Playwright's addInitScript runs before document.body (and document.documentElement) exist — observer.observe(null, ...) throws silently inside it",
+      "detail": "A MutationObserver installed via page.addInitScript(...) to record DOM attribute changes from the very start of a page load (needed to prove live progression rather than a settled snapshot, KB-007) must not call observer.observe(document.body, ...) or observer.observe(document.documentElement, ...) — addInitScript runs at the moment the new document is created, before the HTML parser has produced any element node, so both are null at that instant. observer.observe(null, ...) throws TypeError: parameter 1 is not of type 'Node' inside the init script's own isolated evaluation, and nothing surfaces that error to the test — every run just comes back with an empty log, which reads exactly like 'the thing I'm watching for never happened' rather than 'my observer was never installed'. Root-caused with a standalone repro script that read window.__observerInstalled / window.__observerError back out after the fact. The fix: observe `document` itself (the Document node, which already exists at that instant) with `subtree: true` — it still covers <html>, <body> and everything under them once the parser creates them.",
+      "source": {
+        "issue": 85,
+        "pr": 87
+      },
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-036",
+      "type": "gotcha",
+      "area": [
+        "web"
+      ],
+      "tags": [
+        "playwright",
+        "e2e",
+        "composer",
+        "maxlength",
+        "fill",
+        "client-side-validation",
+        "deterministic-refusal"
+      ],
+      "title": "This app's composer blocks two of the backend's three deterministic-refusal fixtures before they ever reach the wire — a browser-driven e2e suite needs a different trigger",
+      "detail": "backend/tests/e2e/test_pipeline_e2e.py's TestDeterministicRefusals exercises three validate_input cases via raw HTTP: blank, >2000 chars, and a control character. Only the third is reachable through the real composer in a browser. Composer.submit's own `const text = value.trim(); if (!text) return;` swallows a whitespace-only message before onSend is ever called — confirmed empirically with Playwright's .fill('   ') + Enter: zero messages appended, no error shown, nothing sent. The >2000-char case is blocked differently: Chromium enforces the input's native maxLength attribute even on a programmatic .fill() (not just interactive keystroke typing, which is the case the HTML spec explicitly calls out) — filling 2001 chars actually sets a 2000-char value, which passes the composer's own length check and gets submitted as an ordinary message, never reaching the too_long path. A control character (e.g. 'bad\\x00null') passes both client-side guards (non-blank after trim, well under 2000 chars) and reaches the server exactly as typed, giving validate_input's control_chars path a genuine end-to-end trigger. When writing a browser-driven e2e spec for a deterministic backend refusal, verify each candidate message against the real composer first rather than assuming a backend fixture message is reachable through the UI unchanged.",
+      "source": {
+        "issue": 85,
+        "pr": 87
+      },
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-037",
+      "type": "gotcha",
+      "area": [
+        "web"
+      ],
+      "tags": [
+        "playwright",
+        "e2e",
+        "linkify",
+        "streaming",
+        "retraction",
+        "text-length",
+        "false-positive"
+      ],
+      "title": "A naive 'final rendered text must be at least as long as any streamed sample' assertion false-positives on this app's own linkify() transform",
+      "detail": "Transcript.tsx only runs linkify() on a cadre reply once status === \"done\" — while status is \"streaming\"/\"pending\" the raw text (including any full inline citation URL) renders verbatim; once done, a URL segment is replaced by a short label (\"see article\", 11 chars, for what can be a 60+ char cadreai.com URL). An e2e assertion meant to catch retraction (an answered turn's visible text shrinking, which would indicate the app silently discarded content) by comparing raw DOM textContent length before vs. after settlement will false-positive on any answer that cites a source, because the settled text is legitimately shorter in character count even though nothing was retracted. Strip URLs (`text.replace(/https?:\\/\\/\\S+/g, \"\")`) from both the streamed samples and the final text before comparing lengths — that neutralizes the one known, intentional transform without weakening the check for an actual retraction (which drops far more than a URL's worth of characters, e.g. a full refusal-text swap).",
+      "source": {
+        "issue": 85,
+        "pr": 87
+      },
+      "date": "2026-08-08",
+      "status": "active"
     }
   ]
 }
