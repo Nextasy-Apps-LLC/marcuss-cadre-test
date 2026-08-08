@@ -168,13 +168,38 @@ progress. Rules, each with its why:
   verdict only inside a truncating `reasoning` field and are deliberately not
   in the roster. The ceiling is free on a terse model, because temperature 0
   stops it as soon as it has said the word.
-- **Model ids are checked before an image is pushed** — `scripts/assert_models.py`,
-  wired into `deploy.yml` ahead of the build. It lists `GET /v1/models` *and*
-  spends a real one-token completion per id, because listing is not
-  entitlement: several Claude ids appear in the catalogue on this account and
-  still refuse to run. Every model step fails open, so a wrong or unentitled id
-  ships as a working-looking chat with amber steps rather than as a crash — the
-  assertion is what keeps that from being discovered by a visitor.
+- **`config.MODEL_DEFAULTS` is the only source of model ids, and the image is
+  the only thing that carries it** (issue #84). Terraform sets no
+  `CADRE_MODEL_*`: it used to, environment beats code default, and so from #70
+  until #84 production ran the *previous* roster while every benchmark comment
+  in `config.py` described models that were not executing. Each id is pinned by
+  a measurement taken against the prompts in `app/prompts/*.txt` at the same
+  commit — the two are only meaningful together, so they ship together. A model
+  change is a code change. The `CADRE_MODEL_*` variables survive as break-glass
+  set by hand during an incident: `model_overrides()` makes the container log
+  one at boot, the next `terraform apply` removes it, and the drift gate blocks
+  the next deploy while it is live.
+- **Model ids are checked before an image is pushed, twice, for two different
+  questions.** `scripts/assert_models.py` asks whether the account *can invoke*
+  the configured ids: it lists `GET /v1/models` *and* spends a real one-token
+  completion per id, because listing is not entitlement (several Claude ids
+  appear in the catalogue on this account and still refuse to run).
+  `scripts/assert_model_env.py` asks whether the ids that will *execute* are
+  the ids this build was benchmarked with — it reads the function's live
+  environment and fails the deploy on any `CADRE_MODEL_*` that disagrees, that
+  no slot reads, or that is blank. Then `scripts/assert_step_models.py` reads
+  the deployed target's `/config` and asserts `step_models` against the
+  commit's own `DEFAULT_STEP_MODELS`. All three are wired into `deploy.yml` and
+  none is skippable. Every model step fails open, so anything they miss ships
+  as a working-looking chat with amber steps rather than as a crash (KB-009) —
+  which is exactly how #84 survived weeks of visitors.
+- **`/config`'s `step_models` is keyed by step, never by model id.** The
+  id-keyed version collapsed two steps that shared a model into one entry and
+  let the last write win, so three steps running qwen3-32b were all labelled
+  "nemotron 30b". `display_name()` derives every label from the id that will
+  actually run and never raises on an unknown one — the map is built at import,
+  so a `KeyError` there is a container that fails on invoke (KB-001), and the
+  one time an unlisted id is plausible is a break-glass override mid-incident.
 - Judges answer with a label and are parsed tolerantly (case, whitespace,
   punctuation, markdown, reasoning preamble). A response that is *not* a
   verdict degrades — it is never guessed at. The topic classifier's fallback

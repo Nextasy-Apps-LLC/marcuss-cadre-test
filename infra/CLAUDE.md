@@ -29,7 +29,7 @@ this stack does. Rules, each with its why:
 
 ## IAM
 
-- `cadre-deploy` is resource-scoped and ships code only. It must never gain `lambda:UpdateFunctionConfiguration` — env vars belong to Terraform; that grant would let a compromised deploy repoint the model or origin. Wrong by definition (ADR 0001).
+- `cadre-deploy` is resource-scoped and ships code only. It must never gain `lambda:UpdateFunctionConfiguration` — env vars belong to Terraform; that grant would let a compromised deploy repoint the origin. Wrong by definition (ADR 0001). **Model ids are the exception to "env vars belong to Terraform", and in the same direction:** since issue #84 they are not env vars at all. They live in `backend/app/config.py`'s `MODEL_DEFAULTS`, baked into the reviewed image beside the prompts they were benchmarked against, because a Terraform variable silently beat the code default and production ran the wrong roster for weeks. Nothing in the deploy path can repoint a model now either. Do not re-add a `*_model` variable here: `backend/scripts/assert_model_env.py` reads the function's live environment before every build and fails the deploy on any `CADRE_MODEL_*` it finds, whoever set it.
 - `cadre-terraform` is service-scoped — the honest limit for a role that creates not-yet-existing ARNs. The real control is the `production` environment gate on the apply job: never remove it. IAM writes stay scoped to `role/${project_name}-*`.
 - OIDC trust = (2 repo spellings: name + id-qualified) × (sub forms), and `environment: production` *replaces* the ref sub. Miss one and CI dies with a bare `sts:AssumeRoleWithWebIdentity` denial — only after the approval click.
 - Never create or import the GitHub OIDC provider — account singleton, referenced by ARN.

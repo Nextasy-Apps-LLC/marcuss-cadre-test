@@ -120,17 +120,21 @@ resource "aws_lambda_function" "this" {
     # env var nothing reads is invisible until someone tries to use it to
     # change behaviour in an incident.
     variables = {
-      CADRE_ENV                   = "prod"
-      CADRE_ALLOWED_ORIGIN        = "https://${var.domain_name}"
-      BEDROCK_MANTLE_BASE_URL     = var.bedrock_mantle_base_url
-      AWS_BEARER_TOKEN_BEDROCK    = data.aws_ssm_parameter.bedrock_api_key.value
-      CADRE_MODEL_BRAIN           = var.brain_model
-      CADRE_MODEL_INJECTION       = var.judge_model
-      CADRE_MODEL_GUARD           = var.judge_model
-      CADRE_MODEL_VALIDATE        = var.validate_model
-      CADRE_MODEL_TOPIC           = var.topic_model
-      CADRE_MODEL_TOPIC_FALLBACKS = join(",", var.topic_fallback_models)
-      CADRE_MODEL_CONDENSE        = var.condense_model
+      CADRE_ENV                = "prod"
+      CADRE_ALLOWED_ORIGIN     = "https://${var.domain_name}"
+      BEDROCK_MANTLE_BASE_URL  = var.bedrock_mantle_base_url
+      AWS_BEARER_TOKEN_BEDROCK = data.aws_ssm_parameter.bedrock_api_key.value
+
+      # No CADRE_MODEL_* here, on purpose (issue #84). Setting a model id from
+      # Terraform meant the function ran whatever this file said and not what
+      # the image was built and benchmarked with — for weeks, invisibly,
+      # because every model step fails open (KB-009). The ids now live only in
+      # `backend/app/config.py`'s MODEL_DEFAULTS, next to the measurement that
+      # chose them and inside the artifact that carries the prompts they were
+      # measured against; `infra/variables.tf` explains the decision in full.
+      # `backend/scripts/assert_model_env.py` fails the deploy if one of these
+      # keys reappears on the function, so adding one back here does not
+      # silently win — it stops the next deploy.
 
       # Read per request by `backend/app/embeddings.py` (never captured at
       # import, so a rotation needs no cold start). `retrieve` fails open, so

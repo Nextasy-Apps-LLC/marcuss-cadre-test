@@ -118,41 +118,33 @@ variable "langfuse_base_url_parameter" {
   default     = "/cadre/langfuse-base-url"
 }
 
-variable "brain_model" {
-  description = "Mantle model id for the brain. Claude ids appear in /v1/models but don't answer through this transport: the Mantle host only serves /v1/chat/completions, which 400s on a Claude id, and Claude's own /v1/messages 404s on this host entirely — an API-surface split, not an entitlement gap. Flip this the day a Claude-compatible surface is reachable here."
-  type        = string
-  default     = "qwen.qwen3-32b"
-}
-
-variable "judge_model" {
-  description = "Mantle model id for the injection judge and the output guard."
-  type        = string
-  default     = "qwen.qwen3-32b"
-}
-
-variable "validate_model" {
-  description = "Mantle model id for the input-validity judge (the second half of validate_input). A different provider from topic_model on purpose — this step has no fallback."
-  type        = string
-  default     = "nvidia.nemotron-nano-12b-v2"
-}
-
-variable "topic_model" {
-  description = "Mantle model id for the topic classifier. nemotron-nano-9b-v2 was retired from this slot after live probing: intermittent 503s, ~4x the latency, and a reasoning preamble. See backend/app/config.py for the measurements."
-  type        = string
-  default     = "google.gemma-3-12b-it"
-}
-
-variable "topic_fallback_models" {
-  description = "Topic-classifier fallbacks, walked in order when the primary errors. Keep in sync with backend/app/config.py; scripts/assert_models.py checks the app side before every deploy."
-  type        = list(string)
-  default     = ["nvidia.nemotron-nano-3-30b", "mistral.ministral-3-14b-instruct"]
-}
-
-variable "condense_model" {
-  description = "Mantle model id that rewrites a follow-up into a standalone retrieval query inside `retrieve` (issue #62). plan.md names Haiku 4.5; no Claude id answers through this transport (ADR 0002), so this defaults to the fastest entitled model and exists so a Haiku id can be swapped in without a code deploy. Keep in sync with backend/app/config.py."
-  type        = string
-  default     = "google.gemma-3-12b-it"
-}
+# There are deliberately NO model variables here (issue #84).
+#
+# `brain_model`, `judge_model`, `validate_model`, `topic_model`,
+# `topic_fallback_models` and `condense_model` used to live in this file and
+# become `CADRE_MODEL_*` on the function. Environment beats code default, so
+# Terraform — not the image — decided which model ran, and the two sources
+# drifted apart the moment `backend/app/config.py` was re-benchmarked in #70:
+# production kept executing the previous roster while every measurement comment
+# in the code described models that were not running. Nothing failed, because
+# every model step fails open (KB-009), and no test could see it because the
+# ids only existed in the deployed function's environment.
+#
+# Each id is pinned by a measurement taken against the prompts in
+# `backend/app/prompts/*.txt` **at the same commit**. They are only meaningful
+# together, so they ship together: `backend/app/config.py`'s `MODEL_DEFAULTS`
+# is the single source of truth, and it travels in the image, through the same
+# review and the same code-owner-gated deploy as the prompt it was measured
+# with. `backend/scripts/assert_model_env.py` fails the deploy if a
+# `CADRE_MODEL_*` variable reappears on the function — including one Terraform
+# put there — so re-adding a variable here breaks the deploy rather than
+# quietly winning again.
+#
+# This also tightens, rather than loosens, the ADR 0001 posture recorded in
+# infra/CLAUDE.md: `cadre-deploy` must never gain
+# `lambda:UpdateFunctionConfiguration` because that would let a compromised
+# deploy repoint the model. Nothing in the deploy path can repoint one now
+# either — the id is baked into an immutably tagged, reviewed image.
 
 variable "log_retention_days" {
   description = "CloudWatch Logs retention."

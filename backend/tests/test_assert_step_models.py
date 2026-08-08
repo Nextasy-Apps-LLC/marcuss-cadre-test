@@ -55,7 +55,35 @@ class TestMismatches:
         assert assert_step_models.mismatches(assert_step_models.expected()) == []
 
     def test_the_production_payload_is_caught(self):
+        """Two of the three drifted steps, and one that was not drifting.
+
+        This is worth pinning exactly, because it is the honest limit of a
+        label-based check against the *old* code: prod's collapsed map happened
+        to serve `ministral 8b` for `topic_classifier` (this commit's expected
+        label) while gemma did the work, and `nemotron 30b` for `output_safety`
+        (also correct by accident). Meanwhile `brain`, which was running the
+        right model all along, is flagged because its label lied.
+
+        So the smoke would have fired on day one — but the reason it can see
+        *every* drifted step is the label fix that ships with it. The two
+        halves of this issue are one change, not two.
+        """
         found = assert_step_models.mismatches(PROD_SERVED)
+
+        assert {step for step, _, _ in found} == {"injection_check", "brain"}
+
+    def test_honest_labels_expose_every_drifted_step(self):
+        """The same environment, labelled by the code this commit ships."""
+        served_by_the_fix = {
+            "validate_input": "nemotron 12b",
+            "injection_check": "qwen3-32b",
+            "topic_classifier": "gemma-3-12b",
+            "retrieve": "embed-3-large",
+            "brain": "qwen3-32b",
+            "output_safety": "qwen3-32b",
+        }
+
+        found = assert_step_models.mismatches(served_by_the_fix)
 
         assert {step for step, _, _ in found} == {
             "injection_check",
