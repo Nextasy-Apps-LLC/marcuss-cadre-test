@@ -19,7 +19,7 @@
  */
 import { test } from "@playwright/test";
 
-import { expect, sendMessage, skipUnlessLive, STEP_ORDER, stepRow, waitForReplySettled } from "./support";
+import { expect, LIVE_TAG, sendMessage, STEP_ORDER, stepRow, waitForReplySettled } from "./support";
 
 test.describe("turn outcomes", () => {
   test("an input-validation refusal renders the refusal text and skips the rest of the pipeline", async ({
@@ -45,9 +45,7 @@ test.describe("turn outcomes", () => {
     await expect(stepRow(page, "validate_input")).toHaveAttribute("data-step-status", "fail");
   });
 
-  test("an escalation renders the booking link", async ({ page }) => {
-    skipUnlessLive(test);
-
+  test("an escalation renders the booking link", { tag: LIVE_TAG }, async ({ page }) => {
     await page.goto("/");
     // Mirrors backend/evals/fixtures/topic_cases.json's needs_human_explicit_person case.
     await sendMessage(page, "Can I speak to a real person on your team please?");

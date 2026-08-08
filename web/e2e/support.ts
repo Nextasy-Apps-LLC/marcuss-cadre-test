@@ -4,37 +4,28 @@
  * cost a debugging session (KB-018) has exactly one place to get right.
  */
 
-import { expect, type APIRequestContext, type Locator, type Page, type TestType } from "@playwright/test";
+import { expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
 /**
- * Mirrors the backend e2e suite's own `CADRE_E2E_BEDROCK` gate (see
- * `backend/tests/e2e/README.md`) exactly — same env var, same meaning: the
- * target is authorized to invoke the configured models. A target whose key
- * cannot invoke a model does not *fail* a guarded turn, it degrades (every
- * judge fails open), so a suite that asserted "a turn completed" would go
- * green against a completely brainless service. This flag is how a human (or
- * a CI dispatch input) asserts the target is supposed to have a brain.
- */
-export const LIVE = process.env.CADRE_E2E_BEDROCK === "1";
-
-/** Same reasoning the backend suite's `requires_bedrock` marker logs — skip loudly, never silently. */
-export const LIVE_SKIP_REASON =
-  "CADRE_E2E_BEDROCK is not set — this spec needs a real, guarded turn against a live model. See web/e2e/README.md.";
-
-/**
- * Call as the first line of any `test(...)` callback that needs a real
- * answered / escalated / guard-refused turn:
+ * ## Tiering: the `@live` tag, not a skip-by-default env gate
  *
- *   test("...", async ({ page }) => {
- *     skipUnlessLive(test);
- *     ...
- *   });
+ * Specs that need a real model tag themselves `{ tag: "@live" }` and are
+ * selected by `npm run test:e2e:live`; everything else is model-free and runs
+ * via `npm run test:e2e` (`--grep-invert @live`), which is what CI runs on
+ * every pull request.
  *
- * Mirrors the backend suite's `@requires_bedrock` gate at the spec level.
+ * This replaced a `skipUnlessLive(test)` / `CADRE_E2E_BEDROCK` gate, and the
+ * reason is the whole point of issue #97: that gate skipped **silently by
+ * default**, so a run with the flag unset reported green while the
+ * model-dependent half had never executed. Two known-red tests sat unfixed
+ * across several merges and the bug was found by a human in a browser
+ * instead. With tag selection the run's test count tells the truth — a tier
+ * either ran or was never selected, and neither can masquerade as a pass.
+ *
+ * `CADRE_E2E_BEDROCK` keeps its original meaning for `backend/tests/e2e/`;
+ * this change is scoped to the browser suite.
  */
-export function skipUnlessLive(test: TestType<object, object>): void {
-  test.skip(!LIVE, LIVE_SKIP_REASON);
-}
+export const LIVE_TAG = "@live";
 
 export { expect };
 
@@ -121,6 +112,29 @@ export async function waitForReplySettled(page: Page, timeoutMs = 65_000): Promi
 /** One pipeline step's row in the stepper. */
 export function stepRow(page: Page, step: StepName): Locator {
   return page.getByTestId(`step-${step}`);
+}
+
+/**
+ * The per-step model labels the pane is currently painting, as a plain map
+ * keyed by `data-step` — shaped to be compared to `/config`'s `step_models`
+ * by deep equality.
+ *
+ * Deep equality over the whole map, rather than a label-by-label loop, is
+ * deliberate: it is what makes a *wrong-but-present* label fail (the exact
+ * regression class this suite exists for), and it fails just as loudly on a
+ * chip that lost its label or gained an unexpected one. A step whose
+ * `.step-model` span is absent contributes `null`, so a missing label can
+ * never be mistaken for a matching one.
+ *
+ * Read through `expect.poll` — the labels are painted synchronously at send
+ * time, but polling keeps the comparison from racing the first render.
+ */
+export async function renderedStepModels(page: Page): Promise<Record<string, string | null>> {
+  return page.locator("[data-step]").evaluateAll((els) =>
+    Object.fromEntries(
+      els.map((el) => [el.getAttribute("data-step") ?? "", el.querySelector(".step-model")?.textContent ?? null]),
+    ),
+  );
 }
 
 export interface StepStatusLogEntry {

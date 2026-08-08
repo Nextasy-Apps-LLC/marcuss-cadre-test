@@ -15,20 +15,18 @@ import {
   fetchConfig,
   installStepStatusRecorder,
   readStepStatusLog,
+  LIVE_TAG,
   sendMessage,
-  skipUnlessLive,
   STEP_ORDER,
   stepRow,
   waitForReplySettled,
 } from "./support";
 
 test.describe("pipeline pane against a real turn", () => {
-  test("every pipeline step chip carries its model label from /config, including on the very first turn of a session", async ({
+  test("every pipeline step chip carries its model label from /config, including on the very first turn of a session", { tag: LIVE_TAG }, async ({
     page,
     request,
   }) => {
-    skipUnlessLive(test);
-
     const config = await fetchConfig(request);
 
     // A fresh Playwright context/page means fresh localStorage — no prior
@@ -46,11 +44,9 @@ test.describe("pipeline pane against a real turn", () => {
     }
   });
 
-  test("step chips progress from pending through running to a terminal status, and none is left running once the turn ends", async ({
+  test("step chips progress from pending through running to a terminal status, and none is left running once the turn ends", { tag: LIVE_TAG }, async ({
     page,
   }) => {
-    skipUnlessLive(test);
-
     await installStepStatusRecorder(page);
     await page.goto("/");
     await sendMessage(page, "What does Cadre AI do?");
@@ -73,11 +69,9 @@ test.describe("pipeline pane against a real turn", () => {
     await expect(runningRows).toHaveCount(0);
   });
 
-  test("every step that actually ran shows its elapsed time; a step the server never ran shows none", async ({
+  test("every step that actually ran shows its elapsed time; a step the server never ran shows none", { tag: LIVE_TAG }, async ({
     page,
   }) => {
-    skipUnlessLive(test);
-
     await page.goto("/");
     await sendMessage(page, "What does Cadre AI do?");
     await waitForReplySettled(page);
@@ -96,11 +90,9 @@ test.describe("pipeline pane against a real turn", () => {
     }
   });
 
-  test("the retrieve step shows a hit-count line on a passing retrieval, and no condensed-query line on a first message", async ({
+  test("the retrieve step shows a hit-count line on a passing retrieval, and no condensed-query line on a first message", { tag: LIVE_TAG }, async ({
     page,
   }) => {
-    skipUnlessLive(test);
-
     await page.goto("/");
     await sendMessage(page, "What does Cadre AI do?");
     await waitForReplySettled(page);
@@ -117,9 +109,7 @@ test.describe("pipeline pane against a real turn", () => {
     await expect(page.getByTestId("step-retrieval-query")).toHaveCount(0);
   });
 
-  test("a genuine multi-turn follow-up that gets condensed shows the condensed query", async ({ page }) => {
-    skipUnlessLive(test);
-
+  test("a genuine multi-turn follow-up that gets condensed shows the condensed query", { tag: LIVE_TAG }, async ({ page }) => {
     await page.goto("/");
     await sendMessage(page, "What is the AI Maturity Index?");
     await waitForReplySettled(page);
@@ -133,8 +123,15 @@ test.describe("pipeline pane against a real turn", () => {
     test.skip(status !== "pass", `retrieve ended ${status}, not pass — nothing to assert about the condensed query`);
 
     const queryLine = page.getByTestId("step-retrieval-query");
-    const count = await queryLine.count();
-    test.skip(count === 0, "condensing produced no rewrite for this follow-up (fell back to the visitor's own words, KB-011) — nothing to assert");
+    // Hard assertion, not `test.skip(count === 0, …)`. This is the one test
+    // covering the condensed query Marcus reported missing (#97), and a
+    // skip-when-absent escape hatch means it would have reported *skipped*
+    // — not failed — on exactly the regression it exists to catch. A
+    // follow-up whose subject is a bare pronoun ("that") cannot be embedded
+    // usefully without condensing, so an absent line here is a real defect,
+    // not model nondeterminism; this spec is in the `@live` tier, where the
+    // config's single CI retry absorbs genuine flake.
+    await expect(queryLine, "no condensed-query line rendered for a genuine follow-up").toHaveCount(1);
 
     const text = await queryLine.textContent();
     expect(text, "condensed-query line was empty").toBeTruthy();
