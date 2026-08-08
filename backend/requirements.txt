@@ -4,3 +4,12 @@ pydantic>=2.9.0
 langgraph>=1.0.0
 langchain-core>=1.0.0
 httpx>=0.27.0
+langfuse>=4.14.0
+# Only here to satisfy langfuse's LangChain integration, which guards its
+# import with a bare `import langchain` (it reads `langchain.__version__` to
+# pick its v0/v1 import path, then imports everything else from
+# langchain-core). Without it `from langfuse.langchain import CallbackHandler`
+# raises ModuleNotFoundError at container start and there is no tracing at all.
+# It costs almost nothing: `langchain` requires only langchain-core, langgraph
+# and pydantic, all of which are already above.
+langchain>=1.0.0

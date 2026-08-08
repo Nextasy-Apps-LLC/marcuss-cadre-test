@@ -138,6 +138,22 @@ data "aws_iam_policy_document" "ci_terraform" {
     actions   = ["ssm:GetParameter"]
     resources = ["arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.bedrock_api_key_parameter}"]
   }
+
+  # The three Langfuse parameters (infra/langfuse.tf), for exactly the reason
+  # above and worth restating because it is the one that bites: these are `data`
+  # blocks, so they resolve at PLAN time. Without this statement every plan —
+  # the plan-on-PR that is supposed to review the change included — dies with
+  # AccessDenied before it renders a single line of diff.
+  statement {
+    sid     = "LangfuseKeysRead"
+    effect  = "Allow"
+    actions = ["ssm:GetParameter"]
+    resources = [
+      "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.langfuse_secret_key_parameter}",
+      "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.langfuse_public_key_parameter}",
+      "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.langfuse_base_url_parameter}",
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "ci_terraform" {

@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
@@ -26,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
 
-from app import config, sse
+from app import config, sse, tracing
 from app.graph.build import build_graph
 from app.graph.emit import QueueEmitter
 from app.graph.state import Turn, initial_state
@@ -118,10 +119,21 @@ async def _malformed_payload_stream() -> AsyncIterator[str]:
     yield sse.done("refused", config.REFUSAL_TEXTS["validate_input"])
 
 
-async def _run_graph(state, emit, queue: asyncio.Queue) -> None:
+async def _run_graph(state, emit, queue: asyncio.Queue, handler=None) -> None:
     """Drive the graph, then post the terminal the generator should emit."""
     try:
-        final = await GRAPH.ainvoke(state, config={"configurable": {"emit": emit}})
+        # Both per-request objects ride the invocation's config, never the state
+        # channel (KB-008): `emit` is a live queue and `handler` is bound to one
+        # visitor's trace, and a checkpointable channel is how one visitor's
+        # stream — or trace — ends up in another's. `callbacks` is LangChain's
+        # own per-invocation callback list, which is what attaches the handler
+        # to the graph run and gets every node as a span for free; there is
+        # deliberately no per-call-site Langfuse logging in `nodes.py`.
+        cfg: dict = {"configurable": {"emit": emit}}
+        if handler is not None:
+            cfg["callbacks"] = [handler]
+
+        final = await GRAPH.ainvoke(state, config=cfg)
         await queue.put(
             (
                 "done",
@@ -139,10 +151,38 @@ async def _run_graph(state, emit, queue: asyncio.Queue) -> None:
 
 
 async def _stream(req: AskRequest) -> AsyncIterator[str]:
+    started = time.monotonic()
+
+    # The trace id is generated locally, so the link is knowable before any work
+    # happens — which is why this is the first frame of the response rather than
+    # something appended at the end. When tracing is down there is no frame at
+    # all: the client sees one fewer chip, never a broken or half-filled one.
+    handler, trace_id, trace_url = tracing.start_trace(req.conversation_id)
+    if trace_url:
+        yield sse.trace(trace_id, trace_url)
+
     queue: asyncio.Queue = asyncio.Queue()
     emit = QueueEmitter(queue)
     state = initial_state(req.message, req.history, req.conversation_id)
-    task = asyncio.create_task(_run_graph(state, emit, queue))
+    task = asyncio.create_task(_run_graph(state, emit, queue, handler))
+
+    # What the trace needs, harvested from the events already going out. The
+    # per-step numbers are the same `elapsed_ms` the stepper renders — reused,
+    # not re-measured, so the trace and the transcript cannot disagree.
+    step_latencies: dict[str, int] = {}
+    refused_step: str | None = None
+
+    def _finalize() -> None:
+        """Flush before the terminal frame, on every terminal path: Lambda
+        freezes the instance the moment the response ends, so a batch that is
+        still in Langfuse's background thread is a trace nobody ever sees."""
+        tracing.finalize_trace(
+            trace_id,
+            refused_step,
+            step_latencies,
+            round((time.monotonic() - started) * 1000),
+            req.conversation_id,
+        )
 
     try:
         while True:
@@ -157,6 +197,10 @@ async def _stream(req: AskRequest) -> AsyncIterator[str]:
                 continue
 
             if kind == "state":
+                if payload["elapsed_ms"] is not None:
+                    step_latencies[payload["step"]] = payload["elapsed_ms"]
+                if payload["status"] == "fail":
+                    refused_step = payload["step"]
                 yield sse.state(
                     payload["step"],
                     payload["status"],
@@ -166,10 +210,12 @@ async def _stream(req: AskRequest) -> AsyncIterator[str]:
             elif kind == "token":
                 yield sse.token(payload)
             elif kind == "done":
+                _finalize()
                 yield sse.done(payload["outcome"], payload["refusal_text"])
                 return
             elif kind == "error":
                 # Terminal on its own — no `done` follows an `error`.
+                _finalize()
                 yield sse.error(config.ERROR_TEXT)
                 return
 

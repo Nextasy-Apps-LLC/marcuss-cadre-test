@@ -8,7 +8,7 @@
  * functions to compute what the next turn state should be.
  */
 
-import { freshSteps, type DoneEvent, type StateEvent, type StepName, type TokenEvent, type MessageStatus, type Outcome, type StepState } from "../types";
+import { freshSteps, type DoneEvent, type StateEvent, type StepName, type TokenEvent, type TraceEvent, type MessageStatus, type Outcome, type StepState } from "../types";
 
 /** Shown when the wire `error` event fires or a dead connection leaves nothing else to say. */
 export const ERROR_TEXT = "Something went wrong. Try again in a moment.";
@@ -24,6 +24,8 @@ export interface TurnState {
   replyText: string;
   replyStatus: MessageStatus;
   replyOutcome?: Outcome;
+  /** Set once a `trace` event for this turn arrives; absent when tracing was disabled/degraded. */
+  replyTraceUrl?: string;
   /** Separates "ended cleanly" from "connection died" for the caller's finally-block. */
   sawDone: boolean;
 }
@@ -50,6 +52,16 @@ export function applyState(turn: TurnState, event: StateEvent): TurnState {
 
 export function applyToken(turn: TurnState, event: TokenEvent): TurnState {
   return { ...turn, replyText: turn.replyText + event.text, replyStatus: "streaming" };
+}
+
+/**
+ * The trace url is known the instant the wire event arrives — before the
+ * pipeline even starts — so this just records it; nothing else about the
+ * turn changes. At most one `trace` event per turn (backend contract), and
+ * none at all when tracing is disabled/degraded (fail-open).
+ */
+export function applyTrace(turn: TurnState, event: TraceEvent): TurnState {
+  return { ...turn, replyTraceUrl: event.url };
 }
 
 /**

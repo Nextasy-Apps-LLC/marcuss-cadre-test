@@ -30,17 +30,55 @@ since `brain` is the one step with no degrade path for a missing/invalid key
 (see `backend/CLAUDE.md`). That is correct, not a bug: check the key with
 `python -m scripts.assert_models` before assuming the suite is broken.
 
+## The `CADRE_E2E_LANGFUSE` gate
+
+`tests/e2e/test_tracing_e2e.py` is gated the same way and for the same reason.
+Tracing is **fail-open**: a target whose Langfuse credentials are missing or
+wrong does not fail a "was this turn traced?" test, it degrades — no `trace`
+event at all — and a suite that only asserted "the turn completed" would go
+green against a service that has quietly stopped being observable (KB-009). So
+a human asserts that this target is supposed to be traced; "no trace event,
+must be disabled, skip" is exactly the reasoning that lets a broken deploy
+through.
+
+The **target** needs `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and
+`LANGFUSE_HOST` in its environment (Terraform injects them in Lambda from the
+three SSM parameters — see `infra/langfuse.tf`; locally they go on `docker run
+-e`). The suite itself needs none of them: it reads the `trace` event off the
+wire and then reads that trace back out of Langfuse with **no credentials at
+all**, which is the whole point — a trace nobody can open is not a debugging
+link.
+
+That read-back goes to `api/trpc/traces.byId` (the endpoint Langfuse's own SPA
+calls), **not** to the trace page the `trace` event advertises. The page is a
+Next.js shell that answers `200` with a byte-identical document for a public
+trace, for a trace that exists but was never marked public, and for a trace id
+that was never created — so asserting on it cannot fail, which is how a first
+version of this suite went green against traces it had not proved existed. The
+API answers `200 "public": true`, `401 "…this trace is not public"` and
+`404 "Trace not found"` respectively, and `TestThePublicVisibilityProbeCanFail`
+keeps that distinction honest by requiring a never-created id to come back
+`404`. Langfuse ingests asynchronously (measured 30–60s from `done` to the
+trace being readable), so the read-back retries for up to three minutes before
+failing — a slow trace and a missing trace must not look alike here.
+
 ## Local: the real image in docker
 
 ```bash
 docker build -t cadre-backend:local backend            # arm64 host, or add --platform
 docker run --rm -p 8080:8080 \
   -e AWS_BEARER_TOKEN_BEDROCK \
+  -e LANGFUSE_PUBLIC_KEY -e LANGFUSE_SECRET_KEY -e LANGFUSE_HOST \
   cadre-backend:local
 
 BASE_URL=http://localhost:8080 pytest -m e2e            # from backend/, deterministic + fail-open-honesty cases only
 CADRE_E2E_BEDROCK=1 BASE_URL=http://localhost:8080 pytest -m e2e   # + the live-model cases, needs a valid key above
+CADRE_E2E_LANGFUSE=1 BASE_URL=http://localhost:8080 pytest -m e2e  # + the trace cases, needs the LANGFUSE_* trio above
 ```
+
+Drop the three `LANGFUSE_*` flags and the container still boots and answers —
+it just logs `tracing disabled: … not set` and emits no `trace` event, which is
+the fail-open path and is itself worth eyeballing once.
 
 The Bedrock API key is a *runtime* env var — pass it to `docker run -e`,
 never bake it into an image layer, commit it, or echo it in a log or PR body.
@@ -57,6 +95,7 @@ boto3/SigV4 anywhere in the model path, only the bearer token.
 ```bash
 BASE_URL=https://cadre.marcuss.pro pytest -m e2e
 CADRE_E2E_BEDROCK=1 BASE_URL=https://cadre.marcuss.pro pytest -m e2e
+CADRE_E2E_LANGFUSE=1 BASE_URL=https://cadre.marcuss.pro pytest -m e2e
 ```
 
 Against CloudFront every POST needs `x-amz-content-sha256` (KB-002) — the

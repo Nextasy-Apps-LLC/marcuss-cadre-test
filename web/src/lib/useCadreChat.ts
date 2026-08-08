@@ -9,11 +9,12 @@ import {
   applyState,
   applyStreamLost,
   applyToken,
+  applyTrace,
   freshTurn,
   OFFLINE_TEXT,
   type TurnState,
 } from "./turnReducer";
-import type { ChatMessage, DoneEvent, StateEvent, StepName, StepState, TokenEvent } from "../types";
+import type { ChatMessage, DoneEvent, StateEvent, StepName, StepState, TokenEvent, TraceEvent } from "../types";
 
 const CONVERSATION_KEY = "cadre_conversation_id";
 
@@ -92,6 +93,7 @@ export function useCadreChat(greeting: string, stepModels?: Partial<Record<StepN
           text: turn.replyText,
           status: turn.replyStatus,
           outcome: turn.replyOutcome,
+          traceUrl: turn.replyTraceUrl,
         });
       };
 
@@ -121,7 +123,10 @@ export function useCadreChat(greeting: string, stepModels?: Partial<Record<StepN
         }
 
         for await (const message of readSse(response.body, controller.signal)) {
-          if (message.event === "state") {
+          if (message.event === "trace") {
+            turn = applyTrace(turn, JSON.parse(message.data) as TraceEvent);
+            publish();
+          } else if (message.event === "state") {
             turn = applyState(turn, JSON.parse(message.data) as StateEvent);
             setSteps(turn.steps);
           } else if (message.event === "token") {

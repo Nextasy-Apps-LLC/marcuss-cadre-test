@@ -59,6 +59,17 @@ export function Transcript({ messages }: Props) {
                   ),
                 )
               : message.text}
+            {message.who === "cadre" && message.traceUrl && (
+              <a
+                href={message.traceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="trace-link"
+                data-testid="trace-link"
+              >
+                View trace ↗
+              </a>
+            )}
             {message.status === "pending" && (
               <span className="cursor" aria-hidden="true" />
             )}

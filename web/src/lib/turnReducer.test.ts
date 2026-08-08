@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { STEPS, type DoneEvent, type StateEvent, type StepName } from "../types";
+import { STEPS, type DoneEvent, type StateEvent, type StepName, type TraceEvent } from "../types";
 import {
   applyAborted,
   applyDone,
@@ -8,6 +8,7 @@ import {
   applyState,
   applyStreamLost,
   applyToken,
+  applyTrace,
   DEFAULT_REFUSAL_TEXT,
   ERROR_TEXT,
   freshTurn,
@@ -99,6 +100,54 @@ describe("applyState — elapsedMs mirroring (KB-005)", () => {
     expect(byName.validate_input).toBe(5);
     expect(byName.injection_check).toBeNull();
     expect(byName.topic_classifier).toBeNull();
+  });
+});
+
+describe("applyTrace (KB-005 — mirrors the backend's shipped `trace` event verbatim)", () => {
+  it("sets replyTraceUrl from the event's url", () => {
+    const event: TraceEvent = {
+      trace_id: "23ee23afc9211595519f8f3ac8e71e37",
+      url: "https://us.cloud.langfuse.com/project/abc123/traces/23ee23afc9211595519f8f3ac8e71e37",
+    };
+    const turn = applyTrace(freshTurn(), event);
+    expect(turn.replyTraceUrl).toBe(event.url);
+  });
+
+  it("leaves every other field untouched", () => {
+    let turn = freshTurn();
+    turn = applyState(turn, state("validate_input", "running"));
+    turn = applyToken(turn, { text: "partial" });
+
+    const before = { ...turn };
+    const after = applyTrace(turn, {
+      trace_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      url: "https://us.cloud.langfuse.com/project/x/traces/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
+
+    expect(after.steps).toBe(before.steps);
+    expect(after.replyText).toBe(before.replyText);
+    expect(after.replyStatus).toBe(before.replyStatus);
+    expect(after.replyOutcome).toBe(before.replyOutcome);
+    expect(after.sawDone).toBe(before.sawDone);
+  });
+
+  it("a fresh turn has no trace url until a trace event arrives — the absent case", () => {
+    // No `trace` event is ever sent when tracing is disabled/degraded
+    // (backend fail-open, app/tracing.py); the reducer must not invent one.
+    const turn = freshTurn();
+    expect(turn.replyTraceUrl).toBeUndefined();
+  });
+
+  it("does not clear an already-set trace url on unrelated events (state/token keep it)", () => {
+    let turn = applyTrace(freshTurn(), {
+      trace_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      url: "https://us.cloud.langfuse.com/project/x/traces/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    });
+    turn = applyState(turn, state("validate_input", "pass", undefined, 5));
+    turn = applyToken(turn, { text: "hi" });
+    expect(turn.replyTraceUrl).toBe(
+      "https://us.cloud.langfuse.com/project/x/traces/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    );
   });
 });
 

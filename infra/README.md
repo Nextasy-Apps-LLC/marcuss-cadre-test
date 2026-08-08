@@ -31,6 +31,7 @@ CloudFront, with the page served from a private S3 bucket on the same hostname.
 | Thing | How it authenticates |
 |---|---|
 | Lambda → Bedrock | Bearer token (Bedrock API key) to the Mantle endpoint — **not** SigV4. See [ADR 0002](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/adr/0002-bedrock-mantle-api-key.md): classic `bedrock-runtime` is `NOT_AUTHORIZED` account-wide. The key is an SSM SecureString (`/cadre/bedrock-api-key`) created out of band; Terraform `data`-references it into the Lambda's `AWS_BEARER_TOKEN_BEDROCK`. The execution role has no `bedrock:*` grant at all. |
+| Lambda → Langfuse | Public/secret key pair, out of band in SSM (`/cadre/langfuse-public-key`, `/cadre/langfuse-secret-key`, both SecureString) alongside the plain-String `/cadre/langfuse-base-url`. Same data-source pattern as the Bedrock key and for the same reason — all three already exist with real values, so `infra/langfuse.tf` only reads them into `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST`. Tracing fails open, so a wrong value costs the trace link, never the turn. |
 | GitHub Actions → AWS | OIDC, exact sub-claim pinned to `refs/heads/main`. No access key. |
 | CloudFront → Lambda URL | OAC, SigV4-signed. The URL is `AWS_IAM`, not public. |
 | CloudFront → S3 | OAC. The bucket blocks all public access. |
@@ -40,13 +41,15 @@ Nothing in this repo needs a value hidden from a public GitHub repository.
 and state bucket name are pointless things to publish, not because they are
 credentials.
 
-**When a secret does appear** — the likely first one is a Langfuse or other
-observability key — use the house placeholder pattern rather than a `.tfvars`
-value:
+**When a new secret appears**, there are two shapes, and picking the wrong one
+is how a working credential gets replaced by the string `SET_OUT_OF_BAND`:
+
+*The parameter does not exist yet* — create it with the house placeholder
+pattern (ADR 0001 decision 4), never a `.tfvars` value:
 
 ```hcl
-resource "aws_ssm_parameter" "langfuse_secret_key" {
-  name  = "/cadre/langfuse-secret-key"
+resource "aws_ssm_parameter" "some_new_key" {
+  name  = "/cadre/some-new-key"
   type  = "SecureString"
   value = "SET_OUT_OF_BAND"      # real value via `aws ssm put-parameter`
 
@@ -56,9 +59,27 @@ resource "aws_ssm_parameter" "langfuse_secret_key" {
 }
 ```
 
-Then grant the execution role `ssm:GetParameter` on that ARN and read it at
-container start. Rotation becomes an SSM write with no code change and no
-apply.
+*The parameter already exists with a real value* — **only read it.** A resource
+block here either fails the apply ("already exists") or, once imported, waits to
+clobber the live value with the placeholder on some later apply:
+
+```hcl
+data "aws_ssm_parameter" "some_existing_key" {
+  name            = var.some_existing_key_parameter
+  with_decryption = true
+}
+```
+
+This is what `/cadre/bedrock-api-key` (`lambda.tf`) and the three Langfuse
+parameters (`langfuse.tf`) both do. Two things follow from it: a decrypted read
+puts the value in Terraform state, so the state bucket is as sensitive as the
+secret; and `data` blocks resolve at **plan** time, so every role that plans —
+not just the one that applies — needs `ssm:GetParameter` on the ARN, or the
+plan dies with `AccessDenied` before it renders a diff.
+
+Either way, grant the execution role `ssm:GetParameter` on that ARN and read
+the value at container start. Rotation becomes an SSM write with no code change
+and no apply.
 
 ## First apply
 

@@ -183,6 +183,20 @@
   }
 }
 
+/* Debugging link to the turn's Langfuse trace — small, muted chrome, not part
+   of the reply text, so it reads distinctly from the linkify()'d links inside
+   model output right above it. */
+.trace-link {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: 0.78rem;
+  color: var(--fg-mute);
+}
+
+.trace-link:hover {
+  color: var(--accent);
+}
+
 /* ── suggestions ──────────────────────────────────────────────────────── */
 
 .suggestions {
