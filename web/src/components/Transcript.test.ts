@@ -70,3 +70,66 @@ describe("Transcript trace-link footnote", () => {
     expect(html).not.toContain(TRACE_NOTE_TEXT);
   });
 });
+
+describe("Transcript citation rendering (issue #62)", () => {
+  it("renders a real measured citation (bare URL alone on the final line) as a short labeled link, never as raw URL text", () => {
+    // Verbatim shape from `prompts/context.txt`: the paragraph that used a
+    // source ends, then a blank line, then the source's bare URL alone as
+    // the entire content of the final line.
+    const message: ChatMessage = {
+      id: "reply-3",
+      who: "cadre",
+      text:
+        "For document classification, the Claude Haiku tier is the most " +
+        "appropriate choice. Haiku is optimized for high-volume tasks where " +
+        "accuracy on straightforward inputs is more important than complex " +
+        "reasoning. It is well-suited for document classification, data " +
+        "extraction, and routing workflows.\n\n" +
+        "https://www.cadreai.com/articles/ai-model-selection",
+      status: "done",
+    };
+
+    const html = renderTranscript([message]);
+
+    // The raw URL must never appear as visible text — only inside an href.
+    expect(html).not.toContain(">https://www.cadreai.com/articles/ai-model-selection<");
+    expect(html).toContain('href="https://www.cadreai.com/articles/ai-model-selection"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+    // Short label, not the long URL, is the link's visible text.
+    expect(html).toMatch(/<a[^>]*>see article<\/a>/);
+    expect(html).not.toContain("dangerouslySetInnerHTML");
+  });
+
+  it("renders a /contact citation as a 'contact us' link and a /strategy citation as a 'see more' link", () => {
+    const contactMsg: ChatMessage = {
+      id: "reply-4",
+      who: "cadre",
+      text: "Reach out for pricing.\n\nhttps://www.cadreai.com/contact",
+      status: "done",
+    };
+    const strategyMsg: ChatMessage = {
+      id: "reply-5",
+      who: "cadre",
+      text: "Read more about our approach.\n\nhttps://www.cadreai.com/strategy",
+      status: "done",
+    };
+
+    expect(renderTranscript([contactMsg])).toMatch(/<a[^>]*>contact us<\/a>/);
+    expect(renderTranscript([strategyMsg])).toMatch(/<a[^>]*>see more<\/a>/);
+  });
+
+  it("does not linkify (renders as plain streaming text) while the message is still pending", () => {
+    // Citations are only meaningful once the reply is settled — a partial,
+    // still-streaming URL fragment must not be prematurely turned into a link.
+    const message: ChatMessage = {
+      id: "reply-6",
+      who: "cadre",
+      text: "partial text with https://www.cadreai.com/articles/ai-model",
+      status: "pending",
+    };
+
+    const html = renderTranscript([message]);
+    expect(html).not.toContain("<a ");
+  });
+});
