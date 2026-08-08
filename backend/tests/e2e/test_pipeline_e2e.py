@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
 
@@ -270,16 +271,33 @@ class TestAnsweredTurn:
         assert len(answer) > 80, f"suspiciously short answer: {answer!r}"
         assert "Cadre" in answer
 
-    def test_llm_selection_question_answers_with_grounded_partner_facts(self, http):
+    def test_llm_selection_question_answers_with_grounded_facts_and_a_real_link(
+        self, http
+    ):
+        # Written before #62, when `prompts/baseline.txt` was the only source
+        # and the answer therefore had to name OpenRouter and a partner. With
+        # retrieval up, cadreai.com's own pages say more about this than the
+        # baseline does and `prompts/context.txt` tells the brain to prefer
+        # them — so the answer now cites a page instead of reciting the
+        # partner list. Both are grounded; an answer that is neither is
+        # invented, and that is what this still catches.
         events = parse_sse(
             ask(http, "How does Cadre AI choose LLMs and handle data security?").text
         )
         assert events[-1][0] == "done"
         assert events[-1][1]["outcome"] == "answered"
         answer = reply_text(events)
-        assert "OpenRouter" in answer
-        assert any(partner in answer for partner in ("OpenAI", "Anthropic", "Claude"))
-        assert "cadreai.com/contact" in answer
+
+        from_baseline = "OpenRouter" in answer and any(
+            partner in answer for partner in ("OpenAI", "Anthropic", "Claude")
+        )
+        from_corpus = re.search(r"https://www\.cadreai\.com/\S+", answer) is not None
+        assert from_baseline or from_corpus, (
+            f"the answer names no baseline partner and cites no page: {answer!r}"
+        )
+        # Whichever source it used, the only link it may ever produce is a
+        # cadreai.com one — `guard_output`'s scrub enforces it, this asserts it.
+        assert "cadreai.com" in answer
 
     def test_security_probe_does_not_invent_a_compliance_claim(self, http):
         events = parse_sse(ask(http, "Is Cadre AI SOC2 certified?").text)
@@ -289,14 +307,13 @@ class TestAnsweredTurn:
         assert "soc2 certified" not in answer
         assert "gdpr-compliant" not in answer
 
-    def test_state_events_arrive_in_steps_order_with_retrieve_skipped_and_tokens_after_every_pre_brain_pass(
+    def test_state_events_arrive_in_steps_order_with_tokens_after_every_pre_brain_pass(
         self, http
     ):
         # The exact wire contract for an answered turn (issue #27 case 2):
         # every `state` step appears in STEPS order, every pre-brain step
-        # reaches a terminal status before the first `token`, `retrieve`
-        # reports `skipped` (Phase 1 — no KB wired yet), at least one token
-        # streams, and the turn ends in `done{outcome:"answered"}`.
+        # reaches a terminal status before the first `token`, at least one
+        # token streams, and the turn ends in `done{outcome:"answered"}`.
         events = parse_sse(ask(http, "What does Cadre AI do?").text)
 
         step_order = list(dict.fromkeys(p["step"] for e, p in events if e == "state"))
@@ -315,7 +332,11 @@ class TestAnsweredTurn:
                 f"{step} had not reached a terminal status before the first token"
             )
 
-        assert status_of(events, "retrieve") == "skipped"
+        # `pass` on a target with the KB up, `skipped` on one without it —
+        # what this contract test cares about is that it reached a terminal
+        # verdict in order, not which one. The grounded case that insists on
+        # `pass` lives in `test_rag_e2e.py` behind its own gate.
+        assert status_of(events, "retrieve") in {"pass", "skipped"}
 
         tokens = [p for e, p in events if e == "token"]
         assert len(tokens) >= 1

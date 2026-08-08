@@ -49,11 +49,19 @@ def hard_required() -> list[str]:
 
 
 def required_models() -> list[str]:
-    """Every id this build may call, in the order a turn uses them."""
+    """Every id this build may call, in the order a turn uses them.
+
+    `MODEL_CONDENSE` is probed and printed here but is deliberately absent
+    from `hard_required()`: when it is unavailable, `retrieve` embeds the
+    visitor's message verbatim instead of a rewritten one. That is a worse
+    query, not a broken turn — so it earns a visible `[MISS]` line, not a
+    blocked deploy.
+    """
     ordered = [
         config.MODEL_VALIDATE,
         config.MODEL_INJECTION,
         *topic_chain(),
+        config.MODEL_CONDENSE,
         config.MODEL_BRAIN,
         config.MODEL_GUARD,
     ]

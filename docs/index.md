@@ -99,7 +99,7 @@ Six steps run in order, and the page paints one stepper chip per step up front:
 | `validate_input` | Deterministic checks (rate limit, id shape, length, control characters) + an SLM validity judge |
 | `injection_check` | Prompt-injection screen |
 | `topic_classifier` | Three-way route: `in_scope` / `off_topic` / `needs_human` (escalation) |
-| `retrieve` | KB retrieval seam — reports `skipped` (`kb_not_wired`) until the RAG phase lands |
+| `retrieve` | KB lookup: condense the query (follow-ups only) → embed → search the committed LanceDB corpus, top-k with a similarity floor. Fail-open: an outage, an absent artifact or a manifest mismatch reports `skipped` with the reason and the turn answers from the vetted baseline |
 | `brain` | The answer itself, streamed token by token |
 | `output_safety` | Deterministic URL/PII scrub + a guard model on the complete reply |
 

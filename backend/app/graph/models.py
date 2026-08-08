@@ -245,6 +245,78 @@ async def classify_topic(state: ConversationState) -> Verdict:
 
 
 # --------------------------------------------------------------------------
+# query condensing, for `retrieve`
+# --------------------------------------------------------------------------
+
+_CONDENSE_SYSTEM = _load("condense")
+
+
+def _plausible_query(text: str) -> str | None:
+    """`text` if it could be a search query, else None.
+
+    The condenser reads free text back from a model, so it gets the same
+    treatment as a judge (KB-011): reasoning is stripped first, and an
+    *unclosed* `<think>` — a monologue truncated by the token cap — leaves
+    nothing at all rather than a fragment. What survives is then sanity
+    checked, because a rewrite that is empty, or long enough to be an answer
+    rather than a query, is a condenser that did the wrong job.
+    """
+    text = llm.strip_reasoning(text)
+    if not text:
+        return None
+    # Models like to explain first and conclude last; the query is the final
+    # non-empty line, not the preamble in front of it.
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+    query = lines[-1].strip().strip('"').strip("'").strip()
+    if not query or len(query) > config.CONDENSE_MAX_CHARS:
+        return None
+    return query
+
+
+async def condense_query(state: ConversationState) -> str:
+    """The visitor's message, rewritten to stand on its own.
+
+    "How much does that cost?" retrieves nothing on its own; against the
+    previous turn it is "Cadre AI Maturity Index pricing". That is the whole
+    job, and it is why this call exists at all.
+
+    Two boundaries:
+
+    * **No history, no call.** A first message is already standalone, and
+      spending part of the 60s turn budget (KB-004) to confirm it would be a
+      pure loss. `nodes.retrieve` enforces the same rule at the call site so
+      the seam can be asserted un-called; this check is the backstop.
+    * **Fail-open to the visitor's own words.** An outage, an empty answer, a
+      truncated monologue or an answer that is not a query all fall back to
+      `state["message"]`. A bad rewrite is worse than no rewrite: it retrieves
+      confidently for a question nobody asked.
+    """
+    message = state.get("message", "")
+    if not state.get("history"):
+        return message
+
+    try:
+        raw = await llm.chat(
+            config.MODEL_CONDENSE,
+            _CONDENSE_SYSTEM,
+            [{"role": "user", "content": _conversation(state)}],
+            max_tokens=config.CONDENSE_MAX_TOKENS,
+            temperature=config.JUDGE_TEMPERATURE,
+        )
+    except Exception:  # noqa: BLE001 - fail open, see docstring
+        log.warning("condense_query failed, embedding the raw message", exc_info=True)
+        return message
+
+    query = _plausible_query(raw)
+    if query is None:
+        log.warning("condense_query returned no usable query, embedding the raw message")
+        return message
+    return query
+
+
+# --------------------------------------------------------------------------
 # output safety: deterministic scrub + guard model
 # --------------------------------------------------------------------------
 
@@ -293,11 +365,32 @@ def scrub_failure(answer: str) -> str | None:
     return None
 
 
-_GUARD_SYSTEM = _load("output_safety", topic_scope=persona.TOPIC_SCOPE)
+# Loaded raw and formatted per turn: the guard must judge the answer against
+# the same retrieved passages the brain wrote from (issue #70 — judging a
+# grounded answer against the baseline scope alone is what retracted ten
+# correct fact-dense answers). The sources block sits mid-template so the
+# one-word verdict instruction stays last either way (KB-011).
+_GUARD_TEMPLATE = _load("output_safety")
+_GUARD_SOURCES_TEMPLATE = _load("output_safety_context")
+
+
+def _guard_system(context: str | None) -> str:
+    """The guard prompt, with the turn's retrieved passages if there are any.
+
+    With no context the sources section collapses to nothing and the prompt
+    is the baseline-scope gate exactly as before — a KB-less turn is judged
+    the way a KB-less turn always was.
+    """
+    sources_section = ""
+    if context and context.strip():
+        sources_section = "\n" + _GUARD_SOURCES_TEMPLATE.format(sources=context) + "\n"
+    return _GUARD_TEMPLATE.format(
+        topic_scope=persona.TOPIC_SCOPE, sources_section=sources_section
+    )
 
 
 async def guard_output(state: ConversationState) -> Verdict:
-    """Deterministic scrub first, then Haiku on the complete answer."""
+    """Deterministic scrub first, then the guard model on the complete answer."""
     answer = state.get("answer", "") or ""
 
     scrubbed = scrub_failure(answer)
@@ -308,7 +401,7 @@ async def guard_output(state: ConversationState) -> Verdict:
     try:
         label = await _judge(
             config.MODEL_GUARD,
-            _GUARD_SYSTEM,
+            _guard_system(state.get("context")),
             answer,
             {"pass": "pass", "fail": "fail"},
         )
@@ -353,7 +446,10 @@ async def stream_reply(state: ConversationState) -> AsyncIterator[str]:
     """
     async for text in llm.chat_stream(
         config.MODEL_BRAIN,
-        persona.SYSTEM_PROMPT,
+        # With no retrieved context this is `persona.SYSTEM_PROMPT` byte for
+        # byte, so a turn where the KB was skipped is provably the turn the
+        # bot answered before Phase 3.
+        persona.system_prompt(state.get("context")),
         _messages(state),
         max_tokens=config.BRAIN_MAX_TOKENS,
         temperature=config.BRAIN_TEMPERATURE,

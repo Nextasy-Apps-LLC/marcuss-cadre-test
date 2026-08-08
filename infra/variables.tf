@@ -94,6 +94,12 @@ variable "bedrock_api_key_parameter" {
   default     = "/cadre/bedrock-api-key"
 }
 
+variable "openai_api_key_parameter" {
+  description = "SSM SecureString holding the OpenAI API key used to embed one query per in-scope turn (issue #62). Already exists with a real value — Terraform only reads it, same data-source pattern as the Bedrock and Langfuse parameters. See infra/openai.tf."
+  type        = string
+  default     = "/cadre/openai-api-key"
+}
+
 variable "langfuse_secret_key_parameter" {
   description = "SSM SecureString holding the Langfuse secret key. Already exists with a real value — Terraform only reads it (ADR 0002 data-source precedent, not ADR 0001 decision 4's create pattern, which would overwrite it with a placeholder). See infra/langfuse.tf."
   type        = string
@@ -140,6 +146,12 @@ variable "topic_fallback_models" {
   description = "Topic-classifier fallbacks, walked in order when the primary errors. Keep in sync with backend/app/config.py; scripts/assert_models.py checks the app side before every deploy."
   type        = list(string)
   default     = ["nvidia.nemotron-nano-3-30b", "mistral.ministral-3-14b-instruct"]
+}
+
+variable "condense_model" {
+  description = "Mantle model id that rewrites a follow-up into a standalone retrieval query inside `retrieve` (issue #62). plan.md names Haiku 4.5; no Claude id answers through this transport (ADR 0002), so this defaults to the fastest entitled model and exists so a Haiku id can be swapped in without a code deploy. Keep in sync with backend/app/config.py."
+  type        = string
+  default     = "google.gemma-3-12b-it"
 }
 
 variable "log_retention_days" {

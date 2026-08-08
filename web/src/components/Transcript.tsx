@@ -60,15 +60,30 @@ export function Transcript({ messages }: Props) {
                 )
               : message.text}
             {message.who === "cadre" && message.traceUrl && (
-              <a
-                href={message.traceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="trace-link"
-                data-testid="trace-link"
-              >
-                View trace ↗
-              </a>
+              <>
+                <a
+                  href={message.traceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="trace-link"
+                  data-testid="trace-link"
+                  aria-describedby={`trace-note-${message.id}`}
+                >
+                  View trace ↗
+                </a>
+                {/* Langfuse Cloud ingestion is async (KB-020) — a trace
+                    clicked immediately after the turn ends routinely 404s.
+                    This footnote is the cheap, honest interim mitigation;
+                    associated with the link via aria-describedby so it
+                    isn't orphaned text for screen readers. */}
+                <span
+                  id={`trace-note-${message.id}`}
+                  className="trace-note"
+                  data-testid="trace-note"
+                >
+                  Traces can take up to 30 seconds to become reachable.
+                </span>
+              </>
             )}
             {message.status === "pending" && (
               <span className="cursor" aria-hidden="true" />

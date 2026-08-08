@@ -38,13 +38,13 @@ The plan originally specced Claude models (Haiku judges, Opus brain) via `langch
 
 | Step | Model (shipped) | Why |
 |---|---|---|
-| input validation | deterministic checks + **`nvidia.nemotron-nano-12b-v2`** | cheap SLM sanity/validity judge after the fail-closed deterministic half |
-| injection check | **`qwen.qwen3-32b`** strict single-label classifier | strongest instruction-following against adversarial input in the probe |
-| topic classifier | **`google.gemma-3-12b-it`** (fallbacks, walked on errors only: `nvidia.nemotron-nano-3-30b`, `mistral.ministral-3-14b-instruct` — different providers, so a fallback never shares the primary's outage) | 3-way route: `in_scope` / `off_topic` / `needs_human`; gemma scored 14/14 at p50 0.50s in the probe |
-| brain | **`qwen.qwen3-32b`** (streaming) | best answer quality among the models this account can actually run |
-| output safety | deterministic PII/URL scrub (fail-closed) + **`qwen.qwen3-32b`** guard | final gate on the complete streamed answer |
-| query condensing *(Phase 3, not built)* | judge-class model, probed when the phase starts | rewrite follow-ups into standalone retrieval queries |
-| embeddings *(Phase 3, not built)* | **OpenAI `text-embedding-3-small`** | KB requirement; strong quality/cost for a small corpus |
+| input validation | deterministic checks + **Nemotron 3 Nano 9B v2** (Bedrock serverless) | cheap SLM sanity/validity judge |
+| injection check | **Claude Haiku 4.5** strict single-token classifier | fast, strong instruction-following against adversarial input; Bedrock Guardrails prompt-attack filter evaluated as a complement |
+| topic classifier | **Nemotron 3 Nano 12B v2** (fallbacks: **Google Gemma** on Bedrock, then Haiku 4.5) | 3-way route: `in_scope` / `off_topic` / `needs_human` |
+| query condensing | **Google Gemma 3 12B** (`CADRE_MODEL_CONDENSE`) | rewrite follow-ups into standalone retrieval queries. plan.md specified Haiku 4.5; no Claude id answers through Mantle (ADR 0002), so the slot took the fastest entitled model. Probed before pinning: 10/10 usable rewrites, p50 0.39s, and condensing lifts the mean top-hit score on 5 real follow-ups from 0.250 (raw message) to 0.602 — "how much does that cost?" alone retrieves nothing at all |
+| brain | **Claude Opus 5** (streaming) | answer quality on nuanced consulting questions |
+| output safety | **Claude Haiku 4.5** guard + deterministic PII/URL scrub | final gate on the streamed answer |
+| embeddings | **OpenAI `text-embedding-3-large`** (3072 native) | KB requirement; on a corpus this small the cost difference is noise and retrieval quality is the only axis that matters (decision recorded in #62, superseding `-3-small`) |
 
 ## SSE protocol v2 — real-time through every phase
 
@@ -73,10 +73,10 @@ Shipped in Phase 2 (PR #55). The whole surface is `backend/app/tracing.py`; the 
 **The KB is consulted on every in-scope user message, as a first-class LangGraph node (`retrieve`)** — the standard LangGraph RAG pattern (retrieval as a graph step, not a hidden call inside the brain). It runs **after `topic_classifier` passes and before `brain`**: refused/escalated messages never spend an embedding call, and the brain always has its context before generating. As a node it gets its own SSE `state` events (`retrieve: running → pass/skipped`) and its own Langfuse span (query, top-k hits, scores — all visible in the public trace).
 
 Inside `retrieve`:
-1. **Query condensing** (multi-turn): with non-empty history, Haiku 4.5 rewrites the message into a standalone query ("how much does *that* cost?" → "Cadre AI Maturity Index pricing").
-2. Embed the query with OpenAI `text-embedding-3-small`.
+1. **Query condensing** (multi-turn): with non-empty history, Gemma 3 12B rewrites the message into a standalone query ("how much does *that* cost?" → "Cadre AI Maturity Index pricing"). With empty history the call is skipped entirely — a first message is already standalone, and confirming that would spend part of the 60s turn budget on a no-op.
+2. Embed the query with OpenAI `text-embedding-3-large` — the same model at the same 3072 dimensions the artifact was built with. A mismatch does not raise, it returns wrong neighbours, so `retrieve` checks the query vector against `app/kb/manifest.json` before it searches.
 3. Vector search top-k≈6 with a similarity floor; hits (chunk text + source title/URL) are injected into the brain prompt with an instruction to cite sources inline as a simple small "see more" link at the end that when clicked takes you the original http, it should not show the long url.
-4. **Fail-open**: an embeddings/DB outage degrades to persona-baseline answers; the `state` event reports `retrieve: skipped`, never a user-facing error.
+4. **Fail-open**: an embeddings/DB outage degrades to persona-baseline answers; the `state` event reports `retrieve: skipped`, never a user-facing error. Each way of giving up is its own machine-readable `detail` — `kb_unavailable`, `kb_disabled`, `kb_dimension_mismatch`, `kb_timeout` — because "the KB is off" and "the KB is answering from the wrong corpus" need different people woken up. Zero hits is a `pass`/`no_hits`, not a skip: the KB ran, it had nothing.
 
 ### KB infrastructure — embedded LanceDB, not a database server
 
@@ -86,7 +86,9 @@ The corpus is ~50 pages / a few hundred chunks. The right-sized store is **Lance
 
 ### Ingestion pipeline
 
-`backend/ingest/` runs locally (never in Lambda): crawl allowlisted `www.cadreai.com` pages — home, about, the 4 service pages, industries (×8), departments (×8), contact, case-studies, events — plus all ~27 `/articles/*`; extract main content (beautifulsoup4), chunk ~800 tokens with heading/URL metadata, embed with OpenAI, write the LanceDB dataset. Refresh = re-run the script; automated re-ingestion is an explicit non-goal.
+`backend/ingest/` runs locally (never in Lambda): fetch a **frozen 55-URL allowlist** of `www.cadreai.com` pages — home, about, contact, case-studies, events, the 4 service pages, industries (×9 — the sitemap has nine, not eight) and departments (×8), plus all 27 `/articles/*` — one request per second, honest User-Agent, `robots.txt` enforced, never following a link. Extract main content (beautifulsoup4 + lxml), drop the blocks every page shares (this site's footer is `<div>`s, so the tag list alone leaves the menu in the corpus), chunk ~800 tokens with ~100 overlap and heading/URL metadata, embed with `text-embedding-3-large`, write the LanceDB dataset and a manifest recording model, dimension and counts. Refresh = re-run the script and commit the artifact; automated re-ingestion is an explicit non-goal.
+
+As built (2026-08-08): 55 pages → 131 chunks (median 755 tokens), a 1.80 MB committed artifact, 85K embedding tokens ≈ $0.011 per full rebuild. Details in `backend/ingest/README.md`.
 
 ## Frontend — real-time state UI
 
@@ -112,12 +114,12 @@ Cadre AI support assistant for prospective and existing clients: services (AI St
 
 ## Phases
 
-- [x] **Phase 1 — LangGraph engine + SSE v2**: `StateGraph`, nodes with mocked-seam unit tests, `state` events, refusal/escalation states, persona v1, frontend protocol update + pipeline stepper. — shipped via issues #24/#25/#26/#27 (dev PRs #28/#36 engine, #32 models, #31 stepper, #35 e2e)
-- [x] **Phase 2 — Langfuse traceability**: keys read from existing SSM parameters (see `backend/CLAUDE.md` — the `SET_OUT_OF_BAND` create-pattern was wrong here since the parameters already existed), callback wiring, public traces, `trace` event, frontend trace link, flush hardening for Lambda. — shipped via issue #53 (dev PR #55, learnings PR #54)
-- [ ] **Phase 3 — RAG KB** *(built, awaiting merge + deploy)*: ingestion pipeline + LanceDB artifact (55 allowlisted cadreai.com pages → 131 chunks → 1.80 MB, `text-embedding-3-large`@3072); `retrieve` node (condense → embed → search) wired between `topic_classifier` and `brain`, fail-open with per-cause `detail`s and its own Langfuse span; cited answers; OpenAI key `data`-read from SSM. Implemented under issue #62 (dev PR #63, learnings PR #64) — grounding proven end to end against the real corpus. The checkbox flips once #63 is merged, `terraform apply` runs via workflow_dispatch, and the deploy ships.
-- [ ] **Phase 4 — Evaluation harness** *(not built)*: golden dataset; headless graph runner; deterministic outcome/citation assertions; LLM-judge rubric (groundedness, correctness, persona) on a non-brain model family; runs logged as Langfuse experiments for before/after comparison.
-- [ ] **Phase 5 — UX polish + e2e** *(partly landed early inside Phases 1–2: the e2e suite (#35, tracing e2e in #55), stepper timings + linkify polish (#47), multi-turn history (#48). Remaining — and why this stays unchecked: the no-op thumbs up/down feedback UI is not built)*.
-- [ ] **Phase 6 — Hardening + live verification** *(not done as a recorded pass)*: the assignment's support scenarios exercised live in a browser, including escalation and trace-link click-through; a final eval run recorded as the submission baseline (blocked on Phase 4).
+- [x] **Phase 1 — LangGraph engine + SSE v2**: `StateGraph`, nodes with mocked-seam unit tests, `state` events, refusal/escalation states, persona v1, frontend protocol update + pipeline stepper. — shipped via #24/#25/#26/#27 (PRs #29, #31, #35)
+- [x] **Phase 2 — Langfuse traceability**: keys via SSM SecureString (`SET_OUT_OF_BAND` pattern), callback wiring, public traces, `trace` event, frontend trace link, flush hardening for Lambda.
+- [x] **Phase 3 — RAG KB**: ingestion pipeline + LanceDB artifact (55 pages → 131 chunks, 1.80 MB); `retrieve` node (condense → embed → search) wired between `topic_classifier` and `brain`, fail-open with per-cause `detail`s and its own Langfuse span; cited answers via `persona.system_prompt(context)`; OpenAI key `data`-read from SSM into the function (`infra/openai.tf`); web half done — linkify's KB-017 fix (regex now excludes `(`/`[`/`]`) and the exact `/case-studies` / `/articles` label mappings, verified end to end in a real browser against the real backend image (KB-007). Complete in #62's PR; checkbox flips once merged and deployed (`terraform apply` is Marcus's step).
+- [ ] **Phase 4 — Evaluation harness**: golden dataset; headless graph runner; deterministic outcome/citation assertions; LLM-judge rubric (groundedness, correctness, persona) on a non-brain model family; runs logged as Langfuse experiments for before/after comparison.
+- [ ] **Phase 5 — UX polish + e2e**: stepper/linkify/suggestions polish; no-op thumbs up/down; `BASE_URL`-pointable e2e suite (healthz, config, grounded-answer-with-citation, off-topic refusal, injection refusal) run against local Docker, then prod.
+- [ ] **Phase 6 — Hardening + live verification**: the assignment's support scenarios exercised live in a browser, including escalation and trace-link click-through; a final eval run recorded as the submission baseline.
 
 ## Scope decisions
 

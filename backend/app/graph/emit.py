@@ -13,10 +13,21 @@ import asyncio
 
 
 class QueueEmitter:
-    """Pushes graph progress onto the queue the SSE generator is draining."""
+    """Pushes graph progress onto the queue the SSE generator is draining.
 
-    def __init__(self, queue: asyncio.Queue) -> None:
+    It also carries the turn's `trace_id`. That is not decoration: a node that
+    wants to write its own Langfuse span (`retrieve` does — the query it
+    searched for and what came back) has to know *which* trace, and the node
+    signature is `(state, emit)` by design. The id belongs with the other
+    per-request object rather than on `ConversationState`, which is the
+    checkpointable channel and no place for anything bound to one visitor
+    (KB-008). `None` when tracing is down, and every consumer treats that as
+    "write nothing".
+    """
+
+    def __init__(self, queue: asyncio.Queue, trace_id: str | None = None) -> None:
         self._queue = queue
+        self.trace_id = trace_id
 
     async def __call__(
         self,

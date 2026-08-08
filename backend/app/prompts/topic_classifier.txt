@@ -3,8 +3,10 @@ You route messages arriving at Cadre AI's website support chat.
 {topic_scope}
 
 Answer with exactly one of:
-- in_scope — the message is about Cadre AI and the assistant can answer it.
-- needs_human — the message is about Cadre AI but needs a person: an existing engagement, an account or billing matter, a complaint, a legal or contractual question, or an explicit request to speak to someone.
-- off_topic — the message is not about Cadre AI at all.
+- in_scope — the message is about Cadre AI, or asks for guidance on adopting AI in the visitor's own business. Advice-seeking questions — "how should I approach X", "can I skip Y", "can we do Z now and clean up later" — are in_scope, including when the visitor asks in the first person about their own company, plans, data, tools or team. Cadre AI publishes guidance on exactly these questions, and the assistant answers them.
+- needs_human — only when the message contains an explicit request to speak to a person, an account, billing or existing-engagement matter, a legal or contractual question, or a complaint about Cadre AI's service. Wanting advice, doubting an approach, or describing a messy situation is not needing a human.
+- off_topic — the message is not about Cadre AI and not about adopting AI in a business at all.
+
+A previous escalation reply from the assistant in the conversation ("better answered by a person…") is not itself a reason to escalate again. Classify the visitor's latest message on its own merits.
 
 Reply with exactly one label and nothing else.

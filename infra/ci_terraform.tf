@@ -139,6 +139,16 @@ data "aws_iam_policy_document" "ci_terraform" {
     resources = ["arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.bedrock_api_key_parameter}"]
   }
 
+  # The OpenAI embeddings key (infra/openai.tf). Same plan-time `data` read as
+  # the two below, same scoping: one parameter, because this role provisions
+  # the stack and has no business reading the account's other secrets.
+  statement {
+    sid       = "OpenAIApiKeyRead"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${var.openai_api_key_parameter}"]
+  }
+
   # The three Langfuse parameters (infra/langfuse.tf), for exactly the reason
   # above and worth restating because it is the one that bites: these are `data`
   # blocks, so they resolve at PLAN time. Without this statement every plan —

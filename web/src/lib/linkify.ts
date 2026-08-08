@@ -17,11 +17,16 @@ export type LinkifySegment =
 
 /**
  * Matches `http(s)://` followed by one or more non-whitespace,
- * non-angle-bracket, non-quote, non-`)` characters. The excluded characters
- * keep a URL from swallowing the closing punctuation of the sentence or
- * markup wrapper it's embedded in (e.g. "(see https://cadreai.com/x)").
+ * non-angle-bracket, non-quote, non-bracket/paren characters. The excluded
+ * characters keep a URL from swallowing the closing punctuation of the
+ * sentence or markup wrapper it's embedded in (e.g.
+ * "(see https://cadreai.com/x)") — and, per KB-017, from swallowing a
+ * markdown-formatted link's `](https://...` tail into one unparseable
+ * "URL" when the model occasionally emits `[url](url)` despite
+ * `prompts/context.txt` forbidding it. `(`, `[`, and `]` are excluded
+ * alongside the original `)` for exactly that reason.
  */
-const URL_RE = /https?:\/\/[^\s<>"')]+/g;
+const URL_RE = /https?:\/\/[^\s<>"')([\]]+/g;
 
 /**
  * Trailing sentence punctuation that is never part of the URL itself, e.g.
@@ -49,11 +54,18 @@ export function classifyLink(url: string): "see article" | "contact us" | "see m
     pathname.startsWith("/blog/") ||
     pathname.startsWith("/articles/") ||
     pathname.startsWith("/case-studies/") ||
-    pathname.startsWith("/insights/")
+    pathname.startsWith("/insights/") ||
+    // Exact index paths, no trailing child segment — the corpus's own
+    // /articles and /case-studies pages, not just their children (#62).
+    pathname === "/articles" ||
+    pathname === "/case-studies"
   ) {
     return "see article";
   }
 
+  // Everything else — including the corpus's /industries/*, /departments/*,
+  // /about, /events, /agents, /ai-engineering, /leadership-facilitation,
+  // /strategy — is deliberately "see more": no new label is introduced here.
   return "see more";
 }
 

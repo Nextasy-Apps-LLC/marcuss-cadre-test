@@ -108,7 +108,12 @@ export interface StepState {
   detail: string | null;
   /** Mirrors `StateEvent.elapsed_ms` verbatim — see its doc comment. */
   elapsedMs: number | null;
-  /** Model id that runs this step, from /config. Absent for retrieve (not wired). */
+  /**
+   * Model id that runs this step, from `/config`'s `step_models` map.
+   * Additive and generic — this type doesn't special-case any step name, so
+   * `retrieve` picking up a model id (`embed-3-large`, issue #62) needed no
+   * change here or in `useCadreChat`/`App`.
+   */
   model?: string;
 }
 
