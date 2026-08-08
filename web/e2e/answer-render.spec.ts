@@ -13,6 +13,20 @@ import { expect, lastReply, sendMessage, skipUnlessLive, waitForReplySettled } f
 
 const LINK_LABELS = new Set(["see article", "contact us", "see more"]);
 
+/**
+ * Neutralizes the one KNOWN, INTENTIONAL shrink between a streaming sample
+ * and the settled render: `Transcript.tsx` only runs `linkify()` once
+ * `status === "done"`, which replaces a raw inline URL with a short label
+ * ("see article" for a ~60-char cadreai.com URL). That is correct product
+ * behavior (answer-render.spec.ts's own citation-link test asserts it
+ * directly) and must not be mistaken for retraction — so both sides of the
+ * "was anything taken away" comparison below are compared with URLs
+ * stripped first.
+ */
+function stripUrls(text: string): string {
+  return text.replace(/https?:\/\/\S+/g, "");
+}
+
 test.describe("answer rendering", () => {
   test("the answer streams incrementally and the final text is kept, not retracted", async ({ page }) => {
     skipUnlessLive(test);
@@ -28,12 +42,13 @@ test.describe("answer rendering", () => {
       const status = await reply.getAttribute("data-status");
       if (status !== "streaming" && status !== "pending") break;
       const text = (await reply.locator(".msg-body").textContent()) ?? "";
-      samples.push(text.length);
+      samples.push(stripUrls(text).length);
       await page.waitForTimeout(150);
     }
 
     await waitForReplySettled(page);
-    const finalText = (await reply.locator(".msg-body").textContent()) ?? "";
+    const finalTextRaw = (await reply.locator(".msg-body").textContent()) ?? "";
+    const finalText = stripUrls(finalTextRaw);
 
     const distinctIncreasing = samples.filter((len, i) => i === 0 || len > samples[i - 1]);
     expect(
@@ -44,9 +59,9 @@ test.describe("answer rendering", () => {
     const maxSampled = samples.length ? Math.max(...samples) : 0;
     expect(
       finalText.length,
-      `final text (${finalText.length} chars) is shorter than a streamed sample (${maxSampled} chars) — an answered turn must never shrink the visible text`,
+      `final text, URLs stripped, (${finalText.length} chars) is shorter than a streamed sample (${maxSampled} chars) — an answered turn must never shrink the visible text`,
     ).toBeGreaterThanOrEqual(maxSampled);
-    expect(finalText.length).toBeGreaterThan(0);
+    expect(finalTextRaw.length).toBeGreaterThan(0);
   });
 
   test("citation links render as small labelled links, open in a new tab, and are not raw long URLs", async ({

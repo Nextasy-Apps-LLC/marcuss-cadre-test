@@ -109,7 +109,9 @@ test.describe("pipeline pane against a real turn", () => {
     const status = await retrieve.getAttribute("data-step-status");
     test.skip(status !== "pass", `retrieve ended ${status}, not pass — nothing to assert about hit stats`);
 
-    await expect(page.getByTestId("step-retrieval-stats")).toHaveText(/^(\d+ hits? · top 0\.\d+|0 hits)$/);
+    // Rendered as `└─ {stats}` (PipelineStepper.tsx), same subordinate-line
+    // convention as `.step-detail` — the glyph prefix is part of the text.
+    await expect(page.getByTestId("step-retrieval-stats")).toHaveText(/^└─ (\d+ hits? · top 0\.\d+|0 hits)$/);
     // Condensing never runs on a first message (no history to condense
     // against) — the query line must be absent, not blank.
     await expect(page.getByTestId("step-retrieval-query")).toHaveCount(0);

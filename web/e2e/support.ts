@@ -130,14 +130,27 @@ export interface StepStatusLogEntry {
 }
 
 /**
- * Installs a MutationObserver on `document.body` that records every
- * `data-step-status` attribute change, before any app script runs.
+ * Installs a MutationObserver on the `document` itself (see why below) that
+ * records every `data-step-status` attribute change, before any app script
+ * runs.
  *
  * MUST be called (and awaited) before `page.goto` — an observer attached
  * after the app has already mounted and painted the first `state` events
  * would miss the earliest transitions, and a settled-state snapshot alone
  * does not prove the pane actually updated live rather than all at once
  * (KB-007: a curl-green / single-snapshot check does not prove streaming).
+ *
+ * Observes `document` — NOT `document.body` and NOT `document.documentElement`.
+ * `addInitScript` runs at the moment the new document is created, which is
+ * before the HTML parser has produced *any* element node: both `document.body`
+ * and `document.documentElement` are `null` at that instant, and
+ * `observer.observe(null, ...)` throws `TypeError: parameter 1 is not of type
+ * 'Node'` — silently discarding the whole observer, since the throw happens
+ * inside `addInitScript`'s own isolated evaluation with nothing surfacing it
+ * to the test (every run just came back an empty log). Confirmed empirically
+ * against this exact app: `document` (the `Document` node) is the one target
+ * that already exists at that instant, and `subtree: true` on it still covers
+ * `<html>`, `<body>` and everything under them once the parser creates them.
  */
 export async function installStepStatusRecorder(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -154,7 +167,7 @@ export async function installStepStatusRecorder(page: Page): Promise<void> {
         });
       }
     });
-    observer.observe(document.body, {
+    observer.observe(document, {
       subtree: true,
       attributes: true,
       attributeFilter: ["data-step-status"],
