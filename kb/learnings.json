@@ -570,6 +570,26 @@
       },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-035",
+      "type": "gotcha",
+      "area": [
+        "ci"
+      ],
+      "tags": [
+        "diff-scanner",
+        "self-reference",
+        "false-positive",
+        "comments",
+        "gate",
+        "honesty"
+      ],
+      "title": "A diff-scanning CI gate must be run over its own PR diff before opening the PR — and its line detectors must skip full-line comments",
+      "detail": "The Diff Honesty Scanner (#86) self-exempts its script/tests/fixtures, but its WORKFLOW yml is deliberately not exempt — and the workflow's header comment documents the very patterns the scanner hunts ('--deselect', '|| true'), so the gate flagged its own PR. Two practices follow: (1) any gate that greps diffs for patterns must, before the PR opens, be executed against that PR's own merge-base diff — self-referential false positives (docs/comments naming the hunted patterns) surface nowhere else; (2) line-based detectors should ignore full-line comments (#, //) — a comment cannot narrow a suite or swallow a failure, and docs-in-code otherwise become unwritable. Pin the exemption with a negative fixture (comment-mention.diff) so it cannot regress.",
+      "source": "#86",
+      "date": "2026-08-08",
+      "status": "active"
     }
   ]
 }
