@@ -1,0 +1,9 @@
+{
+  "embedding_model": "text-embedding-3-large",
+  "dimension": 3072,
+  "chunk_count": 131,
+  "page_count": 55,
+  "source_host": "www.cadreai.com",
+  "ingested_at": "2026-08-08T05:04:25.214893+00:00",
+  "artifact_bytes": 1890817
+}
