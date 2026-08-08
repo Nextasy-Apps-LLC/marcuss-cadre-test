@@ -84,6 +84,9 @@ nav:
   - Review walkthrough: review.md
   - Infrastructure: infrastructure.md
   - CI and deployment: ci-cd.md
+  - Answer quality:
+      - How answers get better: fine-tuning/cadre-ai-agent.md
+      - What a turn costs: fine-tuning/costs.md
   - Decisions:
       - Overview: adr/index.md
       - 0001 — Streaming chatbot on CloudFront: adr/0001-streaming-chatbot-cloudfront-lambda-s3.md
