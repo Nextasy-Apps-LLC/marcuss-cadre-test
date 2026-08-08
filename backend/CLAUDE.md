@@ -47,7 +47,8 @@ progress. Rules, each with its why:
   without the other.
 - `STEPS = ["validate_input","injection_check","topic_classifier","retrieve",
   "brain","output_safety"]` — the client paints one chip per entry up front.
-- Four events: `state {step, status: running|pass|fail|skipped, detail}`,
+- Five events. `trace {trace_id, url}` comes first when tracing is up and is
+  simply absent when it is not (see Tracing below), then:
   `token {text}` (only while `brain` runs or the escalation text streams),
   `done {outcome: answered|refused|escalated|error, refusal_text}`, and
   `error {message}`. `done` is always terminal; `error` is terminal on its own
@@ -183,30 +184,49 @@ progress. Rules, each with its why:
   same brevity, so answers end rather than get truncated. Judge latency is part
   of that budget — measure it before swapping a slot to a slower model.
 
-### Tracing (Phase 2 — not built yet)
+### Tracing (`app/tracing.py`)
 
-Deferred with the rest of Langfuse; the standards are fixed now so the PR that
-adds it has nothing left to decide:
-
+- `app/tracing.py` is the whole surface: `start_trace(client_id)` and
+  `finalize_trace(...)`. Nothing else in the backend imports Langfuse.
 - Every graph invocation emits a Langfuse trace, attached as Langfuse's
   LangChain `CallbackHandler` on the graph run — tracing rides the callback
-  surface the orchestration already has, not bespoke logging per call site.
-- Langfuse credentials follow ADR 0001's pre-agreed pattern (decision 4,
-  mirrored in `infra/README.md`): an `aws_ssm_parameter` (`SecureString`,
-  `value = "SET_OUT_OF_BAND"`, `lifecycle { ignore_changes = [value] }`, real
-  value via `aws ssm put-parameter`), read **once at container start** — never
-  per-request (SSM latency comes out of the 60s turn budget) and never a plain
-  Lambda env var (env vars are Terraform-owned config, deliberately out of the
-  deploy role's reach; secrets don't belong there).
+  surface the orchestration already has, not bespoke logging per call site. The
+  handler is a per-request object, so it goes on the invocation's `config`
+  (`config["callbacks"]`), never on `ConversationState` (KB-008), exactly like
+  `emit` goes on `config["configurable"]`. Because the model path is plain
+  `httpx` (ADR 0002, no LangChain), the handler captures **graph-level node
+  spans**, not individual Bedrock generations. That is the accepted shape;
+  don't instrument `app/llm.py` to work around it.
+- Langfuse credentials are three SSM parameters that **already exist with real
+  values**, so Terraform only `data`-references them and injects
+  `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` as function
+  env vars (`infra/langfuse.tf`, which explains why ADR 0001 decision 4's
+  create-with-placeholder pattern is the wrong one here). They are read **once
+  at module import** — never per request, because a credential round trip
+  inside a turn spends part of the 60s budget (KB-004) on something that cannot
+  change between requests.
 - A trace MUST carry at minimum: the `client_id` (as the Langfuse session id,
   so a visitor's turns group), which step refused if any, and per-step + total
   `latency_ms` — a refusal you can't attribute to a step is undebuggable, and
-  debuggable refusals are the product.
-- Flush before `done`: Langfuse batches events in a background thread and
-  Lambda freezes the instance the moment the response ends, so an unflushed
-  batch is a silently dropped trace. Flush before yielding the terminal event.
+  debuggable refusals are the product. The per-step numbers are the `elapsed_ms`
+  values already on the `state` wire events, reused rather than re-measured, so
+  the trace and the stepper cannot disagree.
+- The trace is marked publicly viewable and its URL goes out as the `trace` SSE
+  event — the first frame of the response, since the id is generated locally and
+  is known before the graph starts.
+- **`finalize_trace` flushes twice, on purpose.** The graph's spans and the span
+  carrying the trace-level fields both write trace attributes; in a single
+  export batch the LangChain root span wins the upsert and `public`/`session_id`
+  are silently dropped (verified against Langfuse Cloud). The first flush is
+  what makes ours the later write — it is not redundant, don't delete it.
+- Flush before `done` *and* before `error`: Langfuse batches events in a
+  background thread and Lambda freezes the instance the moment the response
+  ends, so an unflushed batch is a silently dropped trace.
 - Tracing is fail-open — a Langfuse outage degrades observability, never the
-  turn, the same posture as a degraded step verdict.
+  turn, the same posture as a degraded step verdict. Fail-open only counts while
+  it stays visible (KB-009): every disabled or failed path logs a warning naming
+  the cause, and the client learns about it from the *absence* of a `trace`
+  event, never a broken one.
 
 ## Runtime (`Dockerfile`)
 
@@ -226,9 +246,11 @@ adds it has nothing left to decide:
 - Runtime dependencies are exactly `requirements.txt`. Every dependency is
   cold-start weight, so each addition is justified in the PR that adds it —
   `langgraph` and `langchain-core` came in with the engine, `httpx` with the
-  model steps, and `langfuse` arrives with tracing in Phase 2. There is
-  deliberately no boto3: since ADR 0002 nothing in the request path signs
-  anything.
+  model steps, and `langfuse` came in with tracing — dragging `langchain` with
+  it, whose only job is to satisfy the bare `import langchain` guarding
+  `langfuse.langchain`'s import path (see the comment in `requirements.txt`).
+  There is deliberately no boto3: since ADR 0002 nothing in the request path
+  signs anything.
 - The image copies `app/` only. `scripts/` runs in CI and on a laptop against
   a real account; shipping it into the runtime would be cold-start weight for
   code no invoke ever executes.
