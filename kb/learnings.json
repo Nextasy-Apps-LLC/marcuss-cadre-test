@@ -570,6 +570,70 @@
       },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-036",
+      "type": "gotcha",
+      "area": [
+        "ci",
+        "infra",
+        "process"
+      ],
+      "tags": [
+        "deploy",
+        "gate",
+        "preflight",
+        "drift",
+        "ordering",
+        "terraform",
+        "remedy"
+      ],
+      "title": "A preflight gate must be ordered AFTER the step that can fix what it checks, or it deadlocks the pipeline",
+      "detail": "assert_model_env ran before terraform apply and refused the deploy over stale CADRE_MODEL_* variables on the function. Correct verdict, unreachable remedy: clearing those variables requires an apply, and applying was a different workflow the deploy could not invoke, so every deploy failed at the same gate with no in-pipeline way forward. Fixed in #93 by ordering `terraform apply` before the gate inside the same approval-gated job, which makes the gate redundant on purpose (keep it — it still catches a variable set by hand between plan and build). Generalise: when adding a preflight that asserts the state of something the pipeline can also change, put the change first. A gate whose remedy lives outside the pipeline is a stop sign in front of a wall, and it will read as 'the deploy is broken' rather than 'the environment needs an apply'.",
+      "source": "#93 / PR #94",
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-037",
+      "type": "learning",
+      "area": [
+        "process"
+      ],
+      "tags": [
+        "premise",
+        "verification",
+        "stale-checkout",
+        "origin-main",
+        "regression",
+        "scope"
+      ],
+      "title": "Verify a reported bug against origin/main and live state before implementing the fix — a stale checkout makes fixed bugs look live",
+      "detail": "#93 arrived with two confidently-stated, evidenced bugs: infra/lambda.tf had no `lifecycle { ignore_changes = [image_uri] }` so any apply would roll production back to the `bootstrap` image, and Terraform set the CADRE_MODEL_* roster from stale variables. Both were false against origin/main — the guard was present with a why-comment, and #84 had already removed the model variables. The local clone was 20+ commits behind, which is what made them look live. Critically, the prescribed fix (make one `terraform apply -var image_tag=$SHA` the sole mutator, writing image URI and model env atomically) REQUIRED deleting the guard and re-adding the model variables, i.e. implementing it faithfully would have re-introduced both bugs. Always `git fetch` and read the file on origin/main first, and where the claim is about deployed behaviour, prove it against live state — a read-only `terraform plan`, plus the counterfactual with the guard removed, settled this in two commands. When the evidence contradicts the brief, say so and build the safe design; do not implement a regression because it was specified.",
+      "source": "#93 / PR #94",
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-038",
+      "type": "gotcha",
+      "area": [
+        "infra",
+        "ci"
+      ],
+      "tags": [
+        "terraform",
+        "plan",
+        "secrets",
+        "gitignore",
+        "ssm",
+        "artifact"
+      ],
+      "title": "A saved terraform plan of this stack contains decrypted SSM secrets in clear text — treat plan files as state",
+      "detail": "infra/lambda.tf `data`-reads the Bedrock, OpenAI and Langfuse SSM parameters `with_decryption` and injects them as Lambda env vars, so those real values appear in `tfplan` and in the `terraform show -json` output rendered from it. Before #93 neither `tfplan` nor `plan.json` was gitignored (only *.tfstate was), so a `git add -A` after a local plan would have committed live credentials to this public repo. `.gitignore` now covers tfplan/tfplan.*/plan.json/plan.*.json. Same reasoning as the existing note that the state bucket is as sensitive as the key: anything derived from state inherits its sensitivity. Keep CI plan artifacts short-retention, never paste raw plan output into a PR or issue without checking it for env var values, and never commit one.",
+      "source": "#93 / PR #94",
+      "date": "2026-08-08",
+      "status": "active"
     }
   ]
 }
