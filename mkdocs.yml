@@ -1,4 +1,4 @@
-site_name: cadre
+site_name: Cadre
 site_description: >-
   A guardrailed streaming chatbot — private S3 page and a RESPONSE_STREAM
   Lambda Function URL behind one CloudFront distribution.
@@ -52,6 +52,13 @@ theme:
     - toc.follow
     - search.highlight
 
+# The sidebar's section headers (For humans / For agents) come out as plain
+# grey bold text at the same size as the links under them. This stylesheet
+# turns them into actual headers and gives the link lists bullets so the
+# drawer reads as an outline, not a wall of text.
+extra_css:
+  - stylesheets/nav.css
+
 plugins:
   - search
   - include-markdown
@@ -101,10 +108,10 @@ nav:
           - 0003 — One gated release path: adr/0003-one-gated-release-path.md
   - For agents:
       - Start here: agents/index.md
-      - CLAUDE.md — root: agents/claude-root.md
-      - backend/CLAUDE.md: agents/backend.md
-      - web/CLAUDE.md: agents/web.md
-      - infra/CLAUDE.md: agents/infra.md
+      - Root rules — CLAUDE.md: agents/claude-root.md
+      - Backend — CLAUDE.md: agents/backend.md
+      - Web — CLAUDE.md: agents/web.md
+      - Infra — CLAUDE.md: agents/infra.md
 
 # `strict` is intentionally not set here. CI passes `--strict` on the command
 # line so a broken link or an unresolvable include fails the docs build, while

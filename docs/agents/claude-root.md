@@ -1,5 +1,5 @@
 ---
-title: CLAUDE.md — root
+title: Root rules — CLAUDE.md
 ---
 
 !!! info "Source of truth: `CLAUDE.md` (repository root)"

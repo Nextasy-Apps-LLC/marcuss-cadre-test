@@ -1,5 +1,5 @@
 ---
-title: infra/CLAUDE.md
+title: Infra — CLAUDE.md
 ---
 
 !!! info "Source of truth: `infra/CLAUDE.md`"
