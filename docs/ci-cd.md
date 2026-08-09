@@ -1,14 +1,17 @@
 # CI and deployment
 
-Five workflows in `.github/workflows/`. Only two of them can change
-production — the Terraform apply and the deploy — and neither can be triggered
-by a merge.
+Six workflows in `.github/workflows/`. Exactly one of them can change
+production — **`Deploy`** — and it fires only on manual dispatch, behind an
+approval gate. [ADR 0003](adr/0003-one-gated-release-path.md) is the why:
+code, page and infrastructure ship in one gated run so they cannot drift
+apart across a release.
 
 | Workflow | Trigger | Touches AWS? |
 |---|---|---|
-| `ci.yml` | every PR, pushes to `main`, manual | Only the opt-in `e2e` job, and only Bedrock via an API key — no IAM |
-| `terraform.yml` | PRs touching `infra/`, manual | Yes — plan always, apply only on request |
-| `deploy.yml` | manual only | Yes |
+| `ci.yml` | every PR, pushes to `main`, manual | Only the opt-in `e2e` jobs, and only Bedrock via an API key — no IAM |
+| `deploy.yml` | manual dispatch only, gated | Yes — plans *and applies* Terraform, then ships the release |
+| `terraform.yml` | PRs touching `infra/`, manual | Plan only — it has no apply job and no path to one |
+| `diff-honesty-scanner.yml` | every PR | No — reads the diff and the PR body |
 | `docs.yml` | pushes to `main` touching docs, manual | No — publishes to GitHub Pages |
 | `openwiki-update.yml` | daily schedule, manual | No — regenerates `openwiki/` via a PR |
 
@@ -24,7 +27,7 @@ Concurrency is grouped per ref with `cancel-in-progress: true`; a newer push
 makes the in-flight run irrelevant. Permissions are `contents: read` — CI never
 assumes an AWS IAM role.
 
-Four jobs run in parallel on every PR and push:
+Six jobs run on every PR and push:
 
 === "web"
 
@@ -43,6 +46,14 @@ Four jobs run in parallel on every PR and push:
     Python 3.13 with the pip cache keyed on `backend/requirements-dev.txt`,
     then `pytest -q`.
 
+=== "release-path"
+
+    Runs `pytest .github/tests/ -q`: tests that pin the *workflows themselves*
+    — the approval gate stays unconditional, `terraform apply` keeps consuming
+    the reviewed plan file, the honesty scanner's self-test stays first. The
+    `Deploy` workflow runs a couple of times a week in production with a human
+    waiting; it is the worst place to discover the gate drifted.
+
 === "image"
 
     QEMU plus Buildx, then a `linux/arm64` build of `backend/Dockerfile` with
@@ -56,77 +67,27 @@ Four jobs run in parallel on every PR and push:
     `-backend=false` matters: validation needs the providers, not the state,
     so this job never touches the state bucket and needs no AWS credentials.
 
-!!! warning "Nothing between `docker build` and production boots the container"
-    The `image` job proves the Dockerfile builds. It never runs the image or
-    invokes it, and `update-function-code` succeeds unconditionally — it is
-    just a pointer swap. The post-deploy `curl /healthz` is the first thing in
-    the entire pipeline that actually starts the container. That gap is how the
-    base image's `ENTRYPOINT` swallowing the uvicorn `CMD` reached production
-    with CI green. A `docker run -p 8080:8080` smoke step would close it; it is
-    not built yet. See
-    [ADR 0001, decision 9](adr/0001-streaming-chatbot-cloudfront-lambda-s3.md).
+=== "e2e-web"
 
-A fifth job, `e2e`, exists but never runs on push or PR: it only fires on a
-`workflow_dispatch` with `run_e2e: true`, points the backend e2e suite at a
-real target via `e2e_base_url` (default: production), and with
-`e2e_live_bedrock` also drives the live-model cases using the `BEDROCK_API_KEY`
-repository secret. If that flag is requested and the secret is absent, the job
-skips with a visible warning annotation rather than failing or silently
-running only the deterministic cases. The gate's reasoning and the local
-equivalent are documented in
-[`backend/tests/e2e/README.md`](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/backend/tests/e2e/README.md).
+    Builds the backend image in-job, starts the container, and drives the
+    model-free Playwright tier against it in a real browser (#97). This is the
+    job that closed the gap behind the base image's `ENTRYPOINT` swallowing
+    the uvicorn `CMD` ([ADR 0001, decision 9](adr/0001-streaming-chatbot-cloudfront-lambda-s3.md)):
+    until it existed, nothing between `docker build` and production ever
+    booted the container, so that defect shipped with CI green.
 
-## `terraform.yml` — plan on PR, apply on request
+Two more jobs fire only on a `workflow_dispatch` with `run_e2e: true`, pointed
+at a real target via `e2e_base_url` (default: production): `e2e` runs the
+backend's `BASE_URL`-pointable suite, and `e2e-web-live` runs the
+model-dependent `@live` browser specs. With `e2e_live_bedrock` also set they
+drive the live-model cases using the `BEDROCK_API_KEY` repository secret; if
+that flag is requested and the secret is absent, the job skips with a visible
+warning annotation rather than failing or silently running only the
+deterministic cases. The gate's reasoning and the local equivalent are in
+[`backend/tests/e2e/README.md`](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/backend/tests/e2e/README.md)
+and [`web/e2e/README.md`](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/web/e2e/README.md).
 
-Triggers on `pull_request` limited to `paths: ["infra/**", ".github/workflows/terraform.yml"]`,
-and on `workflow_dispatch` with an `action` choice of `plan` or `apply`.
-Concurrency group `terraform-production`, never cancelled in progress — a
-half-applied stack is worse than a queued run.
-
-State configuration is workflow-level `env`, not a secret: the bucket is
-`nextasyapps-terraform-state-dev` and the key is `cadre/cadre.tfstate`. A
-bucket name grants nothing without the IAM role, and the role is OIDC-gated to
-this repository. Backends use `use_lockfile=true` — native S3 state locking,
-which needs `required_version >= 1.10` and replaces a DynamoDB lock table.
-
-### The `plan` job
-
-Guarded by `if: vars.TF_ROLE_ARN != ''`. Until the first apply creates the
-Terraform role, that variable is unset and the job could only fail with an
-opaque AWS auth error; skipping reports honestly as "not configured yet"
-instead of red.
-
-It assumes the role via OIDC, inits against the S3 backend, re-runs
-`fmt -check` and `validate`, prints `terraform output`, then plans into a
-`tfplan` file. Printing outputs here means nobody needs local AWS credentials
-just to read a value the stack already exports — the ACM validation record
-being the recurring example.
-
-The plan step captures its own exit code with `set +e` so a summary step can
-report the result, and the summary uses `|| true` throughout: it reports, it
-does not judge. Letting it fail on a missing `plan.txt` would replace the real
-error with a `tail(1)` message.
-
-!!! note "Known discrepancy: `-detailed-exitcode` is documented but not passed"
-    The comment above the plan step describes `-detailed-exitcode` semantics
-    (0 = no changes, 2 = changes, 1 = error), but the `terraform plan`
-    invocation does not actually pass the flag. The captured code is therefore
-    only ever 0 or 1, and the summary's "Changes pending — review the plan
-    below before applying" branch is unreachable. Recorded here rather than
-    quietly changed, since a docs PR is the wrong place to alter what CI does.
-
-When dispatched with `action: apply`, the job uploads `infra/tfplan` as an
-artifact with a 1-day retention.
-
-### The `apply` job
-
-`needs: plan`, `if: inputs.action == 'apply'`, and runs inside
-`environment: production`. It downloads the exact `tfplan` artifact the plan
-job produced and runs `terraform apply ... tfplan` — it never re-plans. If
-state moved between review and apply, Terraform refuses rather than silently
-applying something nobody looked at.
-
-## `deploy.yml` — manual, gated, deploy or rollback
+## `deploy.yml` — the one release path
 
 There is no push trigger. Shipping is a decision, and the approval gate would
 be meaningless if a merge could fire it. Concurrency group
@@ -134,55 +95,80 @@ be meaningless if a merge could fire it. Concurrency group
 race on the Lambda pointer and the S3 sync, and the loser would silently win.
 
 Inputs are an `action` (`deploy` or `rollback`) and a full 40-character commit
-SHA.
+SHA. Two jobs:
 
-### `plan` — credential-free validation, before the gate
+**`plan` — everything checkable, before the gate.** Validates the SHA (shape,
+existence, and ancestry of `origin/main` — without the ancestor check you
+could ship an unreviewed branch tip by pasting its SHA, routing around the
+whole PR gate), then assumes the Terraform role and runs `terraform plan`
+into a saved `tfplan` artifact, with a human-readable summary for the
+approver. A doomed request is rejected without waking a human.
 
-Runs first, deliberately, so a doomed request is rejected without waking a
-human. It checks out full history and asserts three things:
+**`release` — the gated job.** Runs in `environment: production` (required
+reviewers configured in repo settings), and then, in order:
 
-1. The SHA matches `^[0-9a-f]{40}$`. Short SHAs are ambiguous, and a deploy is
-   the wrong place to find that out.
-2. The commit exists (`git cat-file -e`).
-3. The commit is an ancestor of `origin/main`
-   (`git merge-base --is-ancestor`). Without this you could ship an unreviewed
-   branch tip by pasting its SHA, routing around the whole PR and code-owner
-   gate.
+1. **Apply the reviewed plan** — the exact `tfplan` artifact, never a re-plan,
+   so infrastructure and code cannot drift apart between approval and apply.
+   This runs *first* because `assert_model_env` refuses to deploy against an
+   environment only an apply can fix — the drift incident behind ADR 0003.
+2. **`assert_models`** — every configured Bedrock model id is invocable in
+   this account (#84).
+3. **`assert_model_env`** — the live Lambda environment already matches the
+   models this commit ships, so a deploy never swaps the image and leaves the
+   roster behind.
+4. **Build and push the image** (skipped on rollback and when the immutable
+   ECR tag already exists), **point the Lambda at it**, and
+   `wait function-updated` — without the wait the smoke test can hit the old
+   code and pass.
+5. **Ship the page**: sync hashed assets first (additively, `immutable`),
+   `index.html` last (`max-age=0`) — it is the pointer that makes the new
+   assets live. Never `aws s3 cp --metadata-directive REPLACE`: `sync` infers
+   `Content-Type` from the extension and `REPLACE` wipes it, and the browser
+   then refuses the stylesheet.
+6. **Invalidate CloudFront**, wait, then **smoke** `/healthz` (five attempts,
+   six seconds apart) and `/` — proving the page is served, not just the API.
+7. **`assert_step_models`** — `/healthz` proves something is up; this proves
+   the live service reports the models *this commit* deployed.
 
-It then writes a summary table naming the action, commit, subject, author and
-requester.
+The operator runbook — including rollback — lives in
+[infra/README.md §Releasing](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/infra/README.md#releasing);
+the incident that forced one path and the two plausible-sounding fixes that
+were rejected are in [ADR 0003](adr/0003-one-gated-release-path.md).
 
-### `deploy` — the gated job
+## `terraform.yml` — plan only
 
-Runs in `environment: production` with `url: ${{ vars.SITE_URL }}`, and
-authenticates to AWS by OIDC only — no access key exists for this repository.
+Triggers on PRs touching `infra/**` and on manual dispatch. It assumes the
+Terraform role via OIDC, inits against the S3 backend, re-runs `fmt -check`
+and `validate`, prints `terraform output` (so nobody needs local AWS
+credentials just to read a value the stack already exports), and plans with
+`-detailed-exitcode` so the summary can distinguish "changes pending" from
+"clean". It cannot apply: no apply job exists, the job never enters the
+`production` environment, and ADR 0003 is why that is a property, not a gap —
+before #93 this workflow *could* apply, which is exactly how infrastructure
+and code drifted.
 
-1. **Is the image already built?** `aws ecr describe-images` on the SHA tag.
-   A `rollback` whose image is missing fails right here: a rollback restores a
-   previously deployed build, it never creates one.
-2. **Build and push** — skipped entirely on rollback, and skipped on deploy
-   when the tag already exists. The ECR repository is `IMMUTABLE`, so a second
-   push of the same tag would fail anyway; re-deploying a SHA is idempotent.
-3. **Point the Lambda at the image**, then `aws lambda wait function-updated`.
-   Without the wait, the smoke test can hit the old code and pass.
-4. **Build the page** from source with Node 22 and `npm ci`.
-5. **Sync hashed assets first, additively** (no `--delete`) with
-   `max-age=31536000, immutable`. A visitor mid-navigation may still be running
-   the previous `index.html`; deleting its assets breaks that page in flight.
-   Filenames are content-hashed, so stale objects are harmless.
-6. **Sync `index.html` last**, `max-age=0, must-revalidate`. It is the pointer
-   that makes the new assets live, so uploading it first would reference assets
-   that are not there yet.
-7. **Invalidate CloudFront** on `/*` and wait for completion.
-8. **Smoke test** `/healthz` with five attempts six seconds apart, then `/` —
-   proving the page is served, not just the API.
-9. **Record the outcome** in the step summary whether or not the run passed.
+State configuration is workflow-level `env`, not a secret: the bucket is
+`nextasyapps-terraform-state-dev` and the key is `cadre/cadre.tfstate`. A
+bucket name grants nothing without the IAM role, and the role is OIDC-gated to
+this repository. Backends use `use_lockfile=true` — native S3 state locking,
+which needs `required_version >= 1.10` and replaces a DynamoDB lock table.
+Concurrency group `terraform-production`, never cancelled in progress — a
+half-read state is worse than a queued run.
 
-!!! danger "Never `aws s3 cp --metadata-directive REPLACE` here"
-    `aws s3 sync` infers `Content-Type` from the file extension. The `REPLACE`
-    directive wipes it along with cache-control, and the browser then refuses
-    the stylesheet. Both sync steps use `sync`, split by cache policy with
-    `--exclude`/`--include`.
+## `diff-honesty-scanner.yml` — the safety net guards itself
+
+Runs on every PR. The scanner (`.github/scripts/diff_honesty_scanner.py`,
+stdlib-only, twelve rule families) fails a PR whose diff *weakens the safety
+net* — deleting or softening tests, skipping gates, widening fail-open paths —
+unless the PR body carries an explicit
+`honesty-waiver: <rule> <exact/path> — <reason>` line per waived finding, so a
+waiver is itself reviewable text. A diff that modifies the scanner machinery
+is never waivable.
+
+The job's first step runs the scanner's own fixture suite
+(`.github/tests/test_diff_honesty_scanner.py`): a scanner that cannot catch
+its fixture violations fails red before it judges anyone. Issue #86 has the
+full rationale.
 
 ## `docs.yml` — this site
 
@@ -209,10 +195,11 @@ mkdocs build --strict   # exactly what CI runs
 ## `openwiki-update.yml` — the repo knowledge base
 
 Runs on a daily schedule plus manual dispatch. It regenerates the pages under
-`openwiki/` and opens a PR (branch `openwiki/update`) — never a direct push —
-so the generated docs go through the same history as everything else. It checks out
-with `fetch-depth: 0`: a shallow clone hides the commit OpenWiki last
-documented, so the update would diff against an empty change summary.
+`openwiki/` and refreshes the `OPENWIKI` marker blocks in `CLAUDE.md` /
+`AGENTS.md`, then opens a PR (branch `openwiki/update`) — never a direct
+push — so the generated docs go through the same history as everything else.
+It checks out with `fetch-depth: 0`: a shallow clone hides the commit OpenWiki
+last documented, so the update would diff against an empty change summary.
 
 ## Repository settings the workflows depend on
 
@@ -225,7 +212,7 @@ protection on `main`, and the repository variables (`AWS_REGION`,
 `OIDC_PROVIDER_ARN`), all of which come from `terraform output`.
 
 There are exactly two repository **secrets**, neither of them an AWS
-credential: `BEDROCK_API_KEY`, read only by the dispatch-gated `e2e` job in
+credential: `BEDROCK_API_KEY`, read only by the dispatch-gated `e2e` jobs in
 `ci.yml` ([ADR 0002](adr/0002-bedrock-mantle-api-key.md) made the Bedrock key
 the stack's one *application* secret), and `OPENCODE_ZEN_API_KEY`, used only
 by `openwiki-update.yml`'s generation model. Every value above is an
@@ -236,8 +223,8 @@ not by knowing the string.
     A job running inside `environment: production` gets
     `sub = repo:<owner>/<repo>:environment:production` in its OIDC token. That
     **replaces** the usual `ref:refs/heads/main` form rather than adding to it,
-    so a trust policy listing only the ref form denies the gated `deploy` and
-    `terraform apply` jobs while the ungated `plan` job keeps working. This
+    so a trust policy listing only the ref form denies the gated `release`
+    job while the ungated `plan` jobs keep working. This
     org's tokens also carry two spellings of the repo — the name form and the
     id-qualified form that survives renames — so every trust condition is
     (2 spellings) × (applicable sub forms). See
