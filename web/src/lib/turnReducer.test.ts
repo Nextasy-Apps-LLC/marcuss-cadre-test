@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { STEPS, type DoneEvent, type RetrievalInfo, type StateEvent, type StepName, type TraceEvent } from "../types";
+import { STEPS, type DoneEvent, type RetrievalInfo, type StateEvent, type StepName, type TraceEvent, type TurnSummary } from "../types";
 import {
   applyAborted,
   applyDone,
@@ -201,6 +201,42 @@ describe("applyTrace (KB-005 — mirrors the backend's shipped `trace` event ver
     expect(turn.replyTraceUrl).toBe(
       "https://us.cloud.langfuse.com/project/x/traces/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     );
+  });
+});
+
+describe("applyDone — turn summary (issue #109)", () => {
+  const summary: TurnSummary = {
+    latency_ms: 4363,
+    tokens: { input: 10289, output: 164, total: 10453 },
+    cost_usd: 0.00126,
+    usage_source: "provider",
+    cost_source: "model_prices",
+    usage_tokens: {
+      brain: { input: 10289, output: 164, total: 10453 },
+    },
+    step_cost_usd: { brain: 0.00126 },
+  };
+
+  it("stores the done event's summary on the turn, whatever the outcome", () => {
+    for (const event of [
+      { outcome: "answered" as const, summary },
+      { outcome: "refused" as const, refusal_text: "no", summary },
+      { outcome: "escalated" as const, summary },
+    ]) {
+      const turn = applyDone(freshTurn(), event);
+      expect(turn.turnSummary).toEqual(summary);
+    }
+  });
+
+  it("leaves turnSummary undefined when the wire omitted summary — the absent case", () => {
+    // Tracing down / `finalize_trace` no-oped → no summary on the wire. The
+    // reducer must not invent one (KB-009 absent ≠ zero).
+    const turn = applyDone(freshTurn(), { outcome: "answered" });
+    expect(turn.turnSummary).toBeUndefined();
+  });
+
+  it("a fresh turn carries no summary until done arrives", () => {
+    expect(freshTurn().turnSummary).toBeUndefined();
   });
 });
 

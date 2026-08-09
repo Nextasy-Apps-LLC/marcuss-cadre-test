@@ -13,7 +13,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { PipelineStepper } from "./PipelineStepper";
-import { freshSteps, type RetrievalInfo, type StepState } from "../types";
+import { freshSteps, type RetrievalInfo, type StepState, type TurnSummary } from "../types";
 
 function render(retrieval: RetrievalInfo | null): string {
   const steps: StepState[] = freshSteps().map((step) =>
@@ -91,5 +91,63 @@ describe("PipelineStepper retrieval facts", () => {
     expect(html).not.toContain("<img");
     expect(html).not.toContain('onerror="alert(1)"');
     expect(html).toContain("&lt;img");
+  });
+});
+
+describe("PipelineStepper per-step usage rows (issue #109)", () => {
+  const summary: TurnSummary = {
+    latency_ms: 4363,
+    tokens: { input: 10289, output: 164, total: 10453 },
+    cost_usd: 0.00126,
+    usage_source: "provider",
+    cost_source: "model_prices",
+    usage_tokens: {
+      brain: { input: 10289, output: 164, total: 10453 },
+      topic_classifier: { input: 2100, output: 0, total: 2100 },
+    },
+    step_cost_usd: { brain: 0.00126 },
+  };
+
+  function renderSteps(over: Partial<TurnSummary> = {}, stepsOver: Partial<StepState> = {}): string {
+    const steps: StepState[] = freshSteps().map((step, i) =>
+      i === 0 ? { ...step, ...stepsOver } : step,
+    );
+    return renderToStaticMarkup(
+      createElement(PipelineStepper, {
+        steps,
+        summary: { ...summary, ...over },
+        open: true,
+        onToggle: () => {},
+      }),
+    );
+  }
+
+  it("renders tokens and cost under a step the summary has usage for", () => {
+    const html = renderSteps();
+    expect(html).toContain('data-testid="step-usage-brain"');
+    expect(html).toContain("~10.5k tokens · $0.00126");
+  });
+
+  it("renders tokens alone when the step is priced off the table", () => {
+    const html = renderSteps();
+    // topic_classifier has usage but no step_cost_usd entry → cost is omitted.
+    expect(html).toContain('data-testid="step-usage-topic_classifier"');
+    expect(html).toContain("~2.1k tokens");
+    expect(html).not.toContain("~2.1k tokens · $");
+  });
+
+  it("renders no usage row for a step the summary has no numbers for", () => {
+    const html = renderSteps();
+    expect(html).not.toContain('data-testid="step-usage-retrieve"');
+    expect(html).not.toContain('data-testid="step-usage-validate_input"');
+    expect(html).not.toContain('data-testid="step-usage-output_safety"');
+    expect(html).not.toContain('data-testid="step-usage-injection_check"');
+  });
+
+  it("renders no usage rows at all when the done event carried no summary", () => {
+    const html = renderToStaticMarkup(
+      createElement(PipelineStepper, { steps: freshSteps(), open: true, onToggle: () => {} }),
+    );
+    expect(html).not.toContain("step-usage-");
   });
 });
