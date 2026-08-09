@@ -7,10 +7,17 @@ verdicts as they happen, then answer tokens, then a terminal `done` event —
 from a FastAPI backend running a **LangGraph conversation engine** as an arm64
 container on Lambda.
 
-This site is the reference documentation. It is built from the repository, so
-the pages under **Infrastructure** and **Decisions** are the same Markdown that
-lives in `infra/` and `adr/`, not a second copy of it. Reviewing the
-submission? Start with the [review walkthrough](review.md).
+This site is the reference documentation, and it is split by audience. **For
+humans** — the reviewer reading this cold — is everything from the review
+walkthrough down through the decisions: what this is, how a turn flows, how to
+run it, why it is shaped this way. **For agents** is the machine-facing
+contract that keeps an AI coding assistant correct: the `CLAUDE.md` family and
+the generated `openwiki/` knowledge base. Each side says so on its landing
+page. Several pages are the *same Markdown* that lives at the repository root
+(`plan.md`, `adr/`, `infra/README.md`, the `CLAUDE.md` files), embedded at
+build time — one source of truth per fact, not a second copy.
+
+Reviewing the submission? Start with the [review walkthrough](review.md).
 
 ## The shape
 
@@ -112,7 +119,7 @@ degrades observability, never a visitor's turn — and renders amber, never
 green. The full contract semantics live next to the code in
 [`backend/CLAUDE.md`](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/backend/CLAUDE.md).
 
-## Secrets: exactly one, by decision
+## Secrets: a handful, all SSM-held, none in GitHub
 
 ADR 0001 designed a zero-secret stack; [ADR 0002](adr/0002-bedrock-mantle-api-key.md)
 knowingly retracted one row of it when classic `bedrock-runtime` turned out to
@@ -121,11 +128,16 @@ OpenAI-compatible Mantle endpoint with a Bedrock API key as a bearer token.
 
 | Hop | How it authenticates |
 |---|---|
-| Lambda → Bedrock | Bearer token from an SSM `SecureString` (`/cadre/bedrock-api-key`), injected as `AWS_BEARER_TOKEN_BEDROCK`. The one secret in the stack. |
+| Lambda → Bedrock | Bearer token from an SSM `SecureString` (`/cadre/bedrock-api-key`), injected as `AWS_BEARER_TOKEN_BEDROCK`. |
+| Lambda → OpenAI (embeddings) | API key from an SSM `SecureString`, `data`-read by Terraform into the environment. |
+| Lambda → Langfuse (tracing) | Secret/public key pair, same SSM pattern. Fail-open: tracing down never breaks a turn. |
 | GitHub Actions → AWS | OIDC only. No `AWS_ACCESS_KEY_ID` in repository secrets. |
 | CloudFront → Lambda URL | Lambda-typed OAC, SigV4-signed. |
 | CloudFront → S3 | S3-typed OAC. The bucket blocks all public access. |
 
+The authoritative secrets table — every parameter name, who reads it, who may
+write it — lives in
+[infra/README.md §Secrets and credentials](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/infra/README.md#secrets-and-credentials).
 `terraform.tfvars` and `backend.hcl` are gitignored because an account id and a
 state bucket name are pointless things to publish, not because they are
 sensitive.
@@ -133,25 +145,32 @@ sensitive.
 ## Repository layout
 
 ```
-backend/     FastAPI + LangGraph engine, Dockerfile (arm64, Lambda Web Adapter)
-web/         React + Vite page with the live pipeline stepper, Vitest tests
-infra/       Terraform — CloudFront, Lambda, S3, ACM, OIDC roles
-adr/         Architecture decision records (MADR format)
-kb/          learnings.json — the compounding knowledge base
-.claude/     Compound workflow: skills, agents, kanban recipe
-docs/        This site
+backend/       FastAPI + LangGraph engine, Dockerfile (arm64, Lambda Web Adapter)
+backend/evals/ Judge benchmark harness — picks the judge models on numbers
+web/           React + Vite page with the live pipeline stepper, Vitest tests
+infra/         Terraform — CloudFront, Lambda, S3, ACM, OIDC roles
+adr/           Architecture decision records (MADR format)
+kb/            learnings.json — the compounding knowledge base
+.claude/       Compound workflow: skills, agents, kanban recipe
+openwiki/      Generated agent knowledge base (daily workflow; do not hand-edit)
+docs/          This site
 ```
 
-`plan.md` at the repository root is the epic: architecture, model roster,
-phases, and the scope-decision table.
+[`plan.md`](plan-epic.md) at the repository root is the epic: architecture,
+model roster, phases, and the scope-decision table.
 
 ## Where to go next
 
 - **[Review walkthrough](review.md)** — the demo script and the
   dimension-by-dimension evidence map for reviewers.
+- **[The Claude Code workflow](claude-code.md)** — the compound loop, the
+  skills and subagents, the KB, and the honesty scanner: 30% of the grade,
+  one page.
 - **[Infrastructure](infrastructure.md)** — the operational doc: first apply,
   attaching the custom domain, the streaming-breakers checklist, cost.
 - **[CI and deployment](ci-cd.md)** — what the workflows do and why
   shipping is manual.
 - **[Decisions](adr/index.md)** — why the stack is shaped this way, including
   the traps that cost real time.
+- **[For agents](agents/index.md)** — the machine-facing half: the `CLAUDE.md`
+  family, `openwiki/`, and how an AI assistant is kept correct.
