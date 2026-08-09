@@ -1,4 +1,4 @@
-# fine-tuning.md — how the bot's answers get better
+# How the bot's answers get better
 
 This is the working document for answer-quality improvement on the deployed
 chatbot: the process each fix goes through, and the record of what was

@@ -79,19 +79,32 @@ markdown_extensions:
       anchor_linenums: true
   - pymdownx.inlinehilite
 
+# The nav is split by audience, on purpose. "For humans" is the reviewer-facing
+# story (what this is, how it flows, how to run it, why it is shaped this way);
+# "For agents" is the machine-facing contract that keeps an AI coding assistant
+# correct. Each side says who it is for on its landing page.
 nav:
   - Home: index.md
   - Review walkthrough: review.md
-  - Infrastructure: infrastructure.md
-  - CI and deployment: ci-cd.md
-  - Answer quality:
-      - How answers get better: fine-tuning/cadre-ai-agent.md
-      - What a turn costs: fine-tuning/costs.md
-  - Decisions:
-      - Overview: adr/index.md
-      - 0001 — Streaming chatbot on CloudFront: adr/0001-streaming-chatbot-cloudfront-lambda-s3.md
-      - 0002 — Bedrock via the Mantle endpoint: adr/0002-bedrock-mantle-api-key.md
-      - 0003 — One gated release path: adr/0003-one-gated-release-path.md
+  - For humans:
+      - The plan (epic): plan-epic.md
+      - The Claude Code workflow: claude-code.md
+      - Infrastructure: infrastructure.md
+      - CI and deployment: ci-cd.md
+      - Answer quality:
+          - How answers get better: quality/cadre-ai-agent.md
+          - What a turn costs: quality/costs.md
+      - Decisions:
+          - Overview: adr/index.md
+          - 0001 — Streaming chatbot on CloudFront: adr/0001-streaming-chatbot-cloudfront-lambda-s3.md
+          - 0002 — Bedrock via the Mantle endpoint: adr/0002-bedrock-mantle-api-key.md
+          - 0003 — One gated release path: adr/0003-one-gated-release-path.md
+  - For agents:
+      - Start here: agents/index.md
+      - CLAUDE.md — root: agents/claude-root.md
+      - backend/CLAUDE.md: agents/backend.md
+      - web/CLAUDE.md: agents/web.md
+      - infra/CLAUDE.md: agents/infra.md
 
 # `strict` is intentionally not set here. CI passes `--strict` on the command
 # line so a broken link or an unresolvable include fails the docs build, while
