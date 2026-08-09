@@ -16,41 +16,42 @@ The headline is not the one you would guess from the model roster.
 ## Where the money goes
 
 One answered turn with the knowledge base live — trace
-`3f80ce53fa8d6fafd6dd9c4cd8b27512`, **$0.0017 total**. This is the *baseline*
-that motivated the guard swap in §3b below; the same turn now costs $0.00135:
+`3f80ce53fa8d6fafd6dd9c4cd8b27512`, **$0.00135 total** on the deployed
+roster (down from $0.00171 before the guard swap in §3b below — same turn,
+same prompts, cheaper guard):
 
 | step | model | tokens in | tokens out | cost | share |
-|---|---|---:|---:|---:|---:|
-| `brain` | `qwen.qwen3-32b` | 5576 | 167 | $0.00094 | 55% |
-| **`output_safety`** | `qwen.qwen3-next-80b-a3b-instruct` | **4581** | **2** | **$0.00064** | **38%** |
-| `topic_classifier` | `mistral.ministral-3-8b-instruct` | 463 | 3 | $0.00007 | 4% |
+|---|---:|---:|---:|---:|---:|
+| `brain` | `qwen.qwen3-32b` | 5576 | 167 | $0.00094 | 70% |
+| **`output_safety`** | `nvidia.nemotron-nano-3-30b` | **4581** | **2** | **$0.00028** | **21%** |
+| `topic_classifier` | `mistral.ministral-3-8b-instruct` | 463 | 3 | $0.00007 | 5% |
 | `injection_check` | `mistral.ministral-3-8b-instruct` | 188 | 2 | $0.00003 | 2% |
-| `validate_input` | `nvidia.nemotron-nano-12b-v2` | 119 | 3 | $0.00003 | 1% |
-| `embedding` | `text-embedding-3-large` | 7 | — | $0.0000009 | 0.05% |
+| `validate_input` | `nvidia.nemotron-nano-12b-v2` | 119 | 3 | $0.00003 | 2% |
+| `embedding` | `text-embedding-3-large` | 7 | — | $0.0000009 | ~0% |
 
 Two facts fall out of that table immediately.
 
-**The output guard costs 38% of the turn to say one word.** It emitted two
-tokens. Its entire expense is *input*: it re-reads the complete answer plus
-every retrieved passage, because since issue #70 the guard judges groundedness
-against the sources the brain actually used — the fix for the ten correct
-answers that were wrongly retracted. That fix was right, and this is its
-invoice.
+**The output guard costs 21% of the turn to say one word** — down from 38%
+before the #79 swap. It emitted two tokens. Its entire expense is *input*: it
+re-reads the complete answer plus every retrieved passage, because since issue
+#70 the guard judges groundedness against the sources the brain actually used —
+the fix for the ten correct answers that were wrongly retracted. That fix was
+right, and this is its invoice.
 
-**This turn is ~97% input tokens.** 10 934 in, 177 out. Output pricing is
+**This turn is ~98% input tokens.** 10 934 in, 177 out. Output pricing is
 where the roster's headline numbers differ most, and it is very nearly
 irrelevant here.
 
 ## The retrieved passages are charged twice
 
 The same turn's shape, against a turn on the same deployment with
-`CADRE_KB_ENABLED=0` (trace `81dd32758f3413098e89032fc7cc4b3c`, **$0.00037**):
+`CADRE_KB_ENABLED=0` (trace `81dd32758f3413098e89032fc7cc4b3c`):
 
 | | with KB | without KB | delta |
 |---|---:|---:|---:|
 | `brain` input tokens | 5576 | 1145 | +4431 |
 | `output_safety` input tokens | 4581 | 419 | +4162 |
-| turn cost | $0.0017 | $0.00037 | **+$0.0013** |
+| turn cost | $0.00135 | $0.00037 | **+$0.00098** |
 
 Roughly **4.3K tokens of passages, billed once to the brain and again to the
 guard**, and on these two samples the retrieval context accounts for about
@@ -58,9 +59,11 @@ three quarters of what a turn costs.
 
 Treat that ratio as indicative rather than measured: the two turns asked
 different questions and produced different-length answers, so this is not a
-controlled experiment. The *mechanism* — the same passages paid for twice — is
-structural and not in doubt; the exact multiple is worth re-measuring on
-matched questions before anyone acts on it.
+controlled experiment. Both traces also predate the #79 guard swap, so the
+guard half of that delta is now about half what the table shows; the
+*mechanism* — the same passages paid for twice — is structural and not in
+doubt, and the exact multiple is worth re-measuring on matched questions
+before anyone acts on it.
 
 ## Which levers actually matter
 

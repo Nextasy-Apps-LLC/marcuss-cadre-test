@@ -1,5 +1,5 @@
 ---
-title: web/CLAUDE.md
+title: Web — CLAUDE.md
 ---
 
 !!! info "Source of truth: `web/CLAUDE.md`"

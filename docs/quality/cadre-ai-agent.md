@@ -12,15 +12,15 @@ Every answer-quality fix follows the same five steps. Skipping one is how a
 
 ```mermaid
 flowchart TD
-    A["1 · Real failures\nLangfuse traces of live sessions\n+ structured question sweeps"] --> B["Replay deterministically\ntemp 0, exact transcript"]
-    B --> C["2 · Root-cause to ONE component\nvalidate / injection / classifier /\ncondense+retrieve / persona / guard"]
-    C --> D["3 · Freeze as labelled fixtures\nevals/fixtures/*.json + counter-fixtures\n(unit tests pin schema & coverage)"]
-    D --> E["4 · TDD fix\nfailing tests committed first,\nthen prompts (app/prompts/*.txt) + code"]
-    E --> F["5a · Measure tunables\njudge_bench: every candidate model,\ntemp 0, production parser,\naccuracy → then latency (60s budget)"]
-    F --> G["5b · Verify against reality\nbuild image, real credentials,\nreplay the original failing transcripts\n+ counter-probes (rails still fire)"]
+    A["1 · Real failures\nLangfuse traces + question sweeps"] --> B["Replay deterministically\ntemp 0, exact transcript"]
+    B --> C["2 · Root-cause to ONE component"]
+    C --> D["3 · Freeze as labelled fixtures\n+ counter-fixtures"]
+    D --> E["4 · TDD fix\nfailing tests first, then prompts + code"]
+    E --> F["5a · Measure tunables\njudge_bench: candidates, temp 0,\naccuracy → latency"]
+    F --> G["5b · Verify against reality\nbuild image, real credentials,\nreplay original transcripts"]
     G -->|a replay still fails| C
     G -->|all green| H["PR with before/after + tables\nMarcus merges & deploys"]
-    H --> I["Fixtures stay as the regression net\nfor the next pass"]
+    H --> I["Fixtures stay as the regression net"]
     I --> A
 ```
 
@@ -29,46 +29,45 @@ back to root-causing (not to prompt-tweaking in place), and every pass leaves
 its fixtures behind, so the next pass is measured against everything the
 previous ones fixed.
 
-1. **Start from real failures, not hunches.** The evidence is Langfuse traces
-   of real conversations (session ids and timestamps recorded in the issue)
-   plus structured question sweeps over the corpus (the 98-question eval of
+1. **Start from real failures, not hunches.** Evidence is Langfuse traces of
+   real conversations (session ids + timestamps recorded in the issue) plus
+   structured question sweeps over the corpus (the 98-question eval of
    2026-08-08: 60 MATCH / 15 PARTIAL / 17 REFUSED_OR_ESCALATED / 5 MISS /
    1 CONTRADICTS). A defect is only actionable once it replays
-   deterministically — at temperature 0, from the exact transcript.
+   deterministically — temperature 0, from the exact transcript.
 
-2. **Root-cause to a component.** A bad answer can come from six places —
-   input validation, the injection judge, the topic classifier, the condense
-   rewrite + retrieval, the brain's persona, or the output guard. The trace
-   shows which one moved: which step fired, what the condensed query was,
-   what retrieval returned, what the guard saw. The fix goes where the cause
-   is, never "make the prompt longer somewhere".
+2. **Root-cause to ONE component.** A bad answer can come from six places —
+   input validation, the injection judge, the topic classifier, condense +
+   retrieval, the brain's persona, or the output guard. The trace says which
+   one moved: which step fired, what the condensed query was, what retrieval
+   returned, what the guard saw. The fix goes where the cause is, never "make
+   the prompt longer somewhere".
 
-3. **Freeze the failure as a labelled fixture.** The real transcript —
-   message, full history, expected label or outcome — goes into
+3. **Freeze the failure as a labelled fixture.** The real transcript — message,
+   full history, expected label or outcome — goes into
    `backend/evals/fixtures/` (`topic_cases.json`, `injection_cases.json`,
    `guard_cases.json`), each case carrying its `source` (trace id or eval
-   run). Unit tests (`backend/tests/test_answer_quality.py`) pin the schema
-   and the presence of the regression cases; the fixtures are the spec the
-   fix must satisfy *and* the regression net the next fix must not tear.
-   Counter-fixtures go in at the same time — for every case that must now
-   pass, a neighbouring case that must still fail — so a rail is retuned,
-   never quietly disabled.
+   run). `backend/tests/test_answer_quality.py` pins the schema and the
+   presence of the regression cases: the fixtures are both the spec the fix
+   must satisfy *and* the net the next fix must not tear. Add
+   **counter-fixtures** at the same time — for every case that must now pass,
+   a neighbouring case that must still fail — so a rail is retuned, never
+   quietly disabled.
 
-4. **Fix prompts and code, TDD-style.** Failing tests first, then the
-   change. Prompt text lives in `backend/app/prompts/*.txt` and is asserted
-   by tests; behaviour changes (what the guard sees, how retrieval dedupes)
-   are asserted against the real implementations with the transport
-   scripted.
+4. **Fix prompts and code, TDD-style.** Failing tests first, then the change.
+   Prompts live in `backend/app/prompts/*.txt` and are asserted by tests;
+   behaviour changes (what the guard sees, how retrieval dedupes) are asserted
+   against the real implementations with the transport scripted.
 
-5. **Decide anything tunable by measurement, then verify against reality.**
-   Model choices run through `backend/evals/judge_bench.py` — every fixture,
-   every candidate on the Mantle endpoint, temperature 0, through the
-   production parser — and the defaults go to the winner on accuracy first,
-   then latency (the 60s CloudFront turn budget pays for every judge call,
-   KB-004). Retrieval knobs (top-k, dedupe) are probed against the committed
-   corpus with real embeddings. Then the image is built and the original
-   failing conversations are replayed end to end against it — a fix that has
-   not survived its own transcript is not a fix.
+5. **Decide tunables by measurement, then verify against reality.** Model
+   choices run through `backend/evals/judge_bench.py` — every fixture × every
+   candidate on the Mantle endpoint, temperature 0, production parser — and
+   the defaults go to the winner on accuracy first, then latency (the 60s
+   CloudFront turn budget pays for every judge call, KB-004). Retrieval knobs
+   (top-k, dedupe) are probed against the committed corpus with real
+   embeddings. Then the image is built and the original failing conversations
+   are replayed end to end against it — a fix that has not survived its own
+   transcript is not a fix.
 
 ## Pass 1 — issue #70 (2026-08-08): the five defects
 

@@ -1,5 +1,5 @@
 ---
-title: backend/CLAUDE.md
+title: Backend — CLAUDE.md
 ---
 
 !!! info "Source of truth: `backend/CLAUDE.md`"

@@ -40,25 +40,14 @@ S3-typed OAC does the equivalent job for the bucket. This is not optional
 hardening: the AWS account carries an org-level data perimeter that rejects
 `NONE`-auth Function URLs outright.
 
-``` text
-                cadre.marcuss.pro
-                       │
-               ┌───────▼────────┐
-               │   CloudFront   │
-               └───┬────────┬───┘
-      /ask         │        │      everything else
-      /healthz     │        │
-      /config      │        │
-          ┌────────▼──┐  ┌──▼──────────┐
-          │ Lambda    │  │ S3 (private)│
-          │ Fn URL    │  │  OAC        │
-          │ AWS_IAM   │  └─────────────┘
-          │ STREAM    │
-          └─────┬─────┘
-                │ bearer token (ADR 0002)
-          ┌─────▼─────────────┐
-          │ Bedrock (Mantle)  │
-          └───────────────────┘
+<!-- twin of the diagram in infra/README.md — keep the two byte-identical -->
+
+```mermaid
+flowchart TD
+    D["cadre.marcuss.pro"] --> CF["CloudFront"]
+    CF -->|"/ask · /healthz · /config"| L["Lambda Function URL<br/>AWS_IAM · RESPONSE_STREAM"]
+    CF -->|"everything else"| S3["S3 (private) · OAC"]
+    L -->|"Bearer token · ADR 0002"| B["Bedrock (Mantle)"]
 ```
 
 ## Why not API Gateway

@@ -1,0 +1,30 @@
+/*
+ * Sidebar navigation polish.
+ *
+ * The Material theme's `navigation.sections` renders the top-level nav groups
+ * (For humans / For agents) as plain grey bold links at the same size as the
+ * items beneath them. These rules promote them to real section headers and
+ * hang bullets off the leaf links so the drawer reads as an outline.
+ */
+
+/* Section headers: bigger, bolder, spaced out, in full ink. */
+.md-nav__item--section > .md-nav__link {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--md-default-fg-color);
+}
+
+/* Leaf links under a section get a small bullet. */
+.md-nav__item--section > .md-nav > .md-nav__list > .md-nav__item > .md-nav__link {
+  position: relative;
+  padding-left: 0.6rem;
+}
+
+.md-nav__item--section > .md-nav > .md-nav__list > .md-nav__item > .md-nav__link::before {
+  content: "•";
+  position: absolute;
+  left: 0.1rem;
+  color: var(--md-accent-fg-color);
+}
