@@ -43,6 +43,7 @@ jobs:
       - name: Create OpenWiki update pull request
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ secrets.PAT_TOKEN }}
           add-paths: |
             openwiki
             AGENTS.md
