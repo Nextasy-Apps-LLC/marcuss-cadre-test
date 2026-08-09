@@ -570,6 +570,24 @@
       },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-042",
+      "type": "gotcha",
+      "area": "ci",
+      "tags": [
+        "mkdocs",
+        "include-markdown",
+        "github-pages",
+        "docs",
+        "publishing",
+        "strict-build"
+      ],
+      "title": "Embedding root-of-repo Markdown into the MkDocs site: pass rewrite-relative-urls=false, prefer full GitHub URLs in the source, and remember docs.yml won't rebuild when only the embedded source changes",
+      "detail": "Two silent traps when a docs/ page include-markdowns a root file (plan.md, CLAUDE.md, infra/README.md). (1) include-markdown rewrites relative links by default against the SOURCE file's tree, which breaks mkdocs build --strict (or worse, mislinks) once embedded — pass rewrite-relative-urls=false in the wrapper and write any link inside an embeddable root file as a full GitHub URL (../adr/0002-*.md works on GitHub but not under Pages). (2) docs.yml only triggers on docs/**, mkdocs.yml, adr/** — an edit to an embedded root file like plan.md or a CLAUDE.md does NOT republish the site, so the page goes stale invisibly; either widen the path filter when adding a new embed source or accept the lag deliberately. Verified the hard way on #100: strict stays green only because every embedded file's links are inline code or absolute URLs.",
+      "source": "issue #100",
+      "date": "2026-08-08",
+      "status": "active"
     }
   ]
 }
