@@ -15,7 +15,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { Transcript } from "./Transcript";
-import type { ChatMessage } from "../types";
+import type { ChatMessage, TurnSummary } from "../types";
 
 const TRACE_NOTE_TEXT = "Traces can take up to 30 seconds to become reachable.";
 
@@ -131,5 +131,63 @@ describe("Transcript citation rendering (issue #62)", () => {
 
     const html = renderTranscript([message]);
     expect(html).not.toContain("<a ");
+  });
+});
+
+describe("Transcript turn-summary line (issue #109)", () => {
+  const summary: TurnSummary = {
+    latency_ms: 4363,
+    tokens: { input: 10289, output: 164, total: 10453 },
+    cost_usd: 0.00126,
+    usage_source: "provider",
+    cost_source: "model_prices",
+    usage_tokens: {},
+    step_cost_usd: {},
+  };
+
+  it("renders the one-line aggregate under a settled cadre reply when the done event carried a summary", () => {
+    const message: ChatMessage = {
+      id: "reply-7",
+      who: "cadre",
+      text: "here you go",
+      status: "done",
+      summary,
+    };
+
+    const html = renderTranscript([message]);
+
+    expect(html).toContain('data-testid="reply-summary"');
+    expect(html).toContain("~10.5k tokens · $0.00126 · 4.4s");
+  });
+
+  it("omits the aggregate entirely when the done event carried no summary", () => {
+    // Tracing was down/degraded for this turn — the wire had no `summary`
+    // (backend fail-open), and the transcript must not invent one.
+    const message: ChatMessage = {
+      id: "reply-8",
+      who: "cadre",
+      text: "here you go",
+      status: "done",
+    };
+
+    const html = renderTranscript([message]);
+    expect(html).not.toContain('data-testid="reply-summary"');
+    expect(html).not.toContain("tokens · $");
+  });
+
+  it("does not render a summary under a user message or a still-streaming reply", () => {
+    const messages: ChatMessage[] = [
+      { id: "you-1", who: "you", text: "hi", status: "done" },
+      {
+        id: "reply-9",
+        who: "cadre",
+        text: "partial",
+        status: "streaming",
+        summary,
+      },
+    ];
+
+    const html = renderTranscript(messages);
+    expect(html).not.toContain('data-testid="reply-summary"');
   });
 });

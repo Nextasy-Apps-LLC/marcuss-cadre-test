@@ -97,9 +97,45 @@ export interface TraceEvent {
 
 export type Outcome = "answered" | "refused" | "escalated" | "error";
 
+/**
+ * One step's provider-reported token counts, mirroring
+ * `backend/app/tracing.py`'s `_usage_details` shape verbatim.
+ */
+export interface TokenTotals {
+  input: number;
+  output: number;
+  total: number;
+}
+
+/**
+ * The per-turn aggregate `finalize_trace` returns and the `done` event rides
+ * (issue #109) — mirroring `backend/app/tracing.py`'s wire payload verbatim.
+ *
+ * `tokens` / `cost_usd` are the **turn** totals; `usage_tokens` /
+ * `step_cost_usd` are keyed by step name. `usage_source` / `cost_source` are
+ * the literals the trace records (`"provider"`/`"model_prices"`/`"absent"`
+ * /`"unpriced"`): a deterministic refusal reads `usage_source: "absent"` with
+ * zeroed totals rather than pretending a measurement happened (KB-009).
+ */
+export interface TurnSummary {
+  latency_ms: number;
+  tokens: TokenTotals;
+  cost_usd: number;
+  usage_source: string;
+  cost_source: string;
+  usage_tokens: Partial<Record<StepName, TokenTotals>>;
+  step_cost_usd: Partial<Record<StepName, number>>;
+}
+
 export interface DoneEvent {
   outcome: Outcome;
   refusal_text?: string;
+  /**
+   * Present only when tracing ran and `finalize_trace` returned a payload —
+   * absent when it no-op'd, exactly like `refusal_text` (KB-009: the missing
+   * field is "no aggregate", never a zeroed one).
+   */
+  summary?: TurnSummary;
 }
 
 export interface ErrorEvent {
@@ -217,4 +253,9 @@ export interface ChatMessage {
    * when tracing was disabled/degraded for this turn (no wire event at all).
    */
   traceUrl?: string;
+  /**
+   * The per-turn aggregate carried by this reply's `done` event (issue #109).
+   * Set only on a settled cadre reply; absent when the wire omitted it.
+   */
+  summary?: TurnSummary;
 }

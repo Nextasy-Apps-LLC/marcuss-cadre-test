@@ -10,9 +10,13 @@ the same phase.
     event: trace  data: {trace_id, url}
     event: state  data: {step, status, detail, elapsed_ms, retrieval}
     event: token  data: {text}
-    event: done   data: {outcome, refusal_text}
+    event: done   data: {outcome, refusal_text, summary?}
     event: error  data: {message}
     : ping                                  (comment heartbeat, no data)
+
+`summary` joins `refusal_text` as an optional `done` field: present only when
+tracing ran and `finalize_trace` returned a payload, absent when it no-op'd —
+the client treats the missing field as "no aggregate", never as zeros (KB-009).
 
 `done` is always the terminal event, except after `error`, which is terminal
 on its own.
@@ -141,10 +145,24 @@ def token(text: str) -> str:
     return f"event: token\ndata: {json.dumps({'text': text})}\n\n"
 
 
-def done(outcome: Outcome, refusal_text: str | None = None) -> str:
+def done(
+    outcome: Outcome,
+    refusal_text: str | None = None,
+    *,
+    summary: dict | None = None,
+) -> str:
     """The terminal event. `refusal_text` is what the client shows instead of
-    whatever it has streamed so far when the outcome is `refused`."""
+    whatever it has streamed so far when the outcome is `refused`.
+
+    `summary` is the per-turn aggregate `finalize_trace` computed — per-step
+    and total tokens/cost plus latency (issue #109). It rides the `done` event
+    so the transcript line and the trace share one payload; it is omitted,
+    exactly like `refusal_text`, when tracing was down or no-op'd, so the
+    client's absence check is "no field" rather than "a zeroed summary"
+    (KB-009)."""
     payload = {"outcome": outcome, "refusal_text": refusal_text}
+    if summary is not None:
+        payload["summary"] = summary
     return f"event: done\ndata: {json.dumps(payload)}\n\n"
 
 

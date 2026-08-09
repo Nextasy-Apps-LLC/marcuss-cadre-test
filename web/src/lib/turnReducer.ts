@@ -8,7 +8,7 @@
  * functions to compute what the next turn state should be.
  */
 
-import { freshSteps, type DoneEvent, type StateEvent, type StepName, type TokenEvent, type TraceEvent, type MessageStatus, type Outcome, type StepState } from "../types";
+import { freshSteps, type DoneEvent, type StateEvent, type StepName, type TokenEvent, type TraceEvent, type MessageStatus, type Outcome, type StepState, type TurnSummary } from "../types";
 
 /** Shown when the wire `error` event fires or a dead connection leaves nothing else to say. */
 export const ERROR_TEXT = "Something went wrong. Try again in a moment.";
@@ -26,6 +26,8 @@ export interface TurnState {
   replyOutcome?: Outcome;
   /** Set once a `trace` event for this turn arrives; absent when tracing was disabled/degraded. */
   replyTraceUrl?: string;
+  /** The per-turn aggregate from the `done` event's `summary` (issue #109). Absent when the wire omitted it. */
+  turnSummary?: TurnSummary;
   /** Separates "ended cleanly" from "connection died" for the caller's finally-block. */
   sawDone: boolean;
 }
@@ -77,7 +79,12 @@ export function applyTrace(turn: TurnState, event: TraceEvent): TurnState {
  *  - `error`     drops the buffer for the generic error copy.
  */
 export function applyDone(turn: TurnState, event: DoneEvent): TurnState {
-  const base: TurnState = { ...turn, sawDone: true, replyOutcome: event.outcome };
+  const base: TurnState = {
+    ...turn,
+    sawDone: true,
+    replyOutcome: event.outcome,
+    turnSummary: event.summary,
+  };
 
   switch (event.outcome) {
     case "answered":

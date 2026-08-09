@@ -1002,6 +1002,72 @@ class TestTurnUsageSummary:
         obs = lf.one("brain")
         assert obs.merged["usage_details"]["total"] == 1
 
+    def test_finalize_trace_returns_the_payload_that_rides_the_wire(self, lf):
+        """Issue #109: the trace summary is also what the `done` event carries.
+        `finalize_trace` returns the same numbers it writes to the span so the
+        wire copy and the trace cannot disagree (the two are one payload)."""
+        turn = tracing.start_turn("t1")
+        with turn.activate():
+            gen = tracing.start_generation("brain", config.MODEL_BRAIN)
+            gen.record_response(
+                model=config.MODEL_BRAIN,
+                usage={
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "total_tokens": 150,
+                },
+            )
+            gen.finish()
+        payload = tracing.finalize_trace(turn, None, {"brain": 900}, 1200, "visitor-1234")
+
+        assert payload is not None
+        assert set(payload) == {
+            "latency_ms",
+            "tokens",
+            "cost_usd",
+            "usage_source",
+            "cost_source",
+            "usage_tokens",
+            "step_cost_usd",
+        }
+        assert payload["latency_ms"] == 1200
+        assert payload["tokens"] == {"input": 100, "output": 50, "total": 150}
+        in_price, out_price = config.MODEL_PRICES[config.MODEL_BRAIN]
+        per_call = in_price * 100 / 1_000_000 + out_price * 50 / 1_000_000
+        assert payload["cost_usd"] == pytest.approx(per_call)
+        assert payload["usage_source"] == tracing.USAGE_PRESENT
+        assert payload["cost_source"] == tracing.COST_COMPUTED
+        assert payload["usage_tokens"] == {
+            "brain": {"input": 100, "output": 50, "total": 150}
+        }
+        assert payload["step_cost_usd"]["brain"] == pytest.approx(per_call)
+
+    def test_finalize_trace_returns_none_when_tracing_is_down(self, monkeypatch):
+        """The wire `summary` field is omitted when there is nothing to say —
+        tracing down is the absent case, never a zeroed summary."""
+        monkeypatch.setattr(tracing, "_ENABLED", False)
+        monkeypatch.setattr(tracing, "_client", None)
+        turn = tracing.start_turn("t1")
+        assert tracing.finalize_trace(turn, None, {}, 100, "visitor-1234") is None
+
+    def test_the_returned_payload_reads_absent_not_zero_for_a_deterministic_refusal(self, lf):
+        """A refusal that never reached the transport must not look like a
+        free turn: the literals (KB-009) ride the payload exactly as they ride
+        the span metadata."""
+        turn = tracing.start_turn("t1")
+        with turn.activate():
+            pass
+        payload = tracing.finalize_trace(
+            turn, "validate_input", {}, 10, "visitor-1234",
+            outcome="refused", answer="", refusal_text="blank",
+        )
+
+        assert payload["usage_source"] == tracing.USAGE_ABSENT
+        assert payload["usage_tokens"] == {}
+        assert payload["step_cost_usd"] == {}
+        assert payload["tokens"] == {"input": 0, "output": 0, "total": 0}
+        assert payload["cost_usd"] == 0
+
 
 # --------------------------------------------------------------------------
 # The module invariant: none of this may ever cost a turn

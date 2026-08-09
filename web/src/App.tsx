@@ -26,6 +26,7 @@ const FALLBACK: PageConfig = {
 export default function App() {
   const [config, setConfig] = useState<PageConfig>(FALLBACK);
   const [stepperOpen, setStepperOpen] = useState(false);
+  const [verbose, setVerbose] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,8 +88,11 @@ export default function App() {
 
         <PipelineStepper
           steps={chat.steps}
+          summary={chat.summary}
           open={stepperOpen}
           onToggle={() => setStepperOpen((v) => !v)}
+          verbose={verbose}
+          onVerboseToggle={() => setVerbose((v) => !v)}
         />
       </div>
 

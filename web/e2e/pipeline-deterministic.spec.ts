@@ -143,4 +143,26 @@ test.describe("pipeline pane on a deterministic, model-free turn", () => {
       ).toHaveCount(0);
     }
   });
+
+  test("the Verbose toggle collapses per-step detail but keeps the pass/fail picture", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await sendMessage(page, DETERMINISTIC_REFUSAL);
+    await waitForReplySettled(page);
+
+    const toggle = page.getByTestId("stepper-verbose-toggle");
+    // Detail is on by default; the running step's combined meta line is up.
+    await expect(toggle).toBeChecked();
+    await expect(page.getByTestId("step-timing-validate_input")).toBeVisible();
+
+    // Flipping Verbose off leaves label + model + status only — no elapsed
+    // time, no subordinate detail line at all.
+    await toggle.uncheck();
+    await expect(toggle).not.toBeChecked();
+    await expect(page.getByTestId("step-timing-validate_input")).toHaveCount(0);
+    await expect(page.locator(".step-detail")).toHaveCount(0);
+    await expect(stepRow(page, "validate_input")).toContainText("input validation");
+    await expect(stepRow(page, "validate_input")).toContainText("fail");
+  });
 });

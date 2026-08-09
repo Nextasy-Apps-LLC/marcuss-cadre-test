@@ -26,7 +26,7 @@ import contextlib
 import logging
 import os
 import time
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -287,11 +287,15 @@ async def _stream(req: AskRequest) -> AsyncIterator[str]:
     degraded = False
     kb_state: str | None = None
 
-    def _finalize(outcome: str, refusal_text: str | None, answer: str) -> None:
+    def _finalize(outcome: str, refusal_text: str | None, answer: str) -> dict[str, Any] | None:
         """Flush before the terminal frame, on every terminal path: Lambda
         freezes the instance the moment the response ends, so a batch that is
-        still in Langfuse's background thread is a trace nobody ever sees."""
-        tracing.finalize_trace(
+        still in Langfuse's background thread is a trace nobody ever sees.
+
+        Returns whatever `finalize_trace` computed so the caller can put it on
+        the wire (`done`'s `summary`, issue #109) — `None` when tracing was
+        down or no-op'd."""
+        return tracing.finalize_trace(
             turn,
             refused_step,
             step_latencies,
@@ -346,10 +350,10 @@ async def _stream(req: AskRequest) -> AsyncIterator[str]:
             elif kind == "token":
                 yield sse.token(payload)
             elif kind == "done":
-                _finalize(
+                summary = _finalize(
                     payload["outcome"], payload["refusal_text"], payload.get("answer", "")
                 )
-                yield sse.done(payload["outcome"], payload["refusal_text"])
+                yield sse.done(payload["outcome"], payload["refusal_text"], summary=summary)
                 return
             elif kind == "error":
                 # Terminal on its own — no `done` follows an `error`.

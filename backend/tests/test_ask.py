@@ -123,6 +123,43 @@ class TestAnsweredTurn:
         assert events[-1][1] == {"outcome": "answered", "refusal_text": None}
 
 
+class TestDoneSummaryOnTheWire:
+    """Issue #109 — the `done` event carries the turn summary `finalize_trace`
+    returns, so the transcript line and the trace share one payload. `summary`
+    is optional exactly like `refusal_text`: absent when tracing is down or
+    `finalize_trace` no-oped, present with the full payload otherwise."""
+
+    def test_done_carries_the_summary_finalize_trace_returned(self, monkeypatch):
+        from app import tracing
+
+        fake = {
+            "latency_ms": 4363,
+            "tokens": {"input": 10289, "output": 164, "total": 10453},
+            "cost_usd": 0.00126,
+            "usage_source": tracing.USAGE_PRESENT,
+            "cost_source": tracing.COST_COMPUTED,
+            "usage_tokens": {
+                "brain": {"input": 10289, "output": 164, "total": 10453},
+            },
+            "step_cost_usd": {"brain": 0.00126},
+        }
+        monkeypatch.setattr(tracing, "finalize_trace", lambda *a, **k: fake)
+
+        event, payload = ask_events("hello")[-1]
+        assert event == "done"
+        assert payload["outcome"] == "answered"
+        assert payload["summary"] == fake
+
+    def test_done_omits_summary_when_finalize_trace_returned_none(self, monkeypatch):
+        from app import tracing
+
+        monkeypatch.setattr(tracing, "finalize_trace", lambda *a, **k: None)
+
+        event, payload = ask_events("hello")[-1]
+        assert event == "done"
+        assert set(payload) == {"outcome", "refusal_text"}
+
+
 class TestHeaders:
     def test_content_type_is_event_stream(self):
         assert ask("hello").headers["content-type"].startswith("text/event-stream")

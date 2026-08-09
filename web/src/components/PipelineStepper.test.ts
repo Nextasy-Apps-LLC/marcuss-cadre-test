@@ -13,7 +13,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { PipelineStepper } from "./PipelineStepper";
-import { freshSteps, type RetrievalInfo, type StepState } from "../types";
+import { freshSteps, type RetrievalInfo, type StepState, type TurnSummary } from "../types";
 
 function render(retrieval: RetrievalInfo | null): string {
   const steps: StepState[] = freshSteps().map((step) =>
@@ -22,7 +22,13 @@ function render(retrieval: RetrievalInfo | null): string {
       : step,
   );
   return renderToStaticMarkup(
-    createElement(PipelineStepper, { steps, open: true, onToggle: () => {} }),
+    createElement(PipelineStepper, {
+      steps,
+      open: true,
+      onToggle: () => {},
+      verbose: true,
+      onVerboseToggle: () => {},
+    }),
   );
 }
 
@@ -72,8 +78,9 @@ describe("PipelineStepper retrieval facts", () => {
     expect(html).not.toContain(STATS_TESTID);
   });
 
-  it("keeps the step's existing detail and timing untouched", () => {
+  it("keeps the step's detail and puts the elapsed time on the combined meta line", () => {
     const html = render({ query: null, hit_count: 6, top_score: 0.5319 });
+    expect(html).toContain('data-testid="step-meta-retrieve"');
     expect(html).toContain('data-testid="step-timing-retrieve"');
     expect(html).toContain("555ms");
   });
@@ -91,5 +98,159 @@ describe("PipelineStepper retrieval facts", () => {
     expect(html).not.toContain("<img");
     expect(html).not.toContain('onerror="alert(1)"');
     expect(html).toContain("&lt;img");
+  });
+});
+
+describe("PipelineStepper per-step usage rows (issue #109)", () => {
+  const summary: TurnSummary = {
+    latency_ms: 4363,
+    tokens: { input: 10289, output: 164, total: 10453 },
+    cost_usd: 0.00126,
+    usage_source: "provider",
+    cost_source: "model_prices",
+    usage_tokens: {
+      brain: { input: 10289, output: 164, total: 10453 },
+      topic_classifier: { input: 2100, output: 0, total: 2100 },
+    },
+    step_cost_usd: { brain: 0.00126 },
+  };
+
+  function renderSteps(over: Partial<TurnSummary> = {}, stepsOver: Partial<StepState> = {}): string {
+    const steps: StepState[] = freshSteps().map((step, i) =>
+      i === 0 ? { ...step, ...stepsOver } : step,
+    );
+    return renderToStaticMarkup(
+      createElement(PipelineStepper, {
+        steps,
+        summary: { ...summary, ...over },
+        open: true,
+        onToggle: () => {},
+        verbose: true,
+        onVerboseToggle: () => {},
+      }),
+    );
+  }
+
+  it("renders tokens and cost under a step the summary has usage for", () => {
+    const html = renderSteps();
+    expect(html).toContain('data-testid="step-usage-brain"');
+    expect(html).toContain("~10.5k tokens · $0.00126");
+  });
+
+  it("renders tokens alone when the step is priced off the table", () => {
+    const html = renderSteps();
+    // topic_classifier has usage but no step_cost_usd entry → cost is omitted.
+    expect(html).toContain('data-testid="step-usage-topic_classifier"');
+    expect(html).toContain("~2.1k tokens");
+    expect(html).not.toContain("~2.1k tokens · $");
+  });
+
+  it("renders no usage row for a step the summary has no numbers for", () => {
+    const html = renderSteps();
+    expect(html).not.toContain('data-testid="step-usage-retrieve"');
+    expect(html).not.toContain('data-testid="step-usage-validate_input"');
+    expect(html).not.toContain('data-testid="step-usage-output_safety"');
+    expect(html).not.toContain('data-testid="step-usage-injection_check"');
+  });
+
+  it("renders no usage rows at all when the done event carried no summary", () => {
+    const html = renderToStaticMarkup(
+      createElement(PipelineStepper, {
+        steps: freshSteps(),
+        open: true,
+        onToggle: () => {},
+        verbose: true,
+        onVerboseToggle: () => {},
+      }),
+    );
+    expect(html).not.toContain("step-usage-");
+  });
+
+  it("joins timing and usage on one subordinate line when a step has both", () => {
+    const steps: StepState[] = freshSteps().map((step) =>
+      step.name === "brain" ? { ...step, status: "pass", elapsedMs: 4363 } : step,
+    );
+    const html = renderToStaticMarkup(
+      createElement(PipelineStepper, {
+        steps,
+        summary,
+        open: true,
+        onToggle: () => {},
+        verbose: true,
+        onVerboseToggle: () => {},
+      }),
+    );
+    // One `.step-meta` line carries both the elapsed time and the usage, not
+    // two rows apart.
+    expect(html).toContain('data-testid="step-meta-brain"');
+    expect(html).toContain('data-testid="step-timing-brain"');
+    expect(html).toContain("4363ms");
+    expect(html).toContain('data-testid="step-usage-brain"');
+    expect(html).toContain("~10.5k tokens · $0.00126");
+  });
+});
+
+describe("PipelineStepper Verbose toggle and turn totals", () => {
+  const summary: TurnSummary = {
+    latency_ms: 4363,
+    tokens: { input: 10289, output: 164, total: 10453 },
+    cost_usd: 0.00126,
+    usage_source: "provider",
+    cost_source: "model_prices",
+    usage_tokens: { brain: { input: 10289, output: 164, total: 10453 } },
+    step_cost_usd: { brain: 0.00126 },
+  };
+
+  function render(verbose: boolean, withSummary: boolean): string {
+    return renderToStaticMarkup(
+      createElement(PipelineStepper, {
+        steps: freshSteps().map((step, i) =>
+          i === 0 ? { ...step, status: "pass" as const, elapsedMs: 22, retrieval: null } : step,
+        ),
+        summary: withSummary ? summary : undefined,
+        open: true,
+        onToggle: () => {},
+        verbose,
+        onVerboseToggle: () => {},
+      }),
+    );
+  }
+
+  it("renders a Verbose checkbox, on by default", () => {
+    const html = render(true, false);
+    expect(html).toContain('data-testid="stepper-verbose-toggle"');
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain('checked=""');
+    expect(html).toContain("Verbose");
+  });
+
+  it("collapses each step to label, model, and status when Verbose is off", () => {
+    const html = render(false, false);
+    // validate_input ran (pass, 22ms) but every subordinate detail line is gone.
+    expect(html).toContain('data-testid="step-validate_input"');
+    expect(html).not.toContain("22ms");
+    expect(html).not.toContain("step-meta-");
+    expect(html).not.toContain("step-timing-");
+    expect(html).not.toContain("step-usage-");
+    expect(html).not.toContain("step-retrieval-");
+    expect(html).not.toContain("step-detail");
+  });
+
+  it("hides the turn totals row when Verbose is off", () => {
+    const html = render(false, true);
+    expect(html).not.toContain('data-testid="step-total"');
+    expect(html).not.toContain("~10.5k tokens");
+  });
+
+  it("shows the turn totals row at the end when Verbose is on", () => {
+    const html = render(true, true);
+    expect(html).toContain('data-testid="step-total"');
+    expect(html).toContain("Total");
+    expect(html).toContain("~10.5k tokens · $0.00126 · 4.4s");
+  });
+
+  it("omits the totals row when there is no summary even in Verbose mode", () => {
+    const html = render(true, false);
+    expect(html).not.toContain('data-testid="step-total"');
   });
 });

@@ -1,11 +1,22 @@
 import { formatRetrievalQuery, formatRetrievalStats } from "../lib/retrieval";
-import { isDegraded, stepIcon, type StepState } from "../types";
+import { formatStepUsage, formatTurnSummary } from "../lib/usage";
+import { isDegraded, stepIcon, type StepState, type TurnSummary } from "../types";
 
 interface Props {
   steps: StepState[];
+  /**
+   * The current turn's aggregate from its `done` event (issue #109). `undefined`
+   * while a turn runs and when tracing was down — per-step usage rows render
+   * only for steps this summary has numbers for.
+   */
+  summary?: TurnSummary;
   /** Mobile only — the row list collapses behind the summary until tapped. */
   open: boolean;
   onToggle: () => void;
+  /** Detail is on by default (timing, tokens/cost, retrieval facts are the
+   *  product, not decoration); off collapses each row to label + status. */
+  verbose: boolean;
+  onVerboseToggle: () => void;
 }
 
 const STEPPER_ID = "pipeline-stepper-rows";
@@ -24,7 +35,7 @@ const STEPPER_ID = "pipeline-stepper-rows";
  * affordance — CSS alone decides whether the summary trigger or the row list
  * is visible at a given breakpoint.
  */
-export function PipelineStepper({ steps, open, onToggle }: Props) {
+export function PipelineStepper({ steps, summary, open, onToggle, verbose, onVerboseToggle }: Props) {
   const blocked = steps.some((step) => step.status === "fail");
 
   return (
@@ -47,6 +58,16 @@ export function PipelineStepper({ steps, open, onToggle }: Props) {
         </span>
       </button>
 
+      <label className="stepper-verbose">
+        <input
+          type="checkbox"
+          checked={verbose}
+          onChange={onVerboseToggle}
+          data-testid="stepper-verbose-toggle"
+        />
+        Verbose
+      </label>
+
       <ul id={STEPPER_ID} className="stepper-rows" aria-label="Pipeline steps">
         {steps.map((step) => {
           const degraded = isDegraded(step);
@@ -57,6 +78,21 @@ export function PipelineStepper({ steps, open, onToggle }: Props) {
           const retrievalQuery = step.retrieval
             ? formatRetrievalQuery(step.retrieval.query)
             : null;
+          // Per-step tokens/cost from the done event's summary (issue #109).
+          // Only steps the summary has numbers for render usage; an unpriced
+          // step shows tokens alone.
+          const stepUsageTokens = summary?.usage_tokens?.[step.name];
+          const stepUsage = stepUsageTokens
+            ? formatStepUsage(stepUsageTokens.total, summary?.step_cost_usd?.[step.name])
+            : null;
+          // Timing and usage share one subordinate line so the elapsed time
+          // reads beside the numbers it measured instead of two rows below.
+          const stepMeta = [
+            step.elapsedMs != null ? `${step.elapsedMs}ms` : null,
+            stepUsage,
+          ]
+            .filter(Boolean)
+            .join(" · ");
 
           return (
             <li
@@ -80,38 +116,57 @@ export function PipelineStepper({ steps, open, onToggle }: Props) {
                   for a step's state. */}
               <span className="step-status-text">{degraded ? "degraded" : step.status}</span>
 
-              {step.detail && !degraded && (
-                <div className="step-detail">└─ {step.detail.replace(/_/g, " ")}</div>
-              )}
+              {verbose && (
+                <>
+                  {step.detail && !degraded && (
+                    <div className="step-detail">└─ {step.detail.replace(/_/g, " ")}</div>
+                  )}
 
-              {/* What `retrieve` actually searched for and what came back.
-                  Both are React text nodes: the query is derived from
-                  visitor input via a model, and `dangerouslySetInnerHTML` is
-                  banned repo-wide with no exception for "the model wrote
-                  it". `formatRetrievalQuery` has already collapsed the
-                  whitespace and capped the length. */}
-              {retrievalQuery && (
-                <div
-                  className="step-detail step-retrieval-query"
-                  data-testid="step-retrieval-query"
-                >
-                  └─ q: “{retrievalQuery}”
-                </div>
-              )}
-              {step.retrieval && (
-                <div className="step-detail" data-testid="step-retrieval-stats">
-                  └─ {formatRetrievalStats(step.retrieval)}
-                </div>
-              )}
+                  {/* What `retrieve` actually searched for and what came back.
+                      Both are React text nodes: the query is derived from
+                      visitor input via a model, and `dangerouslySetInnerHTML` is
+                      banned repo-wide with no exception for "the model wrote
+                      it". `formatRetrievalQuery` has already collapsed the
+                      whitespace and capped the length. */}
+                  {retrievalQuery && (
+                    <div
+                      className="step-detail step-retrieval-query"
+                      data-testid="step-retrieval-query"
+                    >
+                      └─ q: “{retrievalQuery}”
+                    </div>
+                  )}
+                  {step.retrieval && (
+                    <div className="step-detail" data-testid="step-retrieval-stats">
+                      └─ {formatRetrievalStats(step.retrieval)}
+                    </div>
+                  )}
 
-              {step.elapsedMs != null && (
-                <span className="step-timing" data-testid={`step-timing-${step.name}`}>
-                  {step.elapsedMs}ms
-                </span>
+                  {stepMeta && (
+                    <div
+                      className="step-detail step-meta"
+                      data-testid={`step-meta-${step.name}`}
+                    >
+                      └─{" "}
+                      {step.elapsedMs != null && (
+                        <span data-testid={`step-timing-${step.name}`}>{step.elapsedMs}ms</span>
+                      )}
+                      {step.elapsedMs != null && stepUsage && " · "}
+                      {stepUsage && <span data-testid={`step-usage-${step.name}`}>{stepUsage}</span>}
+                    </div>
+                  )}
+                </>
               )}
             </li>
           );
         })}
+
+        {verbose && summary && (
+          <li className="step step--total" data-testid="step-total">
+            <span className="step-total-label">Total</span>
+            <span className="step-total-value">{formatTurnSummary(summary)}</span>
+          </li>
+        )}
       </ul>
     </aside>
   );

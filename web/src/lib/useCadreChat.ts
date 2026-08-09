@@ -14,7 +14,7 @@ import {
   OFFLINE_TEXT,
   type TurnState,
 } from "./turnReducer";
-import type { ChatMessage, DoneEvent, StateEvent, StepName, StepState, TokenEvent, TraceEvent } from "../types";
+import type { ChatMessage, DoneEvent, StateEvent, StepName, StepState, TokenEvent, TraceEvent, TurnSummary } from "../types";
 
 const CONVERSATION_KEY = "cadre_conversation_id";
 
@@ -37,6 +37,12 @@ function conversationId(): string {
 export interface CadreChat {
   messages: ChatMessage[];
   steps: StepState[];
+  /**
+   * The current turn's aggregate, set once its `done` event arrives with a
+   * `summary` (issue #109). `undefined` while a turn runs, when tracing was
+   * down, and after a turn that ended without `done`.
+   */
+  summary?: TurnSummary;
   busy: boolean;
   send: (text: string) => Promise<void>;
   stop: () => void;
@@ -48,6 +54,7 @@ export function useCadreChat(greeting: string, stepModels?: Partial<Record<StepN
     { id: "greeting", who: "system", text: greeting, status: "done" },
   ]);
   const [steps, setSteps] = useState<StepState[]>(() => freshTurn(stepModels).steps);
+  const [summary, setSummary] = useState<TurnSummary | undefined>(undefined);
   const [busy, setBusy] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -88,6 +95,7 @@ export function useCadreChat(greeting: string, stepModels?: Partial<Record<StepN
     localStorage.removeItem(CONVERSATION_KEY);
     setMessages([{ id: "greeting", who: "system", text: greeting, status: "done" }]);
     setSteps(freshTurn(stepModels).steps);
+    setSummary(undefined);
   }, [greeting, stepModels]);
 
   const send = useCallback(
@@ -101,6 +109,7 @@ export function useCadreChat(greeting: string, stepModels?: Partial<Record<StepN
       setBusy(true);
       let turn: TurnState = freshTurn(stepModels);
       setSteps(turn.steps);
+      setSummary(undefined);
       setMessages((prev) => [
         ...prev,
         { id: turnId, who: "you", text, status: "done" },
@@ -111,11 +120,13 @@ export function useCadreChat(greeting: string, stepModels?: Partial<Record<StepN
       abortRef.current = controller;
 
       const publish = () => {
+        setSummary(turn.turnSummary);
         patch(replyId, {
           text: turn.replyText,
           status: turn.replyStatus,
           outcome: turn.replyOutcome,
           traceUrl: turn.replyTraceUrl,
+          summary: turn.turnSummary,
         });
       };
 
@@ -203,5 +214,5 @@ export function useCadreChat(greeting: string, stepModels?: Partial<Record<StepN
     [busy, messages, patch, stepModels],
   );
 
-  return { messages, steps, busy, send, stop, reset };
+  return { messages, steps, summary, busy, send, stop, reset };
 }
