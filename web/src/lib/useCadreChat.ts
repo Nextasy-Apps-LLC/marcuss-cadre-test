@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { buildHistory } from "./history";
 import { readSse, sha256Hex } from "./sse";
@@ -51,6 +51,28 @@ export function useCadreChat(greeting: string, stepModels?: Partial<Record<StepN
   const [busy, setBusy] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
+
+  // `messages` is seeded synchronously at mount, before `/config` has
+  // answered — so the first paint necessarily uses `App`'s FALLBACK greeting.
+  // Without this, nothing ever re-syncs it and the visitor sees that fallback
+  // for the whole session, never the real server-side greeting (issue #97).
+  //
+  // Patches the greeting row IN PLACE rather than re-seeding `messages`: the
+  // transcript is also the conversation-history source (`buildHistory`), so
+  // replacing the array wholesale when `/config` lands would silently drop
+  // history mid-conversation and, with it, the condensed query that only
+  // appears on a follow-up. Returning `prev` untouched when there is nothing
+  // to do keeps a `greeting`-identity change from re-rendering the transcript
+  // for nothing.
+  useEffect(() => {
+    setMessages((prev) => {
+      const index = prev.findIndex((m) => m.id === "greeting");
+      if (index === -1 || prev[index]!.text === greeting) return prev;
+      const next = [...prev];
+      next[index] = { ...next[index]!, text: greeting };
+      return next;
+    });
+  }, [greeting]);
 
   const patch = useCallback((id: string, changes: Partial<ChatMessage>) => {
     setMessages((prev) =>
@@ -164,7 +186,21 @@ export function useCadreChat(greeting: string, stepModels?: Partial<Record<StepN
     // `messages` is read (via `buildHistory`) at the top of the function,
     // before the new turn is appended — that ordering is what excludes the
     // in-flight turn from its own history without any special-casing.
-    [busy, messages, patch],
+    //
+    // `stepModels` is load-bearing here, not decoration (issue #97). It is a
+    // free variable in the body (`freshTurn(stepModels)`), and at mount
+    // `App`'s config is still FALLBACK, which carries no `step_models`.
+    // `/config` resolving re-renders `App` but changes none of the other
+    // three dependencies, so without this entry the first `send` closure of
+    // a session keeps `stepModels === undefined` and paints all six chips
+    // with no model label — the labels only appeared from the second turn
+    // on, once `messages` had changed and incidentally rebuilt the closure.
+    // `reset` already takes the same dependency.
+    //
+    // Note this deliberately does NOT re-seed the idle `steps` state: the
+    // pre-turn chips are meant to carry no model label, and
+    // `pipeline-idle.spec.ts` asserts exactly that.
+    [busy, messages, patch, stepModels],
   );
 
   return { messages, steps, busy, send, stop, reset };
