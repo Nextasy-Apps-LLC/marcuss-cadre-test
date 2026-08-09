@@ -361,6 +361,24 @@
   content: "▴";
 }
 
+/* The Verbose toggle sits at the top of the pane (desktop) or under the
+   collapsed summary (mobile) and trades per-step detail for a clean
+   pass/fail picture. Native checkbox keeps it keyboard- and
+   screen-reader-accessible without reimplementing a switch. */
+.stepper-verbose {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  color: var(--fg-dim);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+}
+
 .stepper-rows {
   list-style: none;
   margin: 0;
@@ -416,12 +434,12 @@
   font-size: 0.72rem;
 }
 
-.step-timing {
-  grid-column: 1 / -1;
-  padding-left: 4px;
-  color: var(--fg-mute);
+/* Timing and per-step usage share one subordinate line (`.step-meta`), so the
+   elapsed time reads beside the numbers it measured rather than two rows
+   below them. Mono keeps the digits and `·` separators terminal-aligned with
+   the model labels above. */
+.step-meta {
   font-family: var(--mono);
-  font-size: 0.72rem;
 }
 
 /* `retrieve`'s condensed query (#74) reuses `.step-detail` for its
@@ -474,6 +492,25 @@
      died, so its label text stays at full --warn contrast rather than
      fading toward unreadable. */
   color: var(--warn);
+}
+
+/* The turn's aggregate from the done event's summary, closed out under the
+   per-step rows (issue #109): the whole turn in one line. */
+.step--total {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--rule);
+}
+
+.step-total-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.step-total-value {
+  font-family: var(--mono);
+  color: var(--fg);
 }
 
 /* ── foot ─────────────────────────────────────────────────────────────── */
