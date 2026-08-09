@@ -228,16 +228,123 @@ jobs:
           CADRE_E2E_BEDROCK: ${{ inputs.e2e_live_bedrock && '1' || '0' }}
         run: pytest -m e2e -v
 
-  # The browser-layer sibling of `e2e` above, same gate, same reused inputs —
-  # no new workflow_dispatch inputs. It never boots a container or holds a
-  # model key itself: it only speaks HTTP (via a real Chromium) to whatever
-  # `e2e_base_url` already is (prod by default), which already carries its
-  # own credentials (Terraform-provisioned). A live spec against that target
-  # spends real Bedrock tokens once `e2e_live_bedrock` is set, exactly like
-  # the `e2e` job above — see web/e2e/README.md.
+  # The browser layer, model-free tier — UNCONDITIONAL, and the point of
+  # issue #97.
+  #
+  # Its predecessor was gated `workflow_dispatch && inputs.run_e2e`, exactly
+  # like the backend `e2e` job. That meant CI never ran it: two tests that
+  # were known red on the day they were written (the first-turn model labels
+  # and the /config greeting) survived several merges into main, and the bug
+  # was eventually found by a human loading the page in a browser. A gate
+  # that skips by default is not protection, so this job has NO `if:`, no
+  # dispatch input, and no skip step — it runs on every pull request and
+  # every push to main, and it FAILS the PR when it goes red.
+  #
+  # No `paths:` filter: this suite asserts the contract *between* `web/` and
+  # `backend/` (what the page paints from what /config and the SSE stream
+  # serve), so a backend change that alters /config's shape has to trip it
+  # too. Scoping it to `web/` would leave that half unguarded.
+  #
+  # No secrets and no secret-availability check. Verified empirically: the
+  # image boots, serves /config with the full step_models roster, and drives
+  # the complete validate_input control-character refusal turn with no
+  # AWS_BEARER_TOKEN_BEDROCK, OPENAI_API_KEY or Langfuse variables set at
+  # all — every judge only becomes necessary further down the pipeline. So
+  # this job cannot degrade into a skip because a secret was missing, which
+  # is precisely the failure mode being fixed here. Anything that genuinely
+  # needs a model lives in the `@live` tier below.
   e2e-web:
-    name: e2e-web — pipeline pane against a real target
-    if: github.event_name == 'workflow_dispatch' && inputs.run_e2e
+    name: e2e-web — pipeline pane against a locally built backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      # Native linux/amd64, not the arm64 Lambda-parity build the `image` job
+      # already covers: this one only has to run, and an emulated arm64
+      # container would add minutes to every PR for no extra signal.
+      - name: Build the backend image
+        working-directory: ${{ github.workspace }}
+        run: docker build -t cadre-backend:ci backend
+
+      - name: Start the backend and wait for it to answer
+        working-directory: ${{ github.workspace }}
+        run: |
+          docker run -d --name cadre-ci -p 8080:8080 cadre-backend:ci
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://127.0.0.1:8080/healthz; then
+              echo "backend healthy after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::backend did not answer /healthz within 60s"
+          docker logs cadre-ci
+          exit 1
+
+      - name: Install Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+
+      # vite's own server.proxy block already forwards /ask, /config and
+      # /healthz to :8080, which reproduces prod's same-origin shape (page and
+      # API on one hostname) with zero new proxy code.
+      - name: Start the dev server and wait for it to serve
+        run: |
+          # nohup + detached so the server survives the end of this step;
+          # the suite runs against it two steps later.
+          nohup npm run dev > /tmp/vite.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://127.0.0.1:8088/; then
+              echo "dev server up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::vite dev server did not serve within 60s"
+          cat /tmp/vite.log || true
+          exit 1
+
+      - name: Run the model-free browser tier
+        env:
+          BASE_URL: http://127.0.0.1:8088
+        run: npm run test:e2e
+
+      - name: Backend logs (on failure)
+        if: failure()
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "::group::backend"; docker logs cadre-ci; echo "::endgroup::"
+          echo "::group::vite"; cat /tmp/vite.log || true; echo "::endgroup::"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-${{ github.sha }}
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 7
+
+  # The browser layer, model tier — the half that genuinely needs a brain:
+  # streamed token text, citation links, the trace link, the escalation
+  # route, retrieval hit counts, and the condensed query. A turn here spends
+  # real Bedrock tokens, so it keeps the same opt-in shape as the backend
+  # `e2e` job and reuses its existing inputs — no new workflow inputs. It
+  # boots no container: it speaks HTTP to whatever `e2e_base_url` already is
+  # (prod by default), which carries its own Terraform-provisioned
+  # credentials. See web/e2e/README.md.
+  e2e-web-live:
+    name: e2e-web-live — model-dependent specs against a real target
+    if: github.event_name == 'workflow_dispatch' && inputs.run_e2e && inputs.e2e_live_bedrock
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -257,8 +364,16 @@ jobs:
       - name: Install Playwright's Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run the frontend e2e suite
+      - name: Run the @live browser tier
         env:
           BASE_URL: ${{ inputs.e2e_base_url }}
-          CADRE_E2E_BEDROCK: ${{ inputs.e2e_live_bedrock && '1' || '0' }}
-        run: npm run test:e2e
+        run: npm run test:e2e:live
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-live-${{ github.sha }}
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 7
