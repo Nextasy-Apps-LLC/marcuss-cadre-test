@@ -22,7 +22,7 @@ slow step, and the client drops them.
 | Event | Payload | Meaning |
 |---|---|---|
 | `trace` | `trace_id`, `url` | The public Langfuse trace link — at most once, the first frame of the turn; absent entirely when tracing is down (fail-open). |
-| `state` | `step`, `status` (`running`/`pass`/`fail`/`skipped`), `detail?`, `elapsed_ms?` | One pipeline transition; each of the six steps emits `running` then its verdict. `elapsed_ms` is an int on `pass`/`fail`, `null` otherwise. |
+| `state` | `step`, `status` (`running`/`pass`/`fail`/`skipped`), `detail?`, `elapsed_ms?`, `retrieval?` | One pipeline transition; each of the six steps emits `running` then its verdict. `elapsed_ms` is an int on `pass`/`fail`, `null` otherwise; `retrieval` is non-`null` only on `retrieve`'s verdict. |
 | `token` | `text` | A fragment of the answer, only while `brain` (or the escalation text) streams. |
 | `done` | `outcome` (`answered`/`refused`/`escalated`/`error`), `refusal_text?` | Always the terminal event of a normal stream. |
 | `error` | `message` | Terminal on its own — no `done` follows. Generic on the wire, detailed in the log. |
@@ -32,6 +32,20 @@ the stepper is live rather than a replay printed at the end. Malformed bodies
 are **not** HTTP errors: a body the graph cannot be handed gets
 `validate_input` fail + `skipped` for the rest + `done {refused}` — still HTTP
 200, so the browser uses its normal `done` path, not an offline branch.
+
+The `retrieval` payload (`sse.retrieval`, issue #74) is `{query, hit_count,
+top_score}`:
+
+- `query` is the **condensed** query, and only when it differs from the
+  visitor's message — `None` on a first message and on the KB-011 fallback to
+  the visitor's own words.
+- `hit_count`/`top_score` describe the **final** slate — after the
+  `RETRIEVE_MIN_SCORE` floor, the per-URL dedupe and the `RETRIEVE_TOP_K` cut —
+  because that is the context the brain actually read. `top_score` is `None`
+  exactly when `hit_count` is 0.
+- Deliberately no chunk text and no URLs: the passages are already in the
+  brain's prompt, and duplicating them would make every frame expensive for no
+  new fact.
 
 ```mermaid
 sequenceDiagram
@@ -56,7 +70,7 @@ must agree:
 | 1 | `validate_input` | Deterministic checks (empty, >2000 chars, control chars, client-id format, rate limit) then an SLM validity judge |
 | 2 | `injection_check` | Prompt-injection classifier |
 | 3 | `topic_classifier` | Three-way route: in-scope → `retrieve`; off-topic → refuse; `needs_human` → escalate |
-| 4 | `retrieve` | KB lookup — not wired yet; reports `skipped` with `kb_not_wired` (plan.md Phase 3) |
+| 4 | `retrieve` | Condense follow-ups → OpenAI embed (`text-embedding-3-large`) → LanceDB search; passes with `no_hits` when the slate is empty, else fills the brain's `context`; fails open to `skipped` (`kb_timeout`/`kb_disabled`/`kb_dimension_mismatch`/`kb_unavailable`) and the brain answers from the persona baseline |
 | 5 | `brain` | The answer; streams tokens, and is the one step with no fail-open path — a failure propagates to a terminal `error` |
 | 6 | `output_safety` | Guard on the complete streamed answer; fail → stream-then-retract refusal |
 
@@ -85,6 +99,10 @@ must agree:
 - Model steps are in `app/graph/models.py`; the transport is `app/llm.py`:
   plain httpx against Bedrock's Mantle endpoint with a bearer key (ADR 0002),
   bounded retry on 5xx only, and never a retry after the first token delta.
+- Queries are embedded by `app/embeddings.py` — one plain-httpx POST to
+  `api.openai.com` per in-scope turn (key read per request, so a rotation
+  needs no cold start); `retrieve` bounds the whole node with
+  `RETRIEVE_TIMEOUT_S`.
 - In-process rate limiter (`app/ratelimit.py`): 30 turns / 60s per instance;
   a refusal arrives as `validate_input` fail with `rate_limited`.
 - `web/src/lib/sse.ts` hand-rolls a fetch reader (`TextDecoder {stream: true}`
@@ -99,8 +117,10 @@ must agree:
 - `backend/tests/test_ask.py` — the malformed-body wire sequence, refusal
   shapes; `test_graph.py` — routing (fail → refuse, needs_human → escalate);
   `test_models.py` — verdict parsing incl. `_label`'s space/hyphen tolerance;
-  `test_llm.py` — transport, retry, no-retry-after-first-delta; plus
-  `test_ratelimit.py`, `test_persona.py`, `test_assert_models.py`.
+  `test_llm.py` — transport, retry, no-retry-after-first-delta;
+  `test_retrieve_wire.py` — the `retrieval` payload on the wire;
+  `test_kb_store.py` / `test_embeddings.py` — the store and the embed call;
+  plus `test_ratelimit.py`, `test_persona.py`, `test_assert_models.py`.
 - `web/src/lib/sse.test.ts` — `parseFrame`/`readSse`/`sha256Hex`;
   `web/src/lib/turnReducer.test.ts` — step transitions;
   `web/src/types.test.ts` — statuses, `freshSteps()`.

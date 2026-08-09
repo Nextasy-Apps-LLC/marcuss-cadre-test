@@ -67,15 +67,21 @@ Re-reading the OAC config a fifth time distinguishes nothing.
 
 `deploy.yml` with `action: rollback` plus a 40-char SHA that is an ancestor of
 `origin/main`. Rollback **skips the build** and fails unless the image is
-already in ECR — it can never ship code that didn't pass CI. Same
-[approval gate](/openwiki/workflows/ci-cd.md) as a deploy.
+already in ECR — it can never ship code that didn't pass CI — and it applies
+that commit's Terraform along with its image (ADR 0003). Same
+[approval gate](/openwiki/workflows/ci-cd.md) as a deploy; an image expired by
+the ECR lifecycle policy (10 kept) fails the plan job with a clear message —
+roll back to a newer commit or re-deploy to rebuild.
 
 ## Cost
 
 Idle cost is cents (ECR, PriceClass_100, one-page S3, a log group); Lambda +
-Bedrock bill per request. The levers are the model roster (`brain_model` etc.)
-and the token budgets in `backend/app/config.py` — a turn spends four judge
-calls plus the brain's generation.
+Bedrock + OpenAI bill per request. The levers are the roster in
+`backend/app/config.py` (`MODEL_DEFAULTS`) and the token budgets — a KB turn
+spends the four judge steps, one condense call (only with history), one OpenAI
+embedding, and the brain's generation. Real per-step figures are read back
+from Langfuse traces in `docs/fine-tuning/costs.md` (since #79): the guard is
+~38% of turn cost, and retrieved passages are billed twice (brain + guard).
 
 ## Watch-outs
 
@@ -84,8 +90,10 @@ calls plus the brain's generation.
   and heartbeats don't extend it (KB-004).
 - Push CI never boots the container — the post-deploy `/healthz` smoke is the
   first real boot, so container-runtime bugs surface only at deploy time. The
-  manual `e2e` dispatch ([CI/CD](/openwiki/workflows/ci-cd.md)) is the only CI
-  path that exercises the real target, and it costs real Bedrock turns.
+  manual `e2e`/`e2e-web` dispatch ([CI/CD](/openwiki/workflows/ci-cd.md)) is the
+  only CI path that exercises the real target, and it costs real Bedrock turns.
 - A model id typo ships a *working-looking* chat with amber rails, not a crash
   (KB-009) — run `python -m scripts.assert_models` before assuming a
-  "degraded everywhere" symptom is a Bedrock outage.
+  "degraded everywhere" symptom is a Bedrock outage. Since #84 the deploy
+  itself refuses drift: `assert_model_env` blocks any `CADRE_MODEL_*` on the
+  function and `assert_step_models` checks the live `/config` roster.

@@ -12,34 +12,35 @@ tags: [quickstart, cadre, entrypoint]
 verdicts, then answer tokens, then `done` — from FastAPI on an arm64 Lambda
 container, all behind one CloudFront distribution. The backend is a
 [LangGraph conversation engine](/openwiki/domain/sse-contract.md) driving
-Bedrock models over the Mantle API (SSE protocol v2); the secrets — the
-Bedrock API key ([ADR 0002](/openwiki/architecture/overview.md)) and the
-Langfuse keys — live in SSM.
+Bedrock models over the Mantle API (SSE protocol v2) plus OpenAI embeddings for
+the knowledge base; the secrets — the Bedrock key ([ADR
+0002](/openwiki/architecture/overview.md)), the OpenAI key, the Langfuse keys —
+all live in SSM.
 
 Read `adr/README.md` first — ADR 0001 records the load-bearing decisions, ADR
-0002 supersedes its Bedrock-auth statements. `infra/README.md` is the living
-operational doc. Per-area rules: `backend/CLAUDE.md`, `web/CLAUDE.md`,
-`infra/CLAUDE.md`.
+0002 supersedes its Bedrock-auth statements, and ADR 0003 makes `Deploy` the
+single gated release path. `infra/README.md` is the living operational doc.
+Per-area rules: `backend/CLAUDE.md`, `web/CLAUDE.md`, `infra/CLAUDE.md`.
 
 ## What this wiki covers
 
 | Page | What it documents |
 |---|---|
-| [Architecture overview](/openwiki/architecture/overview.md) | One distribution, two origins; the four silent streaming-breakers; the two-grant 403 trap; one secret in SSM (ADR 0002). |
+| [Architecture overview](/openwiki/architecture/overview.md) | One distribution, two origins; the four silent streaming-breakers; the two-grant 403 trap; the SSM-held secrets (Bedrock + OpenAI + Langfuse, ADR 0002). |
 | [SSE contract and steps](/openwiki/domain/sse-contract.md) | Protocol v2: the five events, six pipeline steps, status/outcome semantics, the LangGraph backend, the fetch-SSE client, contract tests. |
 | [Terraform infrastructure](/openwiki/infrastructure/terraform.md) | Resource families, variables, the two OIDC roles, Lambda env vars, invariants. |
 | [Operations runbooks](/openwiki/operations/runbooks.md) | Bootstrap, two-phase custom domain, 403 bisection, rollback, cost. |
-| [CI/CD and deployment](/openwiki/workflows/ci-cd.md) | The five workflows, the approval-gated deploy/rollback pipeline, MkDocs. |
+| [CI/CD and deployment](/openwiki/workflows/ci-cd.md) | The six workflows, the approval-gated deploy/rollback pipeline (ADR 0003), MkDocs. |
 
 ## Repository layout
 
 ```
-backend/     FastAPI app + Dockerfile (arm64, Lambda Web Adapter) — see backend/CLAUDE.md
-web/         React + Vite single page, Vitest unit tests — see web/CLAUDE.md
+backend/     FastAPI app + Dockerfile (arm64, Lambda Web Adapter), committed LanceDB KB (`app/kb/`) + ingest pipeline (`ingest/`) — see backend/CLAUDE.md
+web/         React + Vite single page, Vitest unit tests + Playwright e2e — see web/CLAUDE.md
 infra/       Terraform — CloudFront, Lambda, S3, ACM, OIDC roles — see infra/CLAUDE.md
 adr/         Architecture decision records (MADR format), ADR 0001 is the load-bearing one
 docs/        The MkDocs site published to GitHub Pages (wrappers include adr/ and infra/)
-.github/     Five workflows plus DEPLOYMENT.md (approval-gate setup) and CODEOWNERS
+.github/     Six workflows (incl. the Diff Honesty Scanner) plus DEPLOYMENT.md (approval-gate setup) and CODEOWNERS
 ```
 
 The MkDocs site (`docs/` + `mkdocs.yml`) is the public reference; this OpenWiki
@@ -48,10 +49,10 @@ time rather than copying them.
 
 ## Backlog
 
-- **KB retrieval (`retrieve` step)** — `backend/app/graph/nodes.py` reports
-  `skipped`/`kb_not_wired`; plan.md Phase 3 (query condensing, LanceDB search,
-  citations) is not built.
+- **`docs/ci-cd.md` stale since #93** — it still describes five workflows and a
+  Terraform apply path, but the repo now has six workflows and `Deploy` owns
+  the apply (ADR 0003); needs a MkDocs-site regeneration.
 
-(Two earlier backlog items are resolved: Langfuse tracing shipped as plan
-Phase 2 — the `trace` event, public trace links, and the client "View trace"
-chip all exist — and `docs/ci-cd.md` now counts all five workflows.)
+(Resolved: KB retrieval shipped as plan Phase 3 — `retrieve` condenses, embeds
+and searches the committed LanceDB corpus with citations — and Langfuse tracing
+shipped as Phase 2, with the `trace` event and public trace links.)

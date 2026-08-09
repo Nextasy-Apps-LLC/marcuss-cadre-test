@@ -20,7 +20,7 @@ living operational doc; `infra/CLAUDE.md` carries the editing rules.
 | ECR repo + lifecycle policy | `lambda.tf` | `image_tag_mutability = "IMMUTABLE"`, keep 10 most recent images |
 | Lambda function + Function URL | `lambda.tf` | arm64 image package, `RESPONSE_STREAM` invoke mode, `AWS_IAM` auth, `lifecycle { ignore_changes = [image_uri] }` |
 | Two Lambda permissions | `lambda.tf` | `lambda:InvokeFunctionUrl` + `lambda:InvokeFunction`, both scoped to the distribution ARN — missing either 403s like a bad signature |
-| Execution role + SSM key read | `lambda.tf` | `ssm:GetParameter` on `/cadre/bedrock-api-key`; the old `bedrock:InvokeModel*` grant is deleted (ADR 0002); CloudWatch log group, 14-day retention |
+| Execution role + SSM key reads | `lambda.tf`, `openai.tf`, `langfuse.tf` | `ssm:GetParameter` on `/cadre/bedrock-api-key`, `/cadre/openai-api-key`, `/cadre/langfuse-*`; the old `bedrock:InvokeModel*` grant is deleted (ADR 0002); CloudWatch log group, 14-day retention |
 | Private S3 bucket | `cloudfront.tf` | Versioning, SSE-AES256, all public access blocked, only CloudFront `s3:GetObject` |
 | Two OACs | `cloudfront.tf` | One per origin type (s3 vs lambda); one OAC cannot front both |
 | CloudFront distribution | `cloudfront.tf` | `http_version = "http2"`, `PriceClass_100`, default → S3 (CachingOptimized, compress), ordered → Lambda URL (CachingDisabled, no compress, AllViewerExceptHostHeader), 60s origin timeouts |
@@ -42,11 +42,12 @@ provider is an account singleton referenced by ARN, never created or imported.
   `environment:production` — a job in the `production` environment gets a
   token whose sub claim *replaces* the ref form.
 - **`cadre-terraform`** (`ci_terraform.tf`): state bucket scoped to
-  `${state_key}*`, IAM scoped to `role/${project_name}-*`, a scoped
-  `ssm:GetParameter` for the Bedrock key (the `data` read resolves at *plan*
-  time, so without it every plan fails AccessDenied), `ManagedServices`
-  wildcarded on purpose (Terraform creates ARNs that don't exist yet); the
-  real boundary is the `production` reviewer gate, not policy width.
+  `${state_key}*`, IAM scoped to `role/${project_name}-*`, scoped
+  `ssm:GetParameter` for the key parameters (Bedrock, OpenAI, Langfuse — the
+  `data` reads resolve at *plan* time, so without them every plan fails
+  AccessDenied), `ManagedServices` wildcarded on purpose (Terraform creates
+  ARNs that don't exist yet); the real boundary is the `production` reviewer
+  gate, not policy width.
 - Trust conditions cover **two repo spellings** — the name form and the
   rename-proof id form.
 
@@ -60,25 +61,28 @@ provider is an account singleton referenced by ARN, never created or imported.
 | `domain_name` | `cadre.marcuss.pro` | |
 | `enable_custom_domain` | `true` | two-phase bootstrap flag; `false` only for a from-scratch rebuild. A stale local override after issuance is blocked by a lifecycle precondition (issue #37) |
 | `github_oidc_provider_arn` | — | account singleton, looked up, never created |
-| `image_tag` | `bootstrap` | deploy workflow bumps it to the commit SHA |
 | `lambda_memory_mb` | `1024` | also scales CPU (TLS per Bedrock call) |
 | `lambda_timeout_s` | `60` | capped at CloudFront's 60s origin-timeout |
 | `bedrock_mantle_base_url` | `https://bedrock-mantle.us-east-1.api.aws/v1` | OpenAI-compatible Mantle endpoint (ADR 0002) |
 | `bedrock_api_key_parameter` | `/cadre/bedrock-api-key` | SSM SecureString, created out of band — Terraform reads it, never writes it |
-| `brain_model` | `qwen.qwen3-32b` | Mantle id for the brain; `judge_model` (same default) covers injection + guard |
-| `validate_model` / `topic_model` / `topic_fallback_models` | `nvidia.nemotron-nano-12b-v2` / `google.gemma-3-12b-it` / two fallbacks | validity judge (no fallback, different provider on purpose), topic classifier, walked on primary error |
+| `openai_api_key_parameter` | `/cadre/openai-api-key` | embeddings key, data-referenced never created — see `openai.tf` |
+| `langfuse_*_parameter` | `/cadre/langfuse-{secret,public}-key`, `/cadre/langfuse-base-url` | tracing credentials, data-referenced — see `langfuse.tf` |
+| *(no model variables)* | — | issue #84: the roster lives only in the image's `MODEL_DEFAULTS` (`backend/app/config.py`); `assert_model_env` fails the deploy if a `CADRE_MODEL_*` reappears on the function |
+| `image_tag` | `bootstrap` | vestigial since ADR 0003 — `Deploy` never passes `-var image_tag`; `lambda.tf`'s `ignore_changes = [image_uri]` keeps Terraform from owning the image |
 | `state_bucket` / `state_key` | — / `cadre/cadre.tfstate` | must match `backend.hcl` |
 
 ## Lambda environment
 
 `infra/lambda.tf` injects `CADRE_ENV`, `CADRE_ALLOWED_ORIGIN`,
-`BEDROCK_MANTLE_BASE_URL`, the key as `AWS_BEARER_TOKEN_BEDROCK` (from the SSM
-parameter), and the five `CADRE_MODEL_*` vars that
-[`backend/app/config.py`](/openwiki/domain/sse-contract.md) reads. Env-var
-names are the contract: a variable nothing reads is invisible until someone
-tries to use it in an incident (they drifted once while the model layer was
-still a stub). `AWS_LWA_INVOKE_MODE` is *not* set here — it lives in
-`backend/Dockerfile` and must stay `response_stream`. The
+`BEDROCK_MANTLE_BASE_URL`, `AWS_BEARER_TOKEN_BEDROCK`, `OPENAI_API_KEY`, and the
+`LANGFUSE_*` vars — all from SSM data reads. Deliberately **no `CADRE_MODEL_*`**
+(issue #84): model ids live only in the image's `MODEL_DEFAULTS` that
+[`backend/app/config.py`](/openwiki/domain/sse-contract.md) owns, and
+`assert_model_env` fails the deploy if one reappears. Env-var names are the
+contract: a variable nothing reads is invisible until someone tries to use it
+in an incident (they drifted once while the model layer was still a stub).
+`AWS_LWA_INVOKE_MODE` is *not* set here — it lives in `backend/Dockerfile` and
+must stay `response_stream`. The
 [four silent streaming-breakers](/openwiki/architecture/overview.md) are the
 canon checklist for this module: three Terraform-owned, one Dockerfile-owned.
 
