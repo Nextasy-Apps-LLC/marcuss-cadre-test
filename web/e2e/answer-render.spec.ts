@@ -9,7 +9,7 @@
  */
 import { test } from "@playwright/test";
 
-import { expect, lastReply, sendMessage, skipUnlessLive, waitForReplySettled } from "./support";
+import { expect, lastReply, LIVE_TAG, sendMessage, waitForReplySettled } from "./support";
 
 const LINK_LABELS = new Set(["see article", "contact us", "see more"]);
 
@@ -28,9 +28,9 @@ function stripUrls(text: string): string {
 }
 
 test.describe("answer rendering", () => {
-  test("the answer streams incrementally and the final text is kept, not retracted", async ({ page }) => {
-    skipUnlessLive(test);
-
+  test("the answer streams incrementally and the final text is kept, not retracted", { tag: LIVE_TAG }, async ({
+    page,
+  }) => {
     await page.goto("/");
     await sendMessage(page, "What does Cadre AI do?");
 
@@ -64,11 +64,9 @@ test.describe("answer rendering", () => {
     expect(finalTextRaw.length).toBeGreaterThan(0);
   });
 
-  test("citation links render as small labelled links, open in a new tab, and are not raw long URLs", async ({
+  test("citation links render as small labelled links, open in a new tab, and are not raw long URLs", { tag: LIVE_TAG }, async ({
     page,
   }) => {
-    skipUnlessLive(test);
-
     await page.goto("/");
     // Mirrors backend/tests/e2e/test_pipeline_e2e.py's grounded citation case.
     await sendMessage(page, "How does Cadre AI choose LLMs and handle data security?");
@@ -102,9 +100,7 @@ test.describe("answer rendering", () => {
     }
   });
 
-  test("the trace link renders with its 30-second footnote", async ({ page }) => {
-    skipUnlessLive(test);
-
+  test("the trace link renders with its 30-second footnote", { tag: LIVE_TAG }, async ({ page }) => {
     await page.goto("/");
     await sendMessage(page, "What does Cadre AI do?");
     const reply = await waitForReplySettled(page);

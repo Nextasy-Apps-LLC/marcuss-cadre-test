@@ -28,6 +28,15 @@ test.describe("idle pipeline stepper", () => {
       // never carry a model label (freshSteps() before any /config-derived
       // send() closure has fired).
       await expect(row).toHaveAttribute("data-step-status", "pending");
+      // Asserted, not merely described: issue #97 fixes the *first-turn*
+      // model labels by giving `send`'s closure the current `stepModels`,
+      // and the tempting shortcut — re-seeding the idle `steps` state when
+      // /config lands — would light up the pre-turn chips too. This keeps
+      // that shortcut red, so the fix has to be the closure one.
+      await expect(
+        row.locator(".step-model"),
+        `${step} carries a model label before any turn has run`,
+      ).toHaveCount(0);
     }
   });
 });
