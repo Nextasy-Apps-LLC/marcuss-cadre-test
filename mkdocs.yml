@@ -91,6 +91,7 @@ nav:
       - Overview: adr/index.md
       - 0001 — Streaming chatbot on CloudFront: adr/0001-streaming-chatbot-cloudfront-lambda-s3.md
       - 0002 — Bedrock via the Mantle endpoint: adr/0002-bedrock-mantle-api-key.md
+      - 0003 — One gated release path: adr/0003-one-gated-release-path.md
 
 # `strict` is intentionally not set here. CI passes `--strict` on the command
 # line so a broken link or an unresolvable include fails the docs build, while

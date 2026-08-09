@@ -212,7 +212,7 @@ for real visitors. Open the page and watch tokens arrive.
 One workflow changes production: **`Deploy`**. It ships a commit's image, its
 page *and* its infrastructure in a single approval-gated run, so code and
 Terraform cannot drift apart across a release. See
-[ADR 0003](../adr/0003-one-gated-release-path.md) for why, including the two
+[ADR 0003](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/adr/0003-one-gated-release-path.md) for why, including the two
 plausible-sounding fixes that were rejected.
 
 ```bash
