@@ -16,20 +16,19 @@ Before this plan was written, a POC walking skeleton was built and deployed end-
 
 The backend is orchestrated as a **LangGraph `StateGraph`** over a typed `ConversationState` (`message`, `history`, `client_id`, `steps[]`, `context`, `answer`, `outcome ∈ {answered, refused, escalated, error}`, `refusal_text`, `trace_url`). Every terminal is an explicit state; every transition is observable (SSE + Langfuse).
 
-```
-validate_input ──fail──▶ refuse
-      │ pass
-injection_check ──fail──▶ refuse
-      │ pass
-topic_classifier ──off_topic──▶ refuse
-      │ in_scope         └──needs_human──▶ escalate (book a call → cadreai.com/contact)
-retrieve   ← KB lookup: condense query → embed → LanceDB top-k (fail-open)
-      │
-brain      ← streams tokens live, cites retrieved sources inline
-      │
-output_safety ──fail──▶ retract → refuse
-      │ pass
-done (answered)
+```mermaid
+flowchart TD
+    VI["validate_input"] -->|"fail"| REFUSE["refuse"]
+    VI -->|"pass"| IC["injection_check"]
+    IC -->|"fail"| REFUSE
+    IC -->|"pass"| TC["topic_classifier"]
+    TC -->|"off_topic"| REFUSE
+    TC -->|"needs_human"| ESC["escalate<br/>book a call → cadreai.com/contact"]
+    TC -->|"in_scope"| RET["retrieve<br/>KB lookup: condense query → embed → LanceDB top-k (fail-open)"]
+    RET --> BRAIN["brain<br/>streams tokens live, cites retrieved sources inline"]
+    BRAIN --> OS["output_safety"]
+    OS -->|"fail"| RETRACT["retract → refuse"]
+    OS -->|"pass"| DONE["done (answered)"]
 ```
 
 ### Model roster — a fit-for-purpose model per step
