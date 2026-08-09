@@ -570,6 +570,82 @@
       },
       "date": "2026-08-07",
       "status": "active"
+    },
+    {
+      "id": "KB-039",
+      "type": "learning",
+      "area": [
+        "ci",
+        "process"
+      ],
+      "tags": [
+        "e2e",
+        "test-gating",
+        "opt-in-suite",
+        "playwright",
+        "pytest",
+        "github-actions",
+        "skip",
+        "tags",
+        "grep"
+      ],
+      "title": "An opt-in test tier must be selected by an explicit tag/grep, never by a skip-by-default env var — and a job nobody triggers is not coverage",
+      "detail": "Two failure modes compounded in #97 and cost a bug reaching prod. (1) web/e2e/ gated its model-dependent specs on `skipUnlessLive(test)` reading CADRE_E2E_BEDROCK: with the flag unset the run reported GREEN having executed none of them, because a skipped test is not a failed test. (2) The CI job that ran the suite was itself `if: github.event_name == 'workflow_dispatch' && inputs.run_e2e`, so it never fired on a PR. Net effect: two tests that were known red the day they were written survived several merges into main, and Marcus found the bug by loading the page in a browser. Rules that follow. Select tiers by an explicit marker — Playwright `{ tag: '@live' }` + `--grep`/`--grep-invert`, or pytest `-m` — so the run's test count tells the truth: a tier either ran or was never selected, and neither can masquerade as a pass. Never express a tier as a conditional skip inside a test that would otherwise run. Anything that can run for free must have a CI job with NO `if:`, no dispatch input, and no skip step, that FAILS the PR. And when a cycle deliberately leaves a test red (documenting a real bug for a follow-up issue), that test must be in a tier CI actually runs, or the red is invisible and the follow-up never happens.",
+      "source": {
+        "issue": 97,
+        "pr": 98
+      },
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-040",
+      "type": "learning",
+      "area": [
+        "web",
+        "ci"
+      ],
+      "tags": [
+        "e2e",
+        "playwright",
+        "bedrock-cost",
+        "config",
+        "test-design",
+        "deterministic-refusal",
+        "validate_input"
+      ],
+      "title": "Before gating a browser assertion behind a live-model flag, check whether the value is client-painted config rather than model output — most of the pipeline pane is free to assert",
+      "detail": "The per-step model labels in the pipeline pane look like they need a real turn, so #85 put every one of them behind the live-model gate. They don't: useCadreChat.send() paints them from freshTurn(stepModels) — GET /config data the client already holds — at SEND time, before a single SSE frame arrives. Nothing on the wire reports them. So a turn that never reaches a model exercises the identical code path, and the whole class of bug (a wrong-but-present or missing label, including the first-turn stale-closure one) is catchable for free. In this app the free vehicle is the deterministic validate_input refusal: the control-character message \"bad\\u0000null\" is rejected on a pure string scan, and the backend image serves /config and drives that entire turn (running -> fail plus five skipped plus done{refused}) with AWS_BEARER_TOKEN_BEDROCK, OPENAI_API_KEY and the Langfuse variables ALL UNSET — so the CI job needs no secrets and cannot degrade into a skip when one is missing. Ask of every browser assertion: does this value come from the model, or from config/static UI copy the client renders? Only genuine model output (streamed text, citations, retrieval stats, the condensed query, an escalation route) belongs in the paid tier. Applying this moved chip model labels, chip states and elapsed_ms from a tier nobody ran to one that runs on every PR in ~8s at zero cost.",
+      "source": {
+        "issue": 97,
+        "pr": 98
+      },
+      "date": "2026-08-08",
+      "status": "active"
+    },
+    {
+      "id": "KB-041",
+      "type": "gotcha",
+      "area": [
+        "web"
+      ],
+      "tags": [
+        "react-18",
+        "batching",
+        "sse",
+        "playwright",
+        "mutationobserver",
+        "flaky-assertion",
+        "step-status"
+      ],
+      "title": "React 18 batches SSE state events that arrive in one network chunk — a zero-duration step never paints its intermediate 'running' status, so don't assert on it",
+      "detail": "useCadreChat calls setSteps() per `state` event. When two events for the same step arrive in the SAME network chunk — which is what happens for a step the server resolves instantly, e.g. validate_input's deterministic refusal reporting elapsed_ms: 0 — React 18's automatic batching collapses both setSteps calls into one commit, and the DOM never holds the intermediate value. A MutationObserver on data-step-status records only `fail`, never `running`; confirmed empirically (recorded log: `387ms validate_input -> fail` with no running entry). This is correct behavior, not a defect: the wire carried both events and the reducer applied both. The consequence for tests: an assertion that a step was OBSERVABLY painted `running` is only valid for steps that take real time (a live-model turn), and will fail against any instant step. Assert progression on instant steps as: the mutation log is non-empty (proving the pane updated after first paint rather than arriving pre-settled, KB-007), the recorded statuses are all ones the server actually sent, and the final status is terminal — not that a specific intermediate frame was rendered. Generalizes to any per-event React state update driven by a stream: intermediate DOM states are guaranteed only when the events are separated by a tick.",
+      "source": {
+        "issue": 97,
+        "pr": 98
+      },
+      "date": "2026-08-08",
+      "status": "active"
     }
   ]
 }
