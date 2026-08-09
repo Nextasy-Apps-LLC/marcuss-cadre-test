@@ -15,7 +15,7 @@ invariants (e.g. `cadre-deploy` must never gain
 
 | Workflow | Triggers | What it does |
 |---|---|---|
-| `ci.yml` | PR, push to `main`, dispatch | Web typecheck/test/build, backend pytest, release-path tests, arm64 image build (no push), terraform fmt/validate. Never touches AWS. A manual dispatch can additionally run the backend `e2e` and Playwright `e2e-web` suites against a real target. |
+| `ci.yml` | PR, push to `main`, dispatch | Web typecheck/test/build, backend pytest, release-path tests, arm64 image build (no push), terraform fmt/validate, plus the model-free `e2e-web` browser tier against a backend built in-job. Never touches AWS. A manual dispatch can additionally run the backend `e2e` and Playwright `e2e-web-live` suites against a real target. |
 | `deploy.yml` | `workflow_dispatch` only | The only production-mutating workflow: plans **and** applies Terraform, then ships the image + page for the same commit, behind the `production` approval gate (ADR 0003). |
 | `terraform.yml` | PR touching `infra/**`, dispatch | Plan-only since ADR 0003 — read-only drift/review; the apply lives in `Deploy`. |
 | `diff-honesty-scanner.yml` | Every PR into `main` | 12-rule scanner FAILs PRs whose diff weakens the safety net; self-tests first, waivers via `honesty-waiver:` PR-body lines (#86). |
@@ -29,16 +29,22 @@ inspection-only; deploy rebuilds from source), `backend` (Python 3.13,
 `pytest -q`), `release-path` (`pytest .github/tests/` — pins that `Deploy`'s
 approval gate stays unconditional and the apply consumes the reviewed plan),
 `image` (QEMU + Buildx arm64, `push: false` — catches a broken Dockerfile
-pre-deploy), `terraform` (fmt `-check`, validate) — plus two **manual-only
-jobs**. `e2e` runs the backend suite against a real target (defaults to
-`https://cadre.marcuss.pro`) and `e2e-web` drives the page in real Chromium
-(`web/e2e/`, Playwright); both cost real Bedrock turns, so they only fire on
-dispatch with `run_e2e: true` (issue #27). Neither needs OIDC — since ADR 0002
+pre-deploy), `terraform` (fmt `-check`, validate) — plus three e2e tiers.
+`e2e` (manual, `run_e2e: true`) runs the backend suite against a real target
+(defaults to `https://cadre.marcuss.pro`) and costs real Bedrock turns.
+`e2e-web` is the **unconditional model-free browser tier** (issue #97): it
+builds and boots the arm64 backend image in-job (QEMU, `load: true`), starts
+Vite on `127.0.0.1:8088`, and runs the `web/e2e/` Playwright suite on every PR
+and push to `main` — no secrets, no skip path, fails the PR when red (the
+predecessor gate skipped by default, and two render bugs shipped). `e2e-web-live`
+(manual, `run_e2e` **and** `e2e_live_bedrock`) runs the `@live` model-dependent
+specs against a real target. None of the tiers needs OIDC — since ADR 0002
 nothing in the suites is AWS-authenticated — and the live-model cases read the
 key from the `BEDROCK_API_KEY` repo secret (created out of band), skipping
 with a loud `::warning::` if it's missing. Forcing `e2e_live_bedrock` also
-runs `scripts/assert_models` first. **Nothing on push boots the container** —
-the post-deploy `/healthz` smoke is the first real boot.
+runs `scripts/assert_models` first. **On push, `e2e-web`'s local QEMU boot is
+the only container boot** — production's first boot of the deployed image is
+still the post-deploy `/healthz` smoke.
 
 ## deploy.yml — one gated release path (ADR 0003)
 
@@ -119,6 +125,8 @@ line in the PR body; `scanner-modified` is never waivable.
 
 Daily + dispatch. Checks out with `fetch-depth: 0` — a shallow clone hides the
 commit OpenWiki last documented, so the update diffs against an empty change
-summary. Opens an auto-merged PR touching `openwiki/`, `AGENTS.md`,
-`CLAUDE.md`, and itself. This is the intended regeneration path — don't
-hand-edit generated pages unless explicitly asked.
+summary. Opens an auto-merged PR — created with `PAT_TOKEN` so the PR's own
+workflow runs don't wait for manual approval (a `GITHUB_TOKEN` PR would not
+trigger them) — touching `openwiki/`, `AGENTS.md`, `CLAUDE.md`, and itself.
+This is the intended regeneration path — don't hand-edit generated pages
+unless explicitly asked.
