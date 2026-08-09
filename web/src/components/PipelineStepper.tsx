@@ -1,8 +1,15 @@
 import { formatRetrievalQuery, formatRetrievalStats } from "../lib/retrieval";
-import { isDegraded, stepIcon, type StepState } from "../types";
+import { formatStepUsage } from "../lib/usage";
+import { isDegraded, stepIcon, type StepState, type TurnSummary } from "../types";
 
 interface Props {
   steps: StepState[];
+  /**
+   * The current turn's aggregate from its `done` event (issue #109). `undefined`
+   * while a turn runs and when tracing was down — per-step usage rows render
+   * only for steps this summary has numbers for.
+   */
+  summary?: TurnSummary;
   /** Mobile only — the row list collapses behind the summary until tapped. */
   open: boolean;
   onToggle: () => void;
@@ -24,7 +31,7 @@ const STEPPER_ID = "pipeline-stepper-rows";
  * affordance — CSS alone decides whether the summary trigger or the row list
  * is visible at a given breakpoint.
  */
-export function PipelineStepper({ steps, open, onToggle }: Props) {
+export function PipelineStepper({ steps, summary, open, onToggle }: Props) {
   const blocked = steps.some((step) => step.status === "fail");
 
   return (
@@ -56,6 +63,13 @@ export function PipelineStepper({ steps, open, onToggle }: Props) {
           // actually rewrote the visitor's question.
           const retrievalQuery = step.retrieval
             ? formatRetrievalQuery(step.retrieval.query)
+            : null;
+          // Per-step tokens/cost from the done event's summary (issue #109).
+          // Only steps the summary has numbers for render a row; an unpriced
+          // step shows tokens alone.
+          const stepUsageTokens = summary?.usage_tokens?.[step.name];
+          const stepUsage = stepUsageTokens
+            ? formatStepUsage(stepUsageTokens.total, summary?.step_cost_usd?.[step.name])
             : null;
 
           return (
@@ -108,6 +122,15 @@ export function PipelineStepper({ steps, open, onToggle }: Props) {
                 <span className="step-timing" data-testid={`step-timing-${step.name}`}>
                   {step.elapsedMs}ms
                 </span>
+              )}
+
+              {stepUsage && (
+                <div
+                  className="step-detail step-usage"
+                  data-testid={`step-usage-${step.name}`}
+                >
+                  └─ {stepUsage}
+                </div>
               )}
             </li>
           );

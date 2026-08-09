@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { linkify } from "../lib/linkify";
+import { formatTurnSummary } from "../lib/usage";
 import type { ChatMessage } from "../types";
 
 interface Props {
@@ -89,6 +90,16 @@ export function Transcript({ messages }: Props) {
               <span className="cursor" aria-hidden="true" />
             )}
           </span>
+          {/* The one-line aggregate the `done` event carried (issue #109):
+              tokens · cost · latency for this turn. Only on a settled cadre
+              reply, and only when the wire sent a summary — tracing was down
+              for the turn otherwise, and inventing a zeroed line would read
+              as a measurement that never happened (KB-009). */}
+          {message.who === "cadre" && message.status === "done" && message.summary && (
+            <div className="msg-summary" data-testid="reply-summary">
+              {formatTurnSummary(message.summary)}
+            </div>
+          )}
         </div>
       ))}
       <div ref={endRef} />

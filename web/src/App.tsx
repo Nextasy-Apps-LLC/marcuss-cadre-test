@@ -87,6 +87,7 @@ export default function App() {
 
         <PipelineStepper
           steps={chat.steps}
+          summary={chat.summary}
           open={stepperOpen}
           onToggle={() => setStepperOpen((v) => !v)}
         />

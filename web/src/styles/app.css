@@ -207,6 +207,16 @@
   color: var(--fg-mute);
 }
 
+/* One-line per-turn aggregate under a settled reply (issue #109): tokens ·
+   cost · latency, from the `done` event's `summary`. Same quiet secondary
+   text as the trace note — it is a fact about the turn, not a CTA. */
+.msg-summary {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--fg-mute);
+}
+
 /* ── suggestions ──────────────────────────────────────────────────────── */
 
 .suggestions {

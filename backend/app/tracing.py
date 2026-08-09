@@ -758,17 +758,23 @@ def finalize_trace(
     refusal_text: str | None = None,
     degraded: bool = False,
     kb_state: str | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     """Write the trace-level fields and flush. Must run before the terminal SSE
     event: Langfuse batches in a background thread and Lambda freezes the
     instance the moment the response ends, so an unflushed batch is a trace that
     silently never arrives.
 
-    No-op when the turn has no id (tracing was down at `start_trace`) and on
-    any exception — a dropped trace is never allowed to become a dropped turn.
+    Returns the same numbers it writes to the span — per-step and per-turn
+    tokens, cost and latency — so the caller can ride them onto the wire
+    (`done`'s `summary` field, issue #109). One payload, two consumers: the
+    trace and the transcript cannot disagree because they are the same dict.
+
+    Returns `None` when the turn has no id (tracing was down at `start_trace`)
+    and on any exception — a dropped trace is never allowed to become a dropped
+    turn, and neither is a failed wire summary.
     """
     if not _ENABLED or _client is None or turn is None or turn.trace_id is None:
-        return
+        return None
 
     try:
         # Order matters, and not for a tidy-code reason. The graph's spans and
@@ -821,6 +827,20 @@ def finalize_trace(
                 cost_source = COST_UNPRICED
             else:
                 cost_source = USAGE_ABSENT
+            # The wire payload. `step_cost_usd` is the per-step map (`cost_usd`
+            # on the span metadata); the totals live under `tokens`/`cost_usd`
+            # here, the same names `summary` uses on the span. One dict built
+            # once, returned to the caller and written to the span — the
+            # transcript and the trace share it verbatim.
+            wire = {
+                "latency_ms": total_latency_ms,
+                "tokens": tokens_total,
+                "cost_usd": cost_total,
+                "usage_source": usage_source,
+                "cost_source": cost_source,
+                "usage_tokens": usage_tokens,
+                "step_cost_usd": cost_usd,
+            }
             span.update(
                 metadata={
                     "refused_step": refused_step or NOT_REFUSED,
@@ -829,11 +849,14 @@ def finalize_trace(
                     "usage_tokens": usage_tokens,
                     "cost_usd": cost_usd,
                     "summary": {
-                        "latency_ms": total_latency_ms,
-                        "tokens": tokens_total,
-                        "cost_usd": cost_total,
-                        "usage_source": usage_source,
-                        "cost_source": cost_source,
+                        key: wire[key]
+                        for key in (
+                            "latency_ms",
+                            "tokens",
+                            "cost_usd",
+                            "usage_source",
+                            "cost_source",
+                        )
                     },
                 }
             )
@@ -862,10 +885,12 @@ def finalize_trace(
             span.end()
 
         _client.flush()
+        return wire
     except Exception as exc:  # noqa: BLE001 - fail open, see module docstring
         log.warning(
             "could not finalize trace %s (turn is unaffected): %s", turn.trace_id, exc
         )
+        return None
 
 
 _configure(
