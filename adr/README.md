@@ -19,11 +19,3 @@ supersedes the old one and update the old one's status — don't edit history.
    A single ADR covering several tightly-coupled decisions (as 0001 does) is
    fine when splitting them would just scatter cross-references; split into
    separate files once the decisions start evolving independently.
-
-## Current ADRs
-
-| # | Title | Status |
-|---|---|---|
-| [0001](0001-streaming-chatbot-cloudfront-lambda-s3.md) | Streaming chatbot on one CloudFront distribution, IAM-only Lambda, zero secrets | Accepted (Bedrock-auth statements superseded by 0002; deployment statements in decisions 7–8 superseded by 0003) |
-| [0002](0002-bedrock-mantle-api-key.md) | Bedrock over the Mantle endpoint with an API key, not SigV4 | Accepted |
-| [0003](0003-one-gated-release-path.md) | One gated release path: `Deploy` plans and applies Terraform | Accepted |

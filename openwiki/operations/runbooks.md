@@ -80,18 +80,20 @@ Bedrock + OpenAI bill per request. The levers are the roster in
 `backend/app/config.py` (`MODEL_DEFAULTS`) and the token budgets — a KB turn
 spends the four judge steps, one condense call (only with history), one OpenAI
 embedding, and the brain's generation. Real per-step figures are read back
-from Langfuse traces in `docs/fine-tuning/costs.md` (since #79): the guard is
-~38% of turn cost, and retrieved passages are billed twice (brain + guard).
+from Langfuse traces in `docs/quality/costs.md`: an answered KB turn runs about
+$0.0014, the #79 guard swap cut the guard's share of turn cost from 38% to 21%,
+and retrieved passages are billed twice (brain + guard).
 
 ## Watch-outs
 
 - A whole turn must finish inside 60s — Lambda timeout is pinned to
   CloudFront's origin-timeout cap; raising it needs an AWS quota increase first,
   and heartbeats don't extend it (KB-004).
-- Push CI never boots the container — the post-deploy `/healthz` smoke is the
-  first real boot, so container-runtime bugs surface only at deploy time. The
-  manual `e2e`/`e2e-web` dispatch ([CI/CD](/openwiki/workflows/ci-cd.md)) is the
-  only CI path that exercises the real target, and it costs real Bedrock turns.
+- On push, only the model-free `e2e-web` tier boots the container (a local
+  QEMU build) — production's first boot of the deployed image is still the
+  post-deploy `/healthz` smoke. The manual `e2e`/`e2e-web-live` dispatch
+  ([CI/CD](/openwiki/workflows/ci-cd.md)) is the only CI path that exercises
+  the real target, and it costs real Bedrock turns.
 - A model id typo ships a *working-looking* chat with amber rails, not a crash
   (KB-009) — run `python -m scripts.assert_models` before assuming a
   "degraded everywhere" symptom is a Bedrock outage. Since #84 the deploy

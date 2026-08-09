@@ -39,7 +39,7 @@ backend/     FastAPI app + Dockerfile (arm64, Lambda Web Adapter), committed Lan
 web/         React + Vite single page, Vitest unit tests + Playwright e2e — see web/CLAUDE.md
 infra/       Terraform — CloudFront, Lambda, S3, ACM, OIDC roles — see infra/CLAUDE.md
 adr/         Architecture decision records (MADR format), ADR 0001 is the load-bearing one
-docs/        The MkDocs site published to GitHub Pages (wrappers include adr/ and infra/)
+docs/        MkDocs site (GitHub Pages), nav split by audience — For humans (plan-epic, claude-code, ci-cd, quality/, adr/) and For agents (agents/ = CLAUDE.md wrappers)
 .github/     Six workflows (incl. the Diff Honesty Scanner) plus DEPLOYMENT.md (approval-gate setup) and CODEOWNERS
 ```
 
@@ -48,10 +48,6 @@ is the repo knowledge base. MkDocs embeds `infra/README.md` and `adr/` at build
 time rather than copying them.
 
 ## Backlog
-
-- **`docs/ci-cd.md` stale since #93** — it still describes five workflows and a
-  Terraform apply path, but the repo now has six workflows and `Deploy` owns
-  the apply (ADR 0003); needs a MkDocs-site regeneration.
 
 (Resolved: KB retrieval shipped as plan Phase 3 — `retrieve` condenses, embeds
 and searches the committed LanceDB corpus with citations — and Langfuse tracing

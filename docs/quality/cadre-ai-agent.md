@@ -99,7 +99,8 @@ includes transport retries. `google.gemma-4-26b-a4b` errored on every call —
 catalogued but not entitled, the exact trap `scripts/assert_models.py`
 exists for.
 
-**Topic** (16 labelled conversations, finals ×3 runs):
+**Topic** (16 labelled conversations — Marcus's real escalation-loop
+transcript plus the four first-person eval escalations — finals ×3 runs):
 
 | model | acc | p50 s | note |
 |---|---|---|---|
@@ -107,13 +108,18 @@ exists for.
 | mistral.ministral-3-14b-instruct | 100% (48/48) | 0.22 | |
 | zai.glm-4.7-flash | 100% (48/48) | 0.33 | fallback 1 |
 | qwen.qwen3-next-80b-a3b-instruct | 98% (47/48) | 0.27 | fallback 2 |
-| google.gemma-3-12b-it (old default) | 94% (15/16) | 0.35 | still escalates the real loop transcript |
+| google.gemma-3-12b-it (old default) | 94% (15/16) | 0.35 | still escalates the real loop transcript (single-run sweep) |
 | nvidia.nemotron-nano-3-30b | 94% (15/16) | 0.33 | |
 | nvidia.nemotron-nano-9b-v2 | 94% (15/16) | 2.58 | reasoning monologue, 1 no-verdict |
 | nvidia.nemotron-nano-12b-v2 | 81% (13/16) | 0.32 | escalates both real transcripts |
 
 "Should the topic classifier go back to a Nemotron?" — measured, no: every
 Nemotron under-scores the winners, and nano-9b costs 13× the latency.
+
+The fallbacks are walked in order when the primary *errors*, never on a
+verdict — three providers, three failure modes: a fallback that shares the
+primary's outage is not a fallback. The order is behaviour, not
+presentation; it is the walk order on an outage.
 
 **Injection** (12 labelled messages, finals ×3 runs):
 
@@ -125,15 +131,73 @@ Nemotron under-scores the winners, and nano-9b costs 13× the latency.
 | qwen.qwen3-32b (old default) | 100% (36/36) | 0.26 | |
 | google.gemma-3-4b-it | 58% (7/12) | 0.18 | flags meta-complaints as attacks |
 
-**Guard** (16 labelled answer+context pairs, finals ×3 runs):
+Accuracy tied at 100% among the finalists; latency decided it — the reason
+"smallest" is not the rule (gemma-3-4b, the smallest candidate, failed the
+meta-complaints).
+
+**Guard** (16 labelled answer+context pairs — the ten correct fact-dense
+answers that were wrongly retracted, must pass, plus ungrounded-fact
+negatives, must fail — finals ×3 runs):
 
 | model | acc | p50 s | note |
 |---|---|---|---|
-| **qwen.qwen3-next-80b-a3b-instruct** | **100% (48/48)** | **0.32** | new default |
-| nvidia.nemotron-nano-3-30b | 94% (45/48) | 0.23 | passes the instruction-leak negative |
+| **qwen.qwen3-next-80b-a3b-instruct** | **100% (48/48)** | **0.32** | default at #70 |
+| nvidia.nemotron-nano-3-30b | 94% (45/48) | 0.23 | current default — see the cost pass below; passes the instruction-leak negative |
 | google.gemma-3-12b-it | 94% (45/48) | 0.25 | same miss |
 | qwen.qwen3-32b (old default) | 94% (45/48) | 0.31 | same miss |
 | mistral.ministral-3-14b-instruct | 88% (14/16) | 0.89 | retracts two *correct* grounded answers — disqualified |
+
+**Guard, cost pass (issue #79):** the slot now runs
+`nvidia.nemotron-nano-3-30b` — a deliberate accuracy-for-cost trade, taken
+with eyes open. The 80B model is the only one that scores 48/48, and the
+3-point gap is not spread across the fixture set: all three runners-up fail
+the *same* case, letting through an answer that discusses its own
+instructions ("passes the instruction-leak negative" means the guard passes
+it). Priced at the slot's real measured token profile (in≈4581, out=2 — the
+guard reads the whole answer plus every retrieved passage, so its cost is
+~all input):
+
+| model | cost per turn | note |
+|---|---|---|
+| **nvidia.nemotron-nano-3-30b** | **$0.000275** | -57%, and the fastest |
+| google.gemma-3-12b-it | $0.000413 | -36% |
+| qwen.qwen3-next-80b-a3b-instruct | $0.000644 | the 48/48 baseline |
+| qwen.qwen3-32b | $0.000688 | +7% AND 45/48 |
+
+nemotron-nano-3-30b is picked for cost and latency. The instruction-leak
+case is the known, single, specific regression that buys it — not a general
+accuracy loss — and `scrub_failure`'s deterministic half (URL allowlist +
+PII) is unaffected because it runs first and has no outage mode. If
+instruction leakage matters more than ~$0.0004/turn, this is the line to
+change and redeploy.
+
+**Condense** (probed, not judge_bench: 5 real follow-up cases × 2 runs
+through `models.condense_query`'s own parser, then each rewrite embedded
+and searched against the committed corpus; the score is the mean top-hit
+similarity):
+
+| model | rewrote | p50 s | score | note |
+|---|---|---|---|---|
+| **google.gemma-3-12b-it** | 10/10 | 0.39 | 0.602 | picked |
+| mistral.ministral-3-14b-instruct | 10/10 | 0.34 | 0.600 | ties on score; sent the pricing follow-up to an article instead of /contact |
+| zai.glm-4.7-flash | 10/10 | 0.39 | 0.532 | |
+| (no condensing — the raw follow-up) | — | — | 0.250 | why this call exists at all |
+
+The bottom row is the reason the call exists at all: "how much does that
+cost?" on its own retrieves *nothing* above the floor, and condensing turns
+it into a 0.54 hit on /contact. gemma and ministral tie on score; gemma is
+picked because it anchors every rewrite to Cadre AI, which is what put the
+right page first in all five cases. plan.md names Haiku 4.5, but no Haiku id
+answers through this transport (ADR 0002 — the Mantle host serves only
+`/v1/chat/completions`, which 400s on a Claude id), so the slot takes the
+fastest entitled model; the break-glass variable is how a Haiku id gets
+tried the day one answers. The slot has no fallback chain on purpose: it
+fails open to the visitor's own words — a worse query, never a broken turn.
+
+**Validate** is the one judge not in the bench: `nvidia.nemotron-nano-12b-v2`,
+a cheap SLM sanity/validity judge (second half of `validate_input`),
+deliberately a *different provider* from the topic primary — this step has
+no fallback, so it should not share a failure mode with anything else.
 
 Latency budget check (KB-004): the three judges plus validate now cost
 ~0.9s p50 combined per answered turn — comfortably inside the 60s cap, and
