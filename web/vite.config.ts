@@ -10,6 +10,7 @@ export default defineConfig({
     sourcemap: true,
   },
   server: {
+    host: "127.0.0.1",
     port: 8088,
     proxy: {
       // Dev only. In production the page and the API share a hostname via
