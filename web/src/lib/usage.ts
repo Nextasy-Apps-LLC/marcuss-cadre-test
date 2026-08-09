@@ -31,10 +31,17 @@ export function formatTokens(total: number): string {
  * A step's cost can be a fraction of a cent, so this never rounds to a fixed
  * number of decimal places (that would turn every per-step figure into
  * `$0.00`); 4 significant digits keeps the magnitude honest without
- * pretending to the provider's full precision.
+ * pretending to the provider's full precision. Small values are written out
+ * in full (`$0.00000091`, the retrieve embedding) rather than leaking
+ * `toPrecision`'s scientific notation (`$9.1e-7`) into the stepper.
  */
 export function formatCost(usd: number): string {
-  return `$${Number(usd.toPrecision(4)).toString()}`;
+  if (usd === 0) return "$0";
+  const magnitude = Math.floor(Math.log10(Math.abs(usd)));
+  const decimals = Math.max(0, 4 - 1 - magnitude);
+  const fixed = usd.toFixed(decimals);
+  const stripped = fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
+  return `$${stripped}`;
 }
 
 /** Turn latency in seconds with one decimal — the wire carries milliseconds. */

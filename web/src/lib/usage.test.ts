@@ -35,6 +35,15 @@ describe("formatCost", () => {
     expect(formatCost(0.00009)).toBe("$0.00009");
     expect(formatCost(1.2)).toBe("$1.2");
     expect(formatCost(0.1234)).toBe("$0.1234");
+    expect(formatCost(999.99)).toBe("$1000");
+  });
+
+  it("writes tiny costs in full rather than leaking scientific notation", () => {
+    // The retrieve embedding's per-step cost is ~$9.1e-7; toPrecision's
+    // `$9.1e-7` is a real display wart in the stepper, so small values are
+    // spelled out to 4 significant digits instead.
+    expect(formatCost(9.1e-7)).toBe("$0.00000091");
+    expect(formatCost(3e-5)).toBe("$0.00003");
   });
 
   it("renders a literal zero legibly", () => {
