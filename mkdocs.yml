@@ -29,18 +29,21 @@ exclude_docs: |
 
 theme:
   name: material
+  font:
+    text: Inter
+    code: Roboto Mono
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: black
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: black
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
@@ -57,6 +60,7 @@ theme:
 # turns them into actual headers and gives the link lists bullets so the
 # drawer reads as an outline, not a wall of text.
 extra_css:
+  - stylesheets/brand.css
   - stylesheets/nav.css
 
 plugins:
