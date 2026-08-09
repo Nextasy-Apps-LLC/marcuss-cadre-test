@@ -201,6 +201,11 @@ def _usage_total(obs: dict) -> int:
     return int(usage.get("input", 0)) + int(usage.get("output", 0))
 
 
+def turn_span(trace: dict) -> dict | None:
+    """The observation that carries the trace-level fields."""
+    return observation(trace, "turn")
+
+
 def check_trace(trace: dict, turn: dict, *, expect_retrieval: bool) -> list[str]:
     """Every assertion the design makes, as a list of failures (empty = good)."""
     problems: list[str] = []
@@ -244,6 +249,33 @@ def check_trace(trace: dict, turn: dict, *, expect_retrieval: bool) -> list[str]
                 problems.append(
                     f"{tid}: generation {name!r} has no token usage and does not "
                     f"say usage_source:'absent' (got {source!r})"
+                )
+
+    # -- turn summary: per-step + per-turn tokens and cost (Phase 2) --------
+    span = turn_span(trace)
+    if span is None:
+        problems.append(f"{tid}: no 'turn' span observation")
+    elif turn["outcome"] == "answered":
+        meta = span.get("metadata") or {}
+        if "usage_tokens" not in meta:
+            problems.append(f"{tid}: turn span has no usage_tokens")
+        if "cost_usd" not in meta:
+            problems.append(f"{tid}: turn span has no cost_usd")
+        summary = meta.get("summary")
+        if not summary:
+            problems.append(f"{tid}: turn span has no summary")
+        else:
+            if summary.get("usage_source") != "provider":
+                problems.append(
+                    f"{tid}: summary usage_source is not 'provider' (got "
+                    f"{summary.get('usage_source')!r})"
+                )
+            gen_total = sum(_usage_total(g) for g in gens)
+            tokens = summary.get("tokens") or {}
+            if tokens.get("total") != gen_total:
+                problems.append(
+                    f"{tid}: summary token total {tokens.get('total')} != "
+                    f"generations' total {gen_total}"
                 )
 
     # -- retrieval: fetched vs kept, the three-way ambiguity ----------------
@@ -308,6 +340,17 @@ def describe(trace: dict) -> None:
             f"    - retrieval       fetched={meta.get('fetched_count')} "
             f"kept={meta.get('kept_count')} floor={meta.get('floor')} "
             f"condense_used={meta.get('condense_used')}"
+        )
+
+    span = turn_span(trace)
+    if span:
+        meta = span.get("metadata") or {}
+        summary = meta.get("summary") or {}
+        tokens = summary.get("tokens") or {}
+        print(
+            f"    - turn summary    latency_ms={summary.get('latency_ms')} "
+            f"tokens={tokens.get('total')} ($ {summary.get('cost_usd', 0) or 0:.6f}, "
+            f"{summary.get('usage_source')}/{summary.get('cost_source')})"
         )
 
 
