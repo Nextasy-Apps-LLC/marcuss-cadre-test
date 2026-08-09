@@ -2,11 +2,11 @@
 
 A customer-support chatbot for **Cadre AI** (AI strategy & implementation consultancy), live at **https://cadre.marcuss.pro**.
 
-**Stack:** React/Vite SSE client → CloudFront → Lambda Function URL (response streaming) → FastAPI + **LangGraph** conversation engine → Bedrock models over the OpenAI-compatible **Mantle** endpoint (ADR 0002) → **Langfuse** for end-to-end tracing with public trace links. OpenAI embeddings + LanceDB arrive with the RAG phase (not built).
+**Stack:** React/Vite SSE client → CloudFront → Lambda Function URL (response streaming) → FastAPI + **LangGraph** conversation engine → Bedrock models over the OpenAI-compatible **Mantle** endpoint (ADR 0002) → **Langfuse** for end-to-end tracing with public trace links. OpenAI embeddings + a committed LanceDB artifact power retrieval (Phase 3).
 
 **This file is the epic.** Each phase below is broken down into GitHub issues (via `/compound-create-issue`) that carry the implementation detail; the issues reference their phase here. Process, board, and knowledge-base mechanics: see `CLAUDE.md`.
 
-**Status (2026-08-07): Phases 1–2 are shipped and deployed. Phases 3–6 are designed below but NOT built** — where a section describes unshipped behavior (the inside of `retrieve`, evals, feedback UI) it says so inline. The shipped `retrieve` node is a stub that reports `skipped`/`kb_not_wired` on every turn.
+**Status (2026-08-08): Phases 1–3 are shipped and deployed. Phases 4–6 are designed below but NOT built** — where a section describes unshipped behavior (the eval harness, the feedback UI) it says so inline. `retrieve` is live: condense → embed → LanceDB search between `topic_classifier` and `brain`, fail-open with a per-cause `detail` on every give-up path.
 
 ## Foundations
 
@@ -34,23 +34,23 @@ done (answered)
 
 ### Model roster — a fit-for-purpose model per step
 
-The plan originally specced Claude models (Haiku judges, Opus brain) via `langchain-aws`/`ChatBedrockConverse`. Neither survived contact with the account: classic `bedrock-runtime` is `NOT_AUTHORIZED` account-wide and the Claude ids listed on the Mantle endpoint refuse to run (ADR 0002), so calls go over Mantle's OpenAI-compatible API via `httpx`, and every slot was **probed for reliability, accuracy-through-the-parser, and latency before pinning** (KB-012 — the probe changed three of five slots, retiring the specced Nemotron 9B for intermittent 503s and 4× latency). The roster below is what ships; defaults live in `backend/app/config.py`, overridable per step via `CADRE_MODEL_*` env vars set by Terraform.
+The plan originally specced Claude models (Haiku judges, Opus brain) via `langchain-aws`/`ChatBedrockConverse`. Neither survived contact with the account: classic `bedrock-runtime` is `NOT_AUTHORIZED` account-wide and the Claude ids listed on the Mantle endpoint refuse to run (ADR 0002), so calls go over Mantle's OpenAI-compatible API via `httpx`, and every slot was **probed for reliability, accuracy-through-the-parser, and latency before pinning** (KB-012 — the first probe changed three of five slots; the measured quality pass of #70/#79 changed four more, with the benchmark tables in [docs/quality/cadre-ai-agent.md](https://nextasy-apps-llc.github.io/marcuss-cadre-test/quality/cadre-ai-agent/)). The roster below is what ships. `backend/app/config.py`'s `MODEL_DEFAULTS` is the single source of truth, and the image is its only carrier (issue #84): Terraform sets no `CADRE_MODEL_*`, three deploy gates fail on drift, and the env vars survive only as hand-set break-glass.
 
 | Step | Model (shipped) | Why |
 |---|---|---|
-| input validation | deterministic checks + **Nemotron 3 Nano 9B v2** (Bedrock serverless) | cheap SLM sanity/validity judge |
-| injection check | **Claude Haiku 4.5** strict single-token classifier | fast, strong instruction-following against adversarial input; Bedrock Guardrails prompt-attack filter evaluated as a complement |
-| topic classifier | **Nemotron 3 Nano 12B v2** (fallbacks: **Google Gemma** on Bedrock, then Haiku 4.5) | 3-way route: `in_scope` / `off_topic` / `needs_human` |
-| query condensing | **Google Gemma 3 12B** (`CADRE_MODEL_CONDENSE`) | rewrite follow-ups into standalone retrieval queries. plan.md specified Haiku 4.5; no Claude id answers through Mantle (ADR 0002), so the slot took the fastest entitled model. Probed before pinning: 10/10 usable rewrites, p50 0.39s, and condensing lifts the mean top-hit score on 5 real follow-ups from 0.250 (raw message) to 0.602 — "how much does that cost?" alone retrieves nothing at all |
-| brain | **Claude Opus 5** (streaming) | answer quality on nuanced consulting questions |
-| output safety | **Claude Haiku 4.5** guard + deterministic PII/URL scrub | final gate on the streamed answer |
+| input validation | deterministic checks + **`nvidia.nemotron-nano-12b-v2`** | cheap SLM sanity/validity judge behind fail-open |
+| injection check | **`mistral.ministral-3-8b-instruct`** strict single-token classifier | 100% on the labelled injection fixtures at p50 0.17s (#70); the meta-complaint carve-out lives in the prompt, with positive fixtures pinning that real injections still fire |
+| topic classifier | **`mistral.ministral-3-8b-instruct`** (fallbacks, walked on model *errors* only: `zai.glm-4.7-flash`, then `qwen.qwen3-next-80b-a3b-instruct`) | 3-way route `in_scope` / `off_topic` / `needs_human`; 100% on the labelled conversations at p50 0.19s (#70) — every Nemotron under-scored it |
+| query condensing | **`google.gemma-3-12b-it`** | rewrite follow-ups into standalone retrieval queries (skipped entirely on a first message). Probed before pinning: 10/10 usable rewrites, p50 0.39s, and condensing lifts the mean top-hit score on 5 real follow-ups from 0.250 to 0.602 — "how much does that cost?" alone retrieves nothing at all |
+| brain | **`qwen.qwen3-32b`** (streaming) | the specced Opus cannot run through Mantle (ADR 0002); qwen3-32b answers nuanced consulting questions well inside the 60s turn budget |
+| output safety | **`nvidia.nemotron-nano-3-30b`** guard + deterministic PII/URL scrub | swapped from qwen3-next-80b in #79 for −56% step cost; the one known 3-point fixture regression is documented, watched on every trace, and revertible without a code deploy |
 | embeddings | **OpenAI `text-embedding-3-large`** (3072 native) | KB requirement; on a corpus this small the cost difference is noise and retrieval quality is the only axis that matters (decision recorded in #62, superseding `-3-small`) |
 
 ## SSE protocol v2 — real-time through every phase
 
 The FastAPI endpoint bridges the graph to SSE via an asyncio queue; node wrappers emit events as the graph advances, so the client renders the pipeline live:
 
-- `state` — `{step, status: running | pass | fail | skipped, detail?, elapsed_ms?}` on **every** transition (`elapsed_ms` is set on `pass`/`fail` verdicts and reused verbatim as the trace's per-step latency, so stepper and trace cannot disagree)
+- `state` — `{step, status: running | pass | fail | skipped, detail?, elapsed_ms, retrieval}` on **every** transition (`elapsed_ms` is set on `pass`/`fail` verdicts and reused verbatim as the trace's per-step latency, so stepper and trace cannot disagree; `retrieval {query, hit_count, top_score}` rides `retrieve`'s terminal `pass` only — #74)
 - `token` — brain deltas, streamed as generated
 - `trace` — `{trace_id, url}`, the first frame of the turn (the id is generated locally, so the URL is known before the graph starts); absent entirely when tracing is down
 - `done` — `{outcome, refusal_text?}` · `error` · `: ping` comment heartbeat (idle-timeout safety)
@@ -68,7 +68,7 @@ Shipped in Phase 2 (PR #55). The whole surface is `backend/app/tracing.py`; the 
 - The web client renders a **"View trace ↗"** chip on each traced assistant message.
 - Trade-off, accepted for a demo: public traces expose user messages. Called out under scope.
 
-## Knowledge base (RAG) — when and how the bot consults it *(Phase 3 — designed, not built)*
+## Knowledge base (RAG) — when and how the bot consults it *(Phase 3 — shipped, #62)*
 
 **The KB is consulted on every in-scope user message, as a first-class LangGraph node (`retrieve`)** — the standard LangGraph RAG pattern (retrieval as a graph step, not a hidden call inside the brain). It runs **after `topic_classifier` passes and before `brain`**: refused/escalated messages never spend an embedding call, and the brain always has its context before generating. As a node it gets its own SSE `state` events (`retrieve: running → pass/skipped`) and its own Langfuse span (query, top-k hits, scores — all visible in the public trace).
 
@@ -103,27 +103,27 @@ As built (2026-08-08): 55 pages → 131 chunks (median 755 tokens), a 1.80 MB co
 
 Cadre AI support assistant for prospective and existing clients: services (AI Strategy, AI Leadership & Facilitation, AI Engineering, AI Agents), industries served, the AI Maturity Index, the client portal, and how to get started. Facts come only from retrieved context and the vetted baseline — never invented pricing, clients, or capabilities. Pricing → engagements are custom; book a strategy call. Unknown or out-of-scope → escalate to https://www.cadreai.com/contact. Replies in the user's language.
 
-## Evaluation — LLM-as-judge *(Phase 4 — designed, not built)*
+## Evaluation — LLM-as-judge *(Phase 4 — designed, not built; `backend/evals/` today holds the narrower judge-slot benchmark, not this harness)*
 
 "Is the bot doing things correctly, and did this change make it better or worse?" is answered by an **offline eval harness** (`backend/evals/`) that runs the LangGraph engine headless against a golden dataset and logs every run as a **Langfuse experiment**, so run-vs-run comparison (per-case and aggregate score deltas) comes from Langfuse's native experiment UI — no dashboard to build.
 
 - **Golden dataset (~30 cases, growable)**: the assignment's support scenarios plus adversarial ones — off-topic, injection attempts, multi-turn follow-ups, pricing, unknown-answer escalation. Each case: input (+history) → expected `outcome` (`answered/refused/escalated`), expected source URL for grounded questions, and a reference answer. Stored in-repo; mirrored to a Langfuse dataset.
 - **Deterministic assertions first** (no LLM, exact): the injection case got `refused`; the unknown case `escalated` with the booking link; the grounded answer cites the expected page.
-- **LLM-as-judge for the fuzzy half**: rubric grading of groundedness (only claims supported by the retrieved chunks — the hallucination check), correctness vs the reference answer, and persona/tone adherence. **Reference-guided grading** blunts self-preference bias, and the judge is a **different model family from the brain** — Nemotron 3 Super 120B (fallback: GPT-OSS), both serverless on Bedrock, so no new infra.
+- **LLM-as-judge for the fuzzy half**: rubric grading of groundedness (only claims supported by the retrieved chunks — the hallucination check), correctness vs the reference answer, and persona/tone adherence. **Reference-guided grading** blunts self-preference bias, and the judge is a **different model family from the brain**, picked by measurement the way every slot already is — `backend/evals/judge_bench.py` takes its candidates per run (`--models` is required, no default list), same Mantle endpoint, so no new infra.
 - **When it runs**: manually or via `workflow_dispatch` before merging any prompt, model, or retrieval change. A full run costs cents and a few minutes. CI *gating* on scores is deliberately deferred (see scope) — judge scores need calibration before they're allowed to block merges.
 
 ## Phases
 
 - [x] **Phase 1 — LangGraph engine + SSE v2**: `StateGraph`, nodes with mocked-seam unit tests, `state` events, refusal/escalation states, persona v1, frontend protocol update + pipeline stepper. — shipped via #24/#25/#26/#27 (PRs #29, #31, #35)
 - [x] **Phase 2 — Langfuse traceability**: keys via SSM SecureString (`SET_OUT_OF_BAND` pattern), callback wiring, public traces, `trace` event, frontend trace link, flush hardening for Lambda.
-- [x] **Phase 3 — RAG KB**: ingestion pipeline + LanceDB artifact (55 pages → 131 chunks, 1.80 MB); `retrieve` node (condense → embed → search) wired between `topic_classifier` and `brain`, fail-open with per-cause `detail`s and its own Langfuse span; cited answers via `persona.system_prompt(context)`; OpenAI key `data`-read from SSM into the function (`infra/openai.tf`); web half done — linkify's KB-017 fix (regex now excludes `(`/`[`/`]`) and the exact `/case-studies` / `/articles` label mappings, verified end to end in a real browser against the real backend image (KB-007). Complete in #62's PR; checkbox flips once merged and deployed (`terraform apply` is Marcus's step).
-- [ ] **Phase 4 — Evaluation harness**: golden dataset; headless graph runner; deterministic outcome/citation assertions; LLM-judge rubric (groundedness, correctness, persona) on a non-brain model family; runs logged as Langfuse experiments for before/after comparison.
-- [ ] **Phase 5 — UX polish + e2e**: stepper/linkify/suggestions polish; no-op thumbs up/down; `BASE_URL`-pointable e2e suite (healthz, config, grounded-answer-with-citation, off-topic refusal, injection refusal) run against local Docker, then prod.
-- [ ] **Phase 6 — Hardening + live verification**: the assignment's support scenarios exercised live in a browser, including escalation and trace-link click-through; a final eval run recorded as the submission baseline.
+- [x] **Phase 3 — RAG KB**: ingestion pipeline + committed LanceDB artifact (55 pages → 131 chunks, 1.80 MB); `retrieve` node (condense → embed → search) wired between `topic_classifier` and `brain`, fail-open with per-cause `detail`s and its own Langfuse span; cited answers via `persona.system_prompt(context)`; OpenAI key `data`-read from SSM into the function (`infra/openai.tf`); linkify verified end to end in a real browser against the real backend image (KB-007, KB-017). — shipped and deployed via #62; refined by #67 (INIT-phase warm-up), #70 (quality pass), #74 (retrieval facts on the wire), #79 (trace generations + cost)
+- [ ] **Phase 4 — Evaluation harness**: golden dataset; headless graph runner; deterministic outcome/citation assertions; LLM-judge rubric (groundedness, correctness, persona) on a non-brain model family; runs logged as Langfuse experiments for before/after comparison. *(Not built. What exists today is narrower: `backend/evals/judge_bench.py` benchmarks candidate models for the three judge slots over labelled regression fixtures.)*
+- [ ] **Phase 5 — UX polish + e2e**: stepper/linkify/suggestions polish; no-op thumbs up/down. *(The e2e half shipped early and grew past this spec: `backend/tests/e2e/` — 57 `BASE_URL`-pointable tests with three opt-in live gates — and the Playwright `web/e2e/` browser suite, #85. The thumbs and polish remain unbuilt.)*
+- [ ] **Phase 6 — Hardening + live verification**: the assignment's support scenarios exercised live in a browser, including escalation and trace-link click-through; a final eval run recorded as the submission baseline. *(The 98-question sweep of 2026-08-08 in `docs/quality/cadre-ai-agent.md` is a partial baseline; the final live pass has not been run.)*
 
 ## Scope decisions
 
-**In scope:** the assignment's support scenarios; grounded, cited answers (grounding via RAG is Phase 3, not built — until then facts come only from the vetted persona baseline); the six-step guarded pipeline with live visible state; public per-turn traces; escalation to a human via booking; an offline LLM-as-judge eval harness with run-vs-run comparison (Phase 4, not built).
+**In scope:** the assignment's support scenarios; grounded, cited answers via RAG (Phase 3, shipped — whenever retrieval fails open, facts fall back to the vetted persona baseline); the six-step guarded pipeline with live visible state; public per-turn traces; escalation to a human via booking; an offline LLM-as-judge eval harness with run-vs-run comparison (Phase 4, not built).
 
 **Out of scope** (each deliberate, with the "with more time" path):
 
@@ -144,6 +144,6 @@ Cadre AI support assistant for prospective and existing clients: services (AI St
 
 ## Operational notes
 
-- Secrets live in SSM. Two shapes, and picking the wrong one clobbers a live value: parameters that don't exist yet are created by Terraform with `value = "SET_OUT_OF_BAND"` + `ignore_changes` (the planned OpenAI key will use this); parameters that already exist with real values (the Bedrock key, the three Langfuse parameters) are only `data`-referenced. `infra/README.md` § "Secrets and credentials" is the canonical write-up.
-- Every configured model id is asserted before an image is pushed — `backend/scripts/assert_models.py` in `deploy.yml` lists `GET /v1/models` *and* spends a real one-token completion per id, because listing is not entitlement (several Claude ids list and still refuse to run).
-- Deploy path is unchanged from the POC: push to `main` → CI → Terraform + image build → CloudFront. Every phase merges deployable.
+- Secrets live in SSM. Two shapes, and picking the wrong one clobbers a live value: parameters that don't exist yet are created by Terraform with `value = "SET_OUT_OF_BAND"` + `ignore_changes` (none currently); parameters that already exist with real values (the Bedrock key, the three Langfuse parameters, the OpenAI key) are only `data`-referenced. `infra/README.md` § "Secrets and credentials" is the canonical write-up.
+- Model ids are gated three times before they run — `backend/scripts/assert_models.py` (entitlement: `GET /v1/models` *and* a real one-token completion per id, because listing is not entitlement), `assert_model_env.py` (no `CADRE_MODEL_*` drift on the live function), `assert_step_models.py` (the deployed `/config` matches the commit's own defaults) — all wired into `deploy.yml`, none skippable.
+- Shipping is a decision, not a merge side effect: one approval-gated **`Deploy`** workflow plans and applies the commit's Terraform, then ships its image and page in the same run (ADR 0003). Every phase merges deployable.

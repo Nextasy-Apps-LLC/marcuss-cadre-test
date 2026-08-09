@@ -4,15 +4,19 @@
 plus a `POST /ask` SSE endpoint on one CloudFront distribution (private S3 +
 `AWS_IAM` Lambda Function URL), backed by a LangGraph engine calling Bedrock.
 
-**Read `adr/README.md` first.** ADR 0001 and 0002 record the load-bearing
+**Read `adr/README.md` first.** ADRs 0001–0003 record the load-bearing
 decisions. Don't fight them without a superseding ADR. Keep `infra/README.md`
 in sync.
 
 **`plan.md` is the epic** — architecture, model roster, phases, scope
-decisions. Phases 1–2 are shipped and deployed; Phases 3–6 (RAG, evals,
-feedback UI, hardening pass) are designed there but **not built** — never
-document or assume them as existing. The `retrieve` step is a stub that
-reports `skipped`/`kb_not_wired` by design.
+decisions. Phases 1–3 (LangGraph engine + SSE v2, Langfuse tracing, RAG
+retrieval) are shipped and deployed; Phases 4–6 (eval harness, feedback UI,
+hardening pass) are designed there but **not built** — never document or
+assume them as existing. `retrieve` is a real node (condense → embed →
+LanceDB search, fail-open with per-cause `detail`s); `kb_not_wired` was
+retired with the stub in #62. Model ids live only in
+`backend/app/config.py`'s `MODEL_DEFAULTS` (issue #84) — never present a
+doc's roster table as what runs without checking it.
 
 **Scoped rules:** `infra/CLAUDE.md` (Terraform), `web/CLAUDE.md` (React/SSE
 client), `backend/CLAUDE.md` (FastAPI/SSE server) — each loads automatically

@@ -1,10 +1,10 @@
 # Deploying cadre
 
-This page is the **one-time repository setup** for the two workflows that gate
-shipping. (The repo has five workflows in total — `terraform.yml`, `docs.yml`
-and `openwiki-update.yml` are covered in
-[docs/ci-cd.md](../docs/ci-cd.md); `terraform.yml`'s apply job shares the same
-`production` environment gate configured below.)
+This page is the **one-time repository setup** for the gate that shipping sits
+behind. (The repo has six workflows in total — `terraform.yml` (plan-only since
+ADR 0003), `docs.yml`, `openwiki-update.yml` and `diff-honesty-scanner.yml` are
+covered in [docs/ci-cd.md](../docs/ci-cd.md). Only `deploy.yml`'s `release` job
+uses the `production` environment configured below.)
 
 | Workflow | Trigger | What it does |
 |---|---|---|
@@ -100,13 +100,17 @@ Actions → **Deploy** → Run workflow:
 - **Action**: `deploy`
 - **SHA**: the full 40-character commit SHA
 
-The run pauses at the `production` environment until a reviewer approves. Then:
+The ungated `plan` job validates the SHA and posts that commit's Terraform plan
+to the run summary; the run then pauses at the `production` environment until a
+reviewer approves. Then the `release` job:
 
-1. Build the arm64 image, push it to ECR tagged with the SHA
-2. Point the Lambda at that image and wait for the update to settle
-3. Build the page, sync hashed assets, then `index.html`
-4. Invalidate CloudFront and wait for it to complete
-5. Smoke-test `/healthz` and `/`
+1. Applies the exact Terraform plan the summary showed (never a re-plan — ADR 0003)
+2. Runs the model gates (`assert_models`, `assert_model_env`)
+3. Builds the arm64 image and pushes it to ECR tagged with the SHA
+4. Points the Lambda at that image and waits for the update to settle
+5. Builds the page, syncs hashed assets, then `index.html`
+6. Invalidates CloudFront and waits for it to complete
+7. Smoke-tests `/healthz`, `/` and `/config` (`assert_step_models`)
 
 Re-deploying a SHA that was already built is idempotent — the ECR repository is
 `IMMUTABLE`, so the build is skipped and the existing image reused.

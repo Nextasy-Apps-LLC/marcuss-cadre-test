@@ -137,7 +137,7 @@ progress. Rules, each with its why:
 
 - **Model calls are plain HTTP to Bedrock's OpenAI-compatible Mantle endpoint,
   authenticated with a bearer token — no boto3, no SigV4, no LangChain in the
-  model path.** [ADR 0002](../adr/0002-bedrock-mantle-api-key.md) records why:
+  model path.** [ADR 0002](https://github.com/Nextasy-Apps-LLC/marcuss-cadre-test/blob/main/adr/0002-bedrock-mantle-api-key.md) records why:
   classic `bedrock-runtime` Converse is `NOT_AUTHORIZED` account-wide, while
   Mantle answers the same models over an ordinary HTTPS call. LangGraph still
   owns orchestration; only the transport changed.

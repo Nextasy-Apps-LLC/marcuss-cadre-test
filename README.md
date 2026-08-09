@@ -4,7 +4,8 @@ Live at **[cadre.marcuss.pro](https://cadre.marcuss.pro)**.
 
 A guardrailed streaming support chatbot for [Cadre AI](https://www.cadreai.com).
 The backend is a LangGraph pipeline — deterministic input validation, injection
-check, topic classifier, retrieval seam, brain, output safety — running on
+check, topic classifier, RAG retrieval over a committed LanceDB corpus of
+cadreai.com, brain, output safety — running on
 FastAPI in a Lambda container, calling Bedrock models over its OpenAI-compatible
 Mantle endpoint ([ADR 0002](adr/0002-bedrock-mantle-api-key.md)). Every pipeline
 step streams its verdict live to the browser as SSE, so the UI renders the
@@ -53,7 +54,7 @@ cd backend && CADRE_E2E_BEDROCK=1 BASE_URL=https://cadre.marcuss.pro pytest -m e
 
 | Path | What it is |
 |---|---|
-| [`plan.md`](plan.md) | The epic: architecture, model roster, phases (1–2 shipped, 3–6 not built), scope decisions |
+| [`plan.md`](plan.md) | The epic: architecture, model roster, phases (1–3 shipped, 4–6 not built), scope decisions |
 | [`adr/`](adr/README.md) | Architecture decision records — the load-bearing traps and choices |
 | [`kb/learnings.json`](kb/learnings.json) | Compounding knowledge base; every cycle reads it, appends to it |
 | [`.claude/`](.claude/) | Compound workflow: skills, agents, kanban recipe driving issue → PR |
@@ -62,6 +63,9 @@ cd backend && CADRE_E2E_BEDROCK=1 BASE_URL=https://cadre.marcuss.pro pytest -m e
 | [`infra/`](infra/README.md) | Terraform: CloudFront, Lambda, S3, OIDC — no static AWS credentials |
 | [`docs/`](docs/index.md) | MkDocs site → [published docs](https://nextasy-apps-llc.github.io/marcuss-cadre-test/) |
 
-**Reviewing this submission?** Start with
-[`docs/review.md`](docs/review.md) — a 10-minute demo script plus a map from
-each evaluation dimension to the evidence for it in this repo.
+**Reviewing this submission?** Start with the published
+[review walkthrough](https://nextasy-apps-llc.github.io/marcuss-cadre-test/review/)
+— a 10-minute demo script plus a map from each evaluation dimension to the
+evidence for it in this repo. The site splits its nav by audience: pages for
+humans, and the agent-facing contract (the CLAUDE.md family) published
+read-only.
