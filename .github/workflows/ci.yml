@@ -271,18 +271,36 @@ jobs:
 
       - run: npm ci
 
-      # Native linux/amd64, not the arm64 Lambda-parity build the `image` job
-      # already covers: this one only has to run, and an emulated arm64
-      # container would add minutes to every PR for no extra signal.
+      # arm64, because backend/Dockerfile pins an arm64 Lambda base image
+      # (`public.ecr.aws/lambda/python:3.13-arm64`) — there is no amd64 build
+      # of it to fall back to, and forcing the runner's native platform fails
+      # with `exec /bin/sh: exec format error` on the first RUN. QEMU makes
+      # the runner able to build and run it; `cache-from: type=gha` reuses the
+      # layers the `image` job already publishes, so the expensive
+      # `pip install` is a cache hit rather than an emulated compile.
+      #
+      # `load: true` puts the result in the local docker daemon so the next
+      # step can `docker run` it. This is the real deployed artifact, not a
+      # stand-in.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
       - name: Build the backend image
-        working-directory: ${{ github.workspace }}
-        run: docker build -t cadre-backend:ci backend
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/arm64
+          load: true
+          tags: cadre-backend:ci
+          cache-from: type=gha
 
       - name: Start the backend and wait for it to answer
         working-directory: ${{ github.workspace }}
         run: |
           docker run -d --name cadre-ci -p 8080:8080 cadre-backend:ci
-          for i in $(seq 1 60); do
+          # Generous: the container runs under QEMU emulation here, so
+          # interpreter startup is several times slower than native.
+          for i in $(seq 1 180); do
             if curl -sf -o /dev/null http://127.0.0.1:8080/healthz; then
               echo "backend healthy after ${i}s"; exit 0
             fi
