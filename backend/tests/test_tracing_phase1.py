@@ -905,6 +905,7 @@ class TestTurnUsageSummary:
             "input": 17, "output": 5, "total": 22,
         }
 
+    @pytest.mark.real_seams
     def test_topic_fallback_counts_only_the_answering_attempt(self, lf, monkeypatch):
         """Errored attempts have no usage, so only the answering call's numbers
         can enter the accumulator — the same fact `fallback_index` records."""
