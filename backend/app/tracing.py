@@ -66,6 +66,7 @@ proving themselves.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import logging
 import os
 from typing import Any, Iterator
@@ -152,6 +153,15 @@ _PROBE_TRACE_ID = "0" * 32
 
 _client: Langfuse | None = None
 _ENABLED = False
+
+# The turn whose accumulator `record_response` folds usage and cost into.
+# Task-local, set and cleared by `Turn.activate()` alongside the span, so the
+# per-step numbers land in the right turn without threading an id — the same
+# isolation story as the ambient span (KB-008), and asserted by the
+# interleaved-turns test.
+_current_turn: contextvars.ContextVar[Turn | None] = contextvars.ContextVar(
+    "_current_turn", default=None
+)
 
 
 def _configure(
@@ -305,17 +315,22 @@ class Generation:
     id to say so.
     """
 
-    __slots__ = ("_obs", "_model_id", "_usage", "_meta", "_ended", "_started")
+    __slots__ = ("_obs", "_model_id", "_usage", "_meta", "_ended", "_started", "step")
 
     def __init__(
         self,
         observation: Any = None,
         model_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        step: str | None = None,
     ) -> None:
         self._obs = observation
         self._model_id = model_id
         self._usage: dict[str, int] | None = None
+        # The wire step this call serves ("brain", "topic_classifier",
+        # "retrieve", …) — the bucket its usage/cost aggregate under. Set by
+        # `start_generation`; `record_response` folds into the ambient turn.
+        self.step = step
         # Seeded with whatever the observation was *created* with, because
         # every later write sends the whole metadata map: Langfuse's `update()`
         # replaces the key rather than merging into it, so a partial map here
@@ -324,6 +339,28 @@ class Generation:
         self._meta: dict[str, Any] = dict(metadata) if metadata else {}
         self._ended = False
         self._started = False
+
+    def _fold_into_turn(self, details: dict[str, int], cost: dict[str, float] | None) -> None:
+        """Roll this call's usage and cost into the ambient turn's accumulator.
+
+        Fail-open by construction: this runs inside `record_response`'s try, so
+        a corrupt accumulator can never break the transport. Generations
+        created outside an activated turn (no ambient turn) simply accumulate
+        nothing — the per-generation metadata still carries the numbers.
+        """
+        turn = _current_turn.get()
+        if turn is None or self.step is None:
+            return
+        bucket = turn.usage.setdefault(self.step, {"input": 0, "output": 0, "total": 0})
+        bucket["input"] += details.get("input", 0)
+        bucket["output"] += details.get("output", 0)
+        bucket["total"] += details.get("total", 0)
+        turn.usage_seen = True
+        if cost is not None:
+            turn.cost[self.step] = turn.cost.get(self.step, 0.0) + cost["total"]
+            turn.cost_seen = True
+        else:
+            turn.unpriced_seen = True
 
     # -- written by the transport -------------------------------------------
     def record_response(self, *, model: str | None = None, usage: Any = None) -> None:
@@ -356,6 +393,7 @@ class Generation:
                         "no MODEL_PRICES entry for %s — usage recorded, cost omitted",
                         self._model_id,
                     )
+                self._fold_into_turn(details, cost)
             else:
                 self._meta["usage_source"] = USAGE_ABSENT
             update["metadata"] = dict(self._meta)
@@ -454,6 +492,7 @@ def start_generation(
     input: Any = None,
     metadata: dict[str, Any] | None = None,
     as_type: str = "generation",
+    step: str | None = None,
 ) -> Generation:
     """Open a generation parented to whatever observation is ambient.
 
@@ -462,6 +501,12 @@ def start_generation(
     into every coroutine underneath. Threading `trace_id` through every
     `models.py` seam signature instead would break the one-line-monkeypatch
     property the whole test suite leans on (`trace-design.md` §4.2).
+
+    `step` is the wire step this call serves and the bucket its usage/cost
+    aggregates under on the turn summary. It defaults to the observation name,
+    which is already the wire step for every judge (`validate_input`, …) and
+    for `brain`; the one place they differ is retrieval, where `condense` and
+    the embedding both serve `retrieve` and both pass it explicitly.
 
     Returns a no-op handle — never `None` — when tracing is down, so no call
     site has to branch.
@@ -478,7 +523,7 @@ def start_generation(
             input=input,
             metadata=dict(metadata) if metadata else None,
         )
-        return Generation(observation, model_id, metadata)
+        return Generation(observation, model_id, metadata, step or name)
     except Exception as exc:  # noqa: BLE001 - fail open, see module docstring
         log.warning("could not start a generation (turn is unaffected): %s", exc)
         return NOOP_GENERATION
@@ -499,12 +544,29 @@ class Turn:
     both).
     """
 
-    __slots__ = ("trace_id", "url", "span")
+    __slots__ = (
+        "trace_id",
+        "url",
+        "span",
+        "usage",
+        "cost",
+        "usage_seen",
+        "cost_seen",
+        "unpriced_seen",
+    )
 
     def __init__(self, trace_id: str | None = None, url: str | None = None) -> None:
         self.trace_id = trace_id
         self.url = url
         self.span: Any = None
+        # Per-step accumulator for `finalize_trace`'s summary. `record_response`
+        # folds into it via the ambient contextvar; created here, per request,
+        # so it needs no reset and cannot outlive its turn.
+        self.usage: dict[str, dict[str, int]] = {}
+        self.cost: dict[str, float] = {}
+        self.usage_seen = False
+        self.cost_seen = False
+        self.unpriced_seen = False
 
     @contextlib.contextmanager
     def activate(self) -> Iterator[None]:
@@ -514,10 +576,17 @@ class Turn:
         failure in either half is swallowed independently and neither can turn
         a tracing problem into a broken turn. Exceptions raised by the *body*
         propagate untouched — a graph failure is the graph's business.
+
+        The same block also makes this turn the ambient accumulator target
+        (`_current_turn`) for the block, so generations record their usage and
+        cost into it with no id threaded. Both are reset on exit; a nested or
+        failed activation restores whatever was current before.
         """
         manager = None
+        token = None
         if _ENABLED and _client is not None and self.trace_id:
             try:
+                token = _current_turn.set(self)
                 manager = _client.start_as_current_observation(
                     name=PIPELINE_SPAN_NAME,
                     as_type="span",
@@ -530,6 +599,8 @@ class Turn:
         try:
             yield
         finally:
+            if token is not None:
+                _current_turn.reset(token)
             if manager is not None:
                 try:
                     manager.__exit__(None, None, None)
@@ -725,11 +796,45 @@ def finalize_trace(
                 as_type="span",
                 trace_context=TraceContext(trace_id=turn.trace_id),
             )
+            # Per-step tokens and cost, plus a final aggregate. Same shape as
+            # `latency_ms`: the step numbers are readable at a glance, and the
+            # summary answers "what did this turn cost" without opening any
+            # generation. The literals reuse the per-generation ones (KB-009):
+            # a turn whose steps reported no usage reads as "absent", not as
+            # broken instrumentation. `cost_usd` simply lacks a step that was
+            # priced off the table, matching how per-generation `cost_details`
+            # is omitted for an unpriced model.
+            usage_tokens = {
+                step: dict(bucket) for step, bucket in turn.usage.items()
+            }
+            cost_usd = dict(turn.cost)
+            tokens_total = {"input": 0, "output": 0, "total": 0}
+            for bucket in usage_tokens.values():
+                tokens_total["input"] += bucket["input"]
+                tokens_total["output"] += bucket["output"]
+                tokens_total["total"] += bucket["total"]
+            cost_total = sum(cost_usd.values())
+            usage_source = USAGE_PRESENT if turn.usage_seen else USAGE_ABSENT
+            if turn.cost_seen:
+                cost_source = COST_COMPUTED
+            elif turn.unpriced_seen:
+                cost_source = COST_UNPRICED
+            else:
+                cost_source = USAGE_ABSENT
             span.update(
                 metadata={
                     "refused_step": refused_step or NOT_REFUSED,
                     "latency_ms": dict(step_latencies),
                     "total_latency_ms": total_latency_ms,
+                    "usage_tokens": usage_tokens,
+                    "cost_usd": cost_usd,
+                    "summary": {
+                        "latency_ms": total_latency_ms,
+                        "tokens": tokens_total,
+                        "cost_usd": cost_total,
+                        "usage_source": usage_source,
+                        "cost_source": cost_source,
+                    },
                 }
             )
             # Explicitly, rather than by winning an upsert race. Langfuse

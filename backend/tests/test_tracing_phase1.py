@@ -805,6 +805,205 @@ class TestAmbientTurnContext:
 
 
 # --------------------------------------------------------------------------
+# Phase 2 — per-step + per-turn token usage and cost on the turn summary
+# --------------------------------------------------------------------------
+
+class TestTurnUsageSummary:
+    """The `turn` span metadata answers "tokens and cost, per step and total"
+    without opening every generation — exactly parallel to `latency_ms`."""
+
+    def _finalize_with_generations(self, lf, **kwargs):
+        turn = tracing.start_turn("t1")
+        with turn.activate():
+            for step in ("validate_input", "brain"):
+                gen = tracing.start_generation(step, config.MODEL_BRAIN)
+                gen.record_response(
+                    model=config.MODEL_BRAIN,
+                    usage={
+                        "prompt_tokens": 100,
+                        "completion_tokens": 50,
+                        "total_tokens": 150,
+                    },
+                )
+                gen.finish()
+        defaults = dict(
+            refused_step=None,
+            step_latencies={"brain": 900},
+            total_latency_ms=1200,
+            client_id="visitor-1234",
+            outcome="answered",
+            message="what does cadre ai do?",
+            history_turns=0,
+            answer="Cadre AI helps teams adopt AI.",
+            refusal_text=None,
+            degraded=False,
+            kb_state="hit",
+        )
+        defaults.update(kwargs)
+        tracing.finalize_trace(turn, **defaults)
+        return turn
+
+    def test_the_turn_summary_aggregates_usage_and_cost_per_step(self, lf):
+        self._finalize_with_generations(lf)
+        meta = lf.one(tracing.TURN_SPAN_NAME).merged["metadata"]
+
+        assert meta["usage_tokens"] == {
+            "validate_input": {"input": 100, "output": 50, "total": 150},
+            "brain": {"input": 100, "output": 50, "total": 150},
+        }
+        in_price, out_price = config.MODEL_PRICES[config.MODEL_BRAIN]
+        per_call = in_price * 100 / 1_000_000 + out_price * 50 / 1_000_000
+        assert meta["cost_usd"]["brain"] == pytest.approx(per_call)
+        assert meta["cost_usd"]["validate_input"] == pytest.approx(per_call)
+
+        summary = meta["summary"]
+        assert summary["tokens"] == {"input": 200, "output": 100, "total": 300}
+        assert summary["cost_usd"] == pytest.approx(2 * per_call)
+        assert summary["latency_ms"] == 1200
+        assert summary["usage_source"] == "provider"
+        assert summary["cost_source"] == "model_prices"
+
+    def test_the_phase1_fields_survive_unchanged(self, lf):
+        """Backward compatibility: the new keys extend the turn span metadata,
+        they do not replace the fields Phase 1 shipped."""
+        self._finalize_with_generations(lf)
+        meta = lf.one(tracing.TURN_SPAN_NAME).merged["metadata"]
+        assert meta["latency_ms"] == {"brain": 900}
+        assert meta["total_latency_ms"] == 1200
+        assert meta["refused_step"] == tracing.NOT_REFUSED
+
+    def test_retrieve_buckets_condense_and_embedding_into_one_step(self, lf):
+        """Both retrieval calls land in one bucket, mirroring the wire step —
+        a step's numbers live under its step name, not under observation names."""
+        turn = tracing.start_turn("t1")
+        with turn.activate():
+            gen = tracing.start_generation(
+                "condense", config.MODEL_CONDENSE, step="retrieve"
+            )
+            gen.record_response(
+                model=config.MODEL_CONDENSE,
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+            gen.finish()
+
+            gen = tracing.start_generation(
+                tracing.EMBEDDING_OBSERVATION_NAME,
+                config.EMBEDDING_MODEL,
+                as_type="embedding",
+                step="retrieve",
+            )
+            gen.record_response(
+                model=config.EMBEDDING_MODEL,
+                usage={"prompt_tokens": 7, "total_tokens": 7},
+            )
+            gen.finish()
+        tracing.finalize_trace(turn, None, {}, 100, "visitor-1234")
+
+        meta = lf.one(tracing.TURN_SPAN_NAME).merged["metadata"]
+        assert set(meta["usage_tokens"]) == {"retrieve"}
+        assert meta["usage_tokens"]["retrieve"] == {
+            "input": 17, "output": 5, "total": 22,
+        }
+
+    @pytest.mark.real_seams
+    def test_topic_fallback_counts_only_the_answering_attempt(self, lf, monkeypatch):
+        """Errored attempts have no usage, so only the answering call's numbers
+        can enter the accumulator — the same fact `fallback_index` records."""
+        primary = config.MODEL_TOPIC
+        fallback = config.MODEL_TOPIC_FALLBACKS[0]
+
+        async def chat(model_id, system, messages, **kwargs):
+            gen = kwargs.get("generation")
+            if model_id == primary:
+                raise httpx.ConnectError("primary down")
+            if gen is not None:
+                gen.record_response(model=model_id, usage={"total_tokens": 5})
+            return "in_scope"
+
+        monkeypatch.setattr(llm, "chat", chat)
+        turn = tracing.start_turn("t1")
+        with turn.activate():
+            verdict = run(models.classify_topic({"message": "what is cadre ai?", "history": []}))
+        assert verdict.verdict == "in_scope"
+        tracing.finalize_trace(turn, None, {}, 100, "visitor-1234")
+
+        meta = lf.one(tracing.TURN_SPAN_NAME).merged["metadata"]
+        assert meta["usage_tokens"] == {
+            "topic_classifier": {"input": 0, "output": 0, "total": 5}
+        }
+        assert meta["summary"]["tokens"]["total"] == 5
+
+    def test_a_turn_with_no_model_calls_reads_absent(self, lf):
+        """A deterministic refusal never reaches the transport, so the summary
+        must read 'absent' rather than claiming zero-cost instrumentation."""
+        turn = tracing.start_turn("t1")
+        with turn.activate():
+            pass
+        tracing.finalize_trace(
+            turn, "validate_input", {}, 10, "visitor-1234",
+            outcome="refused", answer="", refusal_text="blank",
+        )
+
+        meta = lf.one(tracing.TURN_SPAN_NAME).merged["metadata"]
+        assert meta["usage_tokens"] == {}
+        assert meta["cost_usd"] == {}
+        summary = meta["summary"]
+        assert summary["tokens"] == {"input": 0, "output": 0, "total": 0}
+        assert summary["cost_usd"] == 0
+        assert summary["usage_source"] == tracing.USAGE_ABSENT
+        assert summary["cost_source"] == tracing.USAGE_ABSENT
+
+    def test_an_unpriced_model_counts_tokens_and_says_unpriced(self, lf):
+        turn = tracing.start_turn("t1")
+        with turn.activate():
+            gen = tracing.start_generation("brain", "vendor.not-in-the-table")
+            gen.record_response(
+                model="vendor.not-in-the-table",
+                usage={"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12},
+            )
+            gen.finish()
+        tracing.finalize_trace(turn, None, {}, 100, "visitor-1234")
+
+        meta = lf.one(tracing.TURN_SPAN_NAME).merged["metadata"]
+        assert meta["usage_tokens"]["brain"]["total"] == 12
+        assert meta["cost_usd"] == {}
+        assert meta["summary"]["usage_source"] == tracing.USAGE_PRESENT
+        assert meta["summary"]["cost_source"] == tracing.COST_UNPRICED
+
+    def test_two_interleaved_turns_keep_separate_accumulators(self, lf):
+        """The task-local isolation (KB-008) applies to the accumulator the same
+        way it applies to the span: a leaked contextvar would double one turn's
+        numbers instead of crossing traces."""
+        async def turn_for(trace_id: str):
+            turn = tracing.start_turn(trace_id)
+            with turn.activate():
+                await asyncio.sleep(0)
+                gen = tracing.start_generation("brain", config.MODEL_BRAIN)
+                gen.record_response(model=config.MODEL_BRAIN, usage={"total_tokens": 3})
+                gen.finish()
+                await asyncio.sleep(0)
+            return turn
+
+        async def both():
+            return await asyncio.gather(turn_for("aaaa"), turn_for("bbbb"))
+
+        turn_a, turn_b = run(both())
+        assert turn_a.usage["brain"]["total"] == 3
+        assert turn_b.usage["brain"]["total"] == 3
+        assert set(turn_a.usage) == {"brain"}
+        assert set(turn_b.usage) == {"brain"}
+
+    def test_record_response_outside_any_turn_is_a_no_op(self, lf):
+        """Generations created outside an activated turn accumulate nothing and
+        never raise — the transport path must not depend on a live turn."""
+        gen = tracing.start_generation("brain", config.MODEL_BRAIN)
+        gen.record_response(model=config.MODEL_BRAIN, usage={"total_tokens": 1})
+        gen.finish()
+        obs = lf.one("brain")
+        assert obs.merged["usage_details"]["total"] == 1
+
+
+# --------------------------------------------------------------------------
 # The module invariant: none of this may ever cost a turn
 # --------------------------------------------------------------------------
 

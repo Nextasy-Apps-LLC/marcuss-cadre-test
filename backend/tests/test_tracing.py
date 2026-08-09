@@ -493,6 +493,15 @@ class TestFinalizeTrace:
             "refused_step": "topic_classifier",
             "latency_ms": {"validate_input": 3, "topic_classifier": 412},
             "total_latency_ms": 900,
+            "usage_tokens": {},
+            "cost_usd": {},
+            "summary": {
+                "latency_ms": 900,
+                "tokens": {"input": 0, "output": 0, "total": 0},
+                "cost_usd": 0,
+                "usage_source": tracing.USAGE_ABSENT,
+                "cost_source": tracing.USAGE_ABSENT,
+            },
         }
         assert observation["trace_context"]["trace_id"] == "abc123"
         assert ("set_trace_as_public", None) in fake_langfuse.calls

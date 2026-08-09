@@ -125,6 +125,7 @@ async def embed_query(text: str) -> list[float]:
         tracing.EMBEDDING_OBSERVATION_NAME,
         config.EMBEDDING_MODEL,
         as_type="embedding",
+        step="retrieve",
         input={"chars": len(text)},
     )
     try:

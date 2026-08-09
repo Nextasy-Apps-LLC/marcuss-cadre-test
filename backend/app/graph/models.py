@@ -393,6 +393,7 @@ async def condense_query(state: ConversationState) -> str:
     generation = tracing.start_generation(
         "condense",
         config.MODEL_CONDENSE,
+        step="retrieve",
         params={
             "max_tokens": config.CONDENSE_MAX_TOKENS,
             "temperature": config.JUDGE_TEMPERATURE,
