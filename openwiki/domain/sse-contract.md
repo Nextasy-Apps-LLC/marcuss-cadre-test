@@ -1,7 +1,7 @@
 ---
 type: API Contract
 title: SSE contract v2 — steps, states, tokens
-description: The cadre SSE v2 wire format — trace, state, token, done, error events plus the ping heartbeat; the six pipeline steps in order; status semantics (degraded, skipped, lost, stream-then-retract); the LangGraph backend and hand-rolled fetch-SSE client; and the tests that pin the contract.
+description: The cadre SSE v2 wire format — trace, state, token, done, error events plus the ping heartbeat; the six pipeline steps in order; status semantics (degraded, skipped, lost, stream-then-retract); the per-turn tokens/cost/latency aggregate on done.summary; the LangGraph backend and hand-rolled fetch-SSE client; and the tests that pin the contract.
 tags: [sse, contract, steps, streaming, langgraph, fastapi, react]
 ---
 
@@ -24,7 +24,7 @@ slow step, and the client drops them.
 | `trace` | `trace_id`, `url` | The public Langfuse trace link — at most once, the first frame of the turn; absent entirely when tracing is down (fail-open). |
 | `state` | `step`, `status` (`running`/`pass`/`fail`/`skipped`), `detail?`, `elapsed_ms?`, `retrieval?` | One pipeline transition; each of the six steps emits `running` then its verdict. `elapsed_ms` is an int on `pass`/`fail`, `null` otherwise; `retrieval` is non-`null` only on `retrieve`'s verdict. |
 | `token` | `text` | A fragment of the answer, only while `brain` (or the escalation text) streams. |
-| `done` | `outcome` (`answered`/`refused`/`escalated`/`error`), `refusal_text?` | Always the terminal event of a normal stream. |
+| `done` | `outcome` (`answered`/`refused`/`escalated`/`error`), `refusal_text?`, `summary?` | Always the terminal event of a normal stream. `summary` is the per-turn aggregate `finalize_trace` computed (issue #109), present only when tracing ran. |
 | `error` | `message` | Terminal on its own — no `done` follows. Generic on the wire, detailed in the log. |
 
 `state` events are written *before* the step works (wire first, then state), so
@@ -46,6 +46,14 @@ top_score}`:
 - Deliberately no chunk text and no URLs: the passages are already in the
   brain's prompt, and duplicating them would make every frame expensive for no
   new fact.
+
+`done`'s optional `summary` (issue #109) is what `tracing.finalize_trace`
+returned: `latency_ms`, `tokens {input, output, total}`, `cost_usd`,
+`usage_tokens`/`step_cost_usd` keyed by step, and `usage_source`/`cost_source`
+(`"provider"`/`"model_prices"`/`"unpriced"`/`"absent"`). It appears only when
+tracing ran and returned a payload — a missing field means "no aggregate",
+never zeros (KB-009) — and the same dict is written to the Langfuse turn span,
+so the transcript line, the stepper's Total row and the trace cannot disagree.
 
 ```mermaid
 sequenceDiagram
@@ -120,10 +128,16 @@ must agree:
   `test_llm.py` — transport, retry, no-retry-after-first-delta;
   `test_retrieve_wire.py` — the `retrieval` payload on the wire;
   `test_kb_store.py` / `test_embeddings.py` — the store and the embed call;
-  plus `test_ratelimit.py`, `test_persona.py`, `test_assert_models.py`.
+  plus `test_ratelimit.py`, `test_persona.py`, `test_assert_models.py`;
+  `test_tracing.py` / `test_tracing_phase1.py` — per-step + per-turn
+  usage/cost summary, incl. interleaved turns.
 - `web/src/lib/sse.test.ts` — `parseFrame`/`readSse`/`sha256Hex`;
   `web/src/lib/turnReducer.test.ts` — step transitions;
-  `web/src/types.test.ts` — statuses, `freshSteps()`.
+  `web/src/types.test.ts` — statuses, `freshSteps()`;
+  `web/src/lib/usage.test.ts` — token/cost formatting (tiny costs written out
+  in full, never scientific notation); `PipelineStepper.test.ts` /
+  `Transcript.test.ts` — the per-step usage rows, Total row and reply-summary
+  line rendered from `done.summary`.
 - `backend/tests/e2e/` — real-target suite behind the `e2e` marker and the
   `CADRE_E2E_BEDROCK` gate ([CI/CD](/openwiki/workflows/ci-cd.md)); asserts no
   `Content-Length` (KB-010) and real incremental tokens.
