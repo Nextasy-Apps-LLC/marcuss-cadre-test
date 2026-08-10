@@ -27,7 +27,7 @@ Per-area rules: `backend/CLAUDE.md`, `web/CLAUDE.md`, `infra/CLAUDE.md`.
 | Page | What it documents |
 |---|---|
 | [Architecture overview](/openwiki/architecture/overview.md) | One distribution, two origins; the four silent streaming-breakers; the two-grant 403 trap; the SSM-held secrets (Bedrock + OpenAI + Langfuse, ADR 0002). |
-| [SSE contract and steps](/openwiki/domain/sse-contract.md) | Protocol v2: the five events, six pipeline steps, status/outcome semantics, the LangGraph backend, the fetch-SSE client, contract tests. |
+| [SSE contract and steps](/openwiki/domain/sse-contract.md) | Protocol v2: the five events, six pipeline steps, status/outcome semantics, the per-turn tokens/cost aggregate in `done.summary`, the LangGraph backend, the fetch-SSE client, contract tests. |
 | [Terraform infrastructure](/openwiki/infrastructure/terraform.md) | Resource families, variables, the two OIDC roles, Lambda env vars, invariants. |
 | [Operations runbooks](/openwiki/operations/runbooks.md) | Bootstrap, two-phase custom domain, 403 bisection, rollback, cost. |
 | [CI/CD and deployment](/openwiki/workflows/ci-cd.md) | The six workflows, the approval-gated deploy/rollback pipeline (ADR 0003), MkDocs. |

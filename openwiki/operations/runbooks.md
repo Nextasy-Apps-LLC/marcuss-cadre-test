@@ -82,7 +82,11 @@ spends the four judge steps, one condense call (only with history), one OpenAI
 embedding, and the brain's generation. Real per-step figures are read back
 from Langfuse traces in `docs/quality/costs.md`: an answered KB turn runs about
 $0.0014, the #79 guard swap cut the guard's share of turn cost from 38% to 21%,
-and retrieved passages are billed twice (brain + guard).
+and retrieved passages are billed twice (brain + guard). Since #107/#109 the
+per-turn aggregate also renders live — `done`'s `summary` shows as a one-line
+note under the reply and as the stepper's Total row
+([SSE contract](/openwiki/domain/sse-contract.md)) — so a turn's cost is
+readable without opening Langfuse.
 
 ## Watch-outs
 
